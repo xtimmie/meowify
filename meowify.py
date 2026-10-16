@@ -15447,7 +15447,7 @@ async function nextSong() {
       const _skippedSong = S.cur;
       engine._stopNxt();
       if (S.repeat === 'one') {
-        if (S.cur) { _fireSkip(_skippedSong, 'fwdbtn'); window._nextReasonStart = 'fwdbtn'; await playSong(S.cur); }
+        if (S.cur) { _fireSkip(_skippedSong, 'fwdbtn'); window._nextReasonStart = 'fwdbtn'; const _cf = _applyContinueFrom(); if (_cf) { S.cur = _cf; if (S.queueOpen) renderQueueSidebar(); } await playSong(S.cur); }
         return;
       }
       _fireSkip(_skippedSong, 'fwdbtn');
