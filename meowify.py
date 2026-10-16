@@ -4436,7 +4436,7 @@ def api_batch_speed_override():
 def index(): return _get_html(), 200, {'Content-Type':'text/html; charset=utf-8'}
 
 _MU_STUB_CSS = "*, *::before, *::after { box-sizing: border-box; } body { background: #111; color: #eee; font-family: sans-serif; }"
-_MU_STUB_JS  = "console.warn('motionui not found — install from https://github.com/xtimgg/motionui');"
+_MU_STUB_JS  = "console.warn('motionui not found — install from https://github.com/xtimmie/motionui');"
 
 @app.route('/mu/<path:fn>')
 def mu_static(fn):
@@ -14716,6 +14716,7 @@ function buildQueue(songs, startIdx, source) {
   if (startIdx < 0) startIdx = 0;
   if (source) S.queueSource = source;
   // snapshot source order for unshuffle - always store regardless of shuffle state
+  S._continueFrom = null; // any fresh queue build cancels a pending "continue from here"
   S._unshuffledQueue = [...songs];
   engine._stopNxt();
   if (S.shuffle) {
@@ -14817,6 +14818,7 @@ function _chaosPickNext() {
 }
 
 function getNextSong() {
+  if (S._continueFrom) return S._continueFrom.start;
   if (!S.queue.length) return null;
   if (S.repeat === 'one') return S.queue[S.qi];
   if (S.shuffle && S.shuffleMode === 'chaos') {
@@ -15175,6 +15177,15 @@ function onSongEnd(scheduledNid) {
 
 async function _doOnSongEnd(scheduledNid) {
   window._nextReasonStart = 'trackdone';
+  const _cf = _applyContinueFrom();
+  if (_cf) {
+    S.cur = _cf; S.isPlaying = true;
+    updatePlayerUI(S.cur); updateHighlights(); updatePlayBtn();
+    await playSong(S.cur);
+    if (S.lyricsOpen) renderLyricsForSong(S.cur);
+    if (S.queueOpen) renderQueueSidebar();
+    return;
+  }
   if (S.repeat === 'one') {
     if (!S.cur) return;
     S.isPlaying = true;
@@ -15236,6 +15247,48 @@ async function _doOnSongEnd(scheduledNid) {
   updatePlayerUI(S.cur); updateHighlights(); updatePlayBtn();
   await playSong(S.cur);
   if (S.lyricsOpen) renderLyricsForSong(S.cur);
+}
+
+// "continue from here": same as playFromList but deferred until the current song ends
+function continueFromList(songs, idx, source) {
+  const start = songs[idx];
+  if (!start) return;
+  // nothing playing (or restored session that never started) -> just play right away
+  if (!S.cur || engine._restoredPosition !== undefined) { playFromList(songs, idx, source); return; }
+  if (!source) {
+    if (S.view === 'playlist' && S.activePid) source = {type:'playlist', id:S.activePid};
+    else if (S.view === 'album' && S.activeAid) source = {type:'album', id:S.activeAid};
+    else if (S.view === 'library' || S.view === 'stats') source = {type:'library', id:null};
+    else source = {type:'single', id:null};
+  }
+  S._continueFrom = { songs: [...songs], startId: start.id, start, source };
+  if (!engine._normGainMap) engine._normGainMap = {};
+  engine._normGainMap[start.id] = computeNormGain(S.library.find(l => l.id === start.id) || start);
+  if (CFG.volume_norm && start.loudness_lufs == null) ensureLoudness(start);
+  // re-point gapless/crossfade preload at the new target (unless the incoming song already started)
+  if (engine.ctx && (!engine.nxt || engine.nxt.srcStartedAt > engine.ctx.currentTime)) {
+    clearTimeout(engine._pt); engine._pt = null;
+    engine._stopNxt();
+    if (engine.cur) engine._schedPreload(getNextId);
+  }
+  engine.preload(start.id);
+}
+
+// consumes the pending "continue from here" target, rebuilds the queue from it and returns the song to play
+function _applyContinueFrom() {
+  const p = S._continueFrom;
+  if (!p) return null;
+  S._continueFrom = null;
+  const inLib = new Set(S.library.map(l => l.id));
+  const songs = p.songs.filter(s => inLib.has(s.id));
+  const idx = songs.findIndex(s => s.id === p.startId);
+  if (idx < 0) return null;
+  // buildQueue calls engine._stopNxt() - keep the preloaded copy alive so the jump stays gapless
+  const keep = engine.nxt && engine.nxt.songId === p.startId ? engine.nxt : null;
+  if (keep) engine.nxt = null;
+  buildQueue(songs, idx, p.source);
+  if (keep) engine.nxt = keep;
+  return S.queue[S.qi];
 }
 
 function playFromList(songs, idx, source) {
@@ -15399,6 +15452,7 @@ async function nextSong() {
       }
       _fireSkip(_skippedSong, 'fwdbtn');
       window._nextReasonStart = 'fwdbtn';
+      { const _cf = _applyContinueFrom(); if (_cf) { S.cur = _cf; await playSong(S.cur); if (S.queueOpen) renderQueueSidebar(); return; } }
       if (S.shuffle && S.shuffleMode === 'chaos') {
         const next = S._chaosNext;
         if (!next) return;
@@ -23542,6 +23596,7 @@ function songCtx(e, sid, pid) {
   if (!multi) {
     items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polygon points="2,2 19,12 2,22"></polygon></svg>', label:'play', fn:()=> playFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
     items.push({icon: ICON_PLAY_NEXT, label:'play next', fn:()=>{ S.queue.splice(S.qi+1,0,song); if(S.queueOpen)renderQueueSidebar(); }});
+    items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><polygon points="2,4 13,12 2,20"></polygon><circle cx="17.5" cy="12" r="1.4"></circle><circle cx="21.5" cy="12" r="1.4"></circle></svg>', label:'continue from here', fn:()=> continueFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
     items.push({icon: ICON_ADD_QUEUE, label:'add to queue', fn:()=>{ S.queue.push(song); if(S.queueOpen)renderQueueSidebar(); }});
   } else {
     items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ songs.reverse().forEach(sg=>S.queue.splice(S.qi+1,0,sg)); if(S.queueOpen)renderQueueSidebar(); }});
@@ -24438,7 +24493,7 @@ function _applyDesignImpl(design) {
   body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
-  body.design-glassy #player{background:var(--glass-bg-hi)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
+  body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) 30%,#0004)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .8), var(--glass-spec-panel);}
   @media (hover: hover) {body.design-glassy .song-row:hover,body.design-glassy .song-row-mobile:hover{background:var(--glass-bg-hi)!important}}
   body.design-glassy .song-row.playing,body.design-glassy .song-row-mobile.playing{background: color-mix(in oklch, var(--color-primary) 18%, rgba(255, 255, 255, .06)) !important; box-shadow: var(--glass-spec-panel)}
