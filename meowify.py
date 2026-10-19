@@ -250,6 +250,7 @@ def db():
     mkdirs()
     conn = sqlite3.connect(str(db_path()), timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.create_function('_canonical', 1, _canonical)
@@ -3543,7 +3544,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 "source,source_id,added_at,modified_at,album_id,track_num,play_count,last_played,genius_id)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (sid, sync_id,
-                 pre_title or (q[:100] if not is_url else 'downloading\u2026'),
+                 pre_title or (q[:100] if not is_url else 'downloading...'),
                  pre_artist, pre_album, None,
                  '', pre_cover, 'downloading', None,
                  _now, _now, pre_album_id, _pre_track_num, 0, None, pre_genius_id))
@@ -6891,6 +6892,7 @@ def _dbx_merge_db(local_path, remote_path):
     try:
         _conn = sqlite3.connect(str(db_path()), timeout=30)
         _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA temp_store=MEMORY")
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.create_function('_canonical', 1, _canonical)
@@ -7641,7 +7643,7 @@ def dropbox_callback():
     return f'''<html><head><meta http-equiv="refresh" content="1;url=http://localhost:{flask_port}/#settings"></head>
 <body style="font-family:sans-serif;padding:32px;background:#1a1a1a;color:#fff">
 <h2 style="color:#4caf50">&#x2713; dropbox connected!</h2>
-<p style="color:#aaa">returning to meowify…</p>
+<p style="color:#aaa">returning to meowify...</p>
 </body></html>'''
 
 @app.route('/api/dropbox/connect-status')
@@ -14716,7 +14718,7 @@ function buildQueue(songs, startIdx, source) {
   if (startIdx < 0) startIdx = 0;
   if (source) S.queueSource = source;
   // snapshot source order for unshuffle - always store regardless of shuffle state
-  S._continueFrom = null; // any fresh queue build cancels a pending "continue from here"
+  S._continueFrom = null; // any fresh queue build cancels a pending "play from here next"
   S._unshuffledQueue = [...songs];
   engine._stopNxt();
   if (S.shuffle) {
@@ -15249,7 +15251,7 @@ async function _doOnSongEnd(scheduledNid) {
   if (S.lyricsOpen) renderLyricsForSong(S.cur);
 }
 
-// "continue from here": same as playFromList but deferred until the current song ends
+// "play from here next": same as playFromList but deferred until the current song ends
 function continueFromList(songs, idx, source) {
   const start = songs[idx];
   if (!start) return;
@@ -15274,7 +15276,7 @@ function continueFromList(songs, idx, source) {
   engine.preload(start.id);
 }
 
-// consumes the pending "continue from here" target, rebuilds the queue from it and returns the song to play
+// consumes the pending "play from here next" target, rebuilds the queue from it and returns the song to play
 function _applyContinueFrom() {
   const p = S._continueFrom;
   if (!p) return null;
@@ -16656,22 +16658,22 @@ function renderTopbarSearch(v) {
 }
 
 function _searchPlaceholder(v) {
-  if (v === 'settings') return 'search: settings\u2026';
-  if (v === 'stats')    return 'search: stats\u2026';
+  if (v === 'settings') return 'search: settings...';
+  if (v === 'stats')    return 'search: stats...';
   if (v === 'playlist') {
     const pl = S.playlists?.find(p => p.id === S.activePid);
-    return 'search: ' + (pl ? pl.name : 'playlist') + '\u2026';
+    return 'search: ' + (pl ? pl.name : 'playlist') + '...';
   }
   if (v === 'album') {
     const alb = S.albums?.find(a => a.id === S.activeAid);
-    return 'search: ' + (alb ? alb.title : 'album') + '\u2026';
+    return 'search: ' + (alb ? alb.title : 'album') + '...';
   }
   if (v === 'artist') {
     const vtxt = document.getElementById('vtitle')?.textContent;
-    return 'search: ' + (vtxt && vtxt !== 'artist' ? vtxt : 'artist') + '\u2026';
+    return 'search: ' + (vtxt && vtxt !== 'artist' ? vtxt : 'artist') + '...';
   }
-  if (v === 'add') return 'search: add music\u2026';
-  return 'search: library\u2026';
+  if (v === 'add') return 'search: add music...';
+  return 'search: library...';
 }
 
 function toggleGlobalSearch(forceClose) {
@@ -16877,7 +16879,7 @@ function renderLibrary(){
 async function renderPlaylist(pid){
   const vc=document.getElementById('vc');
   if(!S.plSongs[pid]){
-    vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading\u2026</p></div>';
+    vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
     const res=await api('GET','/api/playlists/'+pid+'/songs');S.plSongs[pid]=res||[];
   }
   let songs=S.plSongs[pid];
@@ -16899,9 +16901,9 @@ async function renderPlaylist(pid){
 
 async function renderAlbumDetail(aid, skipLoadingScreen){
   const vc=document.getElementById('vc');
-  if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading…</p></div>';
+  if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
-  if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading\u2026</p></div>'+albumHeader(albInfo);
+  if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
   const q=(S.globalSearch||'').trim().toLowerCase();
   if(!allTracks||!allTracks.length){
@@ -17583,12 +17585,12 @@ function _mvUpdateToggleIcon() {
 let _mvStatusFillTarget = 0;
 function _mvShowStatus(status) {
   const _map = {
-    searching:   ['finding video\u2026',  0.25],
-    downloading: ['downloading\u2026',    0.55],
-    correlating: ['syncing audio\u2026',  0.82],
-    warming:     ['loading\u2026',        0.92],
+    searching:   ['finding video...',  0.25],
+    downloading: ['downloading...',    0.55],
+    correlating: ['syncing audio...',  0.82],
+    warming:     ['loading...',        0.92],
   };
-  const [label, progress] = _map[status] || ['loading\u2026', 0.3];
+  const [label, progress] = _map[status] || ['loading...', 0.3];
   _mvSetStatus(label, progress);
 }
 function _mvSetStatus(label, progress) {
@@ -17622,7 +17624,7 @@ function _mvOpenMenu(e) {
   const items = [
     {
       icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
-      label: 'set video URL\u2026',
+      label: 'set video URL...',
       fn: async () => {
         const raw = await promptModal('set video URL', 'YouTube URL or video ID', currentVid || '');
         if (raw == null) return;
@@ -17730,14 +17732,14 @@ async function _mvLoadForSong(song, reopenFullscreen) {
   const MAX_ATTEMPTS = 60; // 60 * 3s = 3 min max
 
   const _mvStatusMap = {
-    searching:   ['finding video\u2026',  0.25],
-    downloading: ['downloading\u2026',    0.55],
-    correlating: ['syncing audio\u2026',  0.82],
-    warming:     ['loading\u2026',        0.92],
+    searching:   ['finding video...',  0.25],
+    downloading: ['downloading...',    0.55],
+    correlating: ['syncing audio...',  0.82],
+    warming:     ['loading...',        0.92],
   };
 
   function _mvShowStatus(status) {
-    const [label, progress] = _mvStatusMap[status] || ['loading\u2026', 0.3];
+    const [label, progress] = _mvStatusMap[status] || ['loading...', 0.3];
     _mvSetStatus(label, progress);
   }
 
@@ -18215,7 +18217,7 @@ async function renderLyricsForSong(song, forceSynced) {
   if (hdr) hdr.textContent = song.title || 'lyrics';
 
   // show skeleton while fetching
-  body.innerHTML = `<div style="padding:6px 0 12px;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)">searching…</div>
+  body.innerHTML = `<div style="padding:6px 0 12px;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)">searching...</div>
     <div style="display:flex;flex-direction:column;gap:10px">
     ${Array(8).fill(0).map((_,i) => `<div style="height:14px;border-radius:4px;background:var(--color-surface-container-high);width:${55+Math.random()*40}%;opacity:0.5"></div>`).join('')}
   </div>`;
@@ -18450,7 +18452,7 @@ function _npLrcSectionHtml(song) {
   return `<div class="np-lrc-section ui-panel">
     <div class="np-lrc-label ui-section-hdr">lyrics</div>
     <div class="np-lrc-preview" onclick="toggleLyrics()">
-      <div class="np-lrc-none" id="np-lrc-loading">searching\u2026</div>
+      <div class="np-lrc-none" id="np-lrc-loading">searching...</div>
     </div>
   </div>`;
 }
@@ -19083,11 +19085,11 @@ async function showGeniusFix(sid) {
   const q = [stripBrackets(_primaryArtist), stripBrackets(song.title||'')].filter(Boolean).join(' ');
   showModal('fix genius metadata',
     `<div style="display:flex;gap:8px;margin-bottom:10px">
-       <input class="inp" id="genius-q" value="${esc(q)}" placeholder="search\u2026" autocomplete="off"
+       <input class="inp" id="genius-q" value="${esc(q)}" placeholder="search..." autocomplete="off"
          onkeydown="if(event.key==='Enter')doGeniusSearch('${sid}')">
        <button class="btn btn-out mu-ripple" onclick="doGeniusSearch('${sid}')">search</button>
      </div>
-     <div id="genius-hits" style="display:flex;flex-direction:column;gap:6px;max-height:360px;overflow-y:auto;padding-right:2px">searching\u2026</div>`,
+     <div id="genius-hits" style="display:flex;flex-direction:column;gap:6px;max-height:360px;overflow-y:auto;padding-right:2px">searching...</div>`,
     `<button class="btn btn-out mu-ripple" onclick="closeModal()">cancel</button>`
   );
   await doGeniusSearch(sid);
@@ -19097,7 +19099,7 @@ async function doGeniusSearch(sid) {
   const q = document.getElementById('genius-q')?.value?.trim();
   if (!q) return;
   const el = document.getElementById('genius-hits');
-  if (el) el.innerHTML = 'searching\u2026';
+  if (el) el.innerHTML = 'searching...';
   const res = await api('GET', '/api/songs/'+sid+'/genius-search?q='+encodeURIComponent(q));
   if (!res || !res.hits || !res.hits.length) { if (el) el.innerHTML = 'no results'; return; }
   if (el) el.innerHTML = res.hits.map(h => `
@@ -19290,7 +19292,7 @@ function albumCard(a) {
 
 // ── dropbox helpers (module-level, not nested) ────────────────────────────────
 async function dbxConnect(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'opening browser…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'opening browser...'; }
   const r = await fetch('/api/dropbox/connect', {method:'POST'}).then(r=>r.json());
   if (r.error) { alert('dropbox error: ' + r.error); if (btn) { btn.disabled=false; btn.textContent='connect dropbox'; } return; }
   window.open(r.url, '_blank');
@@ -19410,7 +19412,7 @@ async function triggerForceSync() {
     barHeight:        25,
     triggerThreshold: 200,
     canPull:       () => isMobile() && S.view === 'library' && !!window._dbxConnected,
-    label:         'syncing with dropbox…',
+    label:         'syncing with dropbox...',
     doneLabel:     'synced ✓',
     indeterminate: true,
   });
@@ -19554,7 +19556,7 @@ async function startGhostDownload(tid) {
   const btn = document.getElementById('gdl-btn-' + tid);
   const row = document.querySelector('[data-ghost-id="' + tid + '"]');
   if (btn && btn.disabled) return;
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
   const td = await api('GET', '/api/album_tracks/' + tid);
   if (!td || td.error) { if (btn) { btn.disabled = false; btn.innerHTML = MEOW_ICONS.download; } return; }
   const q = td.search_query || td.title;
@@ -21337,7 +21339,7 @@ function clearSelection() {
 
 async function renderArtistPage(aid) {
   const vc = document.getElementById('vc');
-  vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading…</p></div>';
+  vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
 
   const [artist, songs, localAlbums] = await Promise.all([
     api('GET', '/api/artists/' + aid),
@@ -21588,7 +21590,7 @@ async function _discoDownload(geniusSongId, title, artist, rowEl) {
   if (rowEl.dataset.dlState === 'loading') return;
   rowEl.dataset.dlState = 'loading';
   const dlBtn = rowEl.querySelector('[data-disco-dl]');
-  if (dlBtn) { dlBtn.disabled = true; dlBtn.innerHTML = '…'; }
+  if (dlBtn) { dlBtn.disabled = true; dlBtn.innerHTML = '...'; }
   const res = await api('POST', '/api/download', {query: `${artist} ${title}`, genius_track_id: geniusSongId});
   if (res?.error) {
     rowEl.dataset.dlState = '';
@@ -21626,7 +21628,7 @@ async function _discoDownload(geniusSongId, title, artist, rowEl) {
 }
 
 async function loadArtistDiscography(aid, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'loading…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'loading...'; }
   const res = await api('GET', '/api/artists/' + aid + '/genius-discography');
   if (!res || res.error) {
     if (btn) { btn.disabled = false; btn.textContent = 'load discography from genius'; }
@@ -21823,7 +21825,7 @@ function renderAdd() {
     <div class="add-panel">
       <div style="position:relative;margin-bottom:6px">
         <textarea class="inp" id="dlq" rows="1"
-          placeholder="search or paste a url\u2026"
+          placeholder="search or paste a url..."
           autocomplete="off"
           style="width:100%;padding-right:110px;resize:none;line-height:1.5"
           oninput="autoGrow(this);onSearchInput(this)"
@@ -21998,7 +22000,7 @@ function onSearchInput(el) {
     _searchLoadingTimer = setTimeout(() => {
       if (reqId !== _searchReqId) return;
       document.getElementById('search-results').innerHTML =
-        '<div style="padding:16px;color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body)">searching\u2026</div>';
+        '<div style="padding:16px;color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body)">searching...</div>';
     }, 500);
     const res = await api('GET', '/api/search?q=' + encodeURIComponent(q));
     clearTimeout(_searchLoadingTimer);
@@ -22078,7 +22080,7 @@ function renderSearchResults() {
 
 async function showYtmAlbum(browseId) {
   const box = document.getElementById('search-results');
-  box.innerHTML = '<div style="padding:16px;color:var(--color-on-surface-variant)">loading album…</div>';
+  box.innerHTML = '<div style="padding:16px;color:var(--color-on-surface-variant)">loading album...</div>';
   const album = await api('GET', '/api/ytm/album/' + browseId);
   if (!album || album.error) {
     box.innerHTML = '<div style="padding:16px;color:var(--color-error)">failed to load album</div>';
@@ -22183,7 +22185,7 @@ async function startBatchDl(items) {
     const did = res.download_id;
     _dlPanelItems[did] = {
       did,
-      label: deezer_data ? deezer_data.title + ' \u2014 ' + deezer_data.artist : (q || 'downloading\u2026'),
+      label: deezer_data ? deezer_data.title + ' \u2014 ' + deezer_data.artist : (q || 'downloading...'),
       status: 'pending',
       progress: 0,
       error: null,
@@ -22403,7 +22405,7 @@ async function _pollSyncDownloads() {
     if (!existing) {
       _dlPanelItems[d.download_id] = {
         did: d.download_id,
-        label: d.query || 'syncing\u2026',
+        label: d.query || 'syncing...',
         status: d.status || 'downloading',
         progress: d.progress || 0,
         error: d.error || null,
@@ -22512,7 +22514,7 @@ function _renderDlPanel(opening) {
     if (d._isSpJob) {
       const sub = d.status === 'done'
         ? `resolved ${d._total||0} tracks — click to review`
-        : `resolving ${d._resolved||0} / ${d._total||0}…`;
+        : `resolving ${d._resolved||0} / ${d._total||0}...`;
       return `<div class="cx-item mu-ripple" style="flex-direction:column;align-items:stretch;gap:0;padding:8px 12px;cursor:pointer;border-radius:0" onclick="_spOpenVerifyModal('${d._jid}')">
         <div style="display:flex;align-items:center;gap:10px;min-width:0">
           <span class="cx-icon" style="color:var(--color-primary);flex-shrink:0">
@@ -22733,7 +22735,7 @@ async function pollDl(did, batchId) {
         item.status = 'pending';
         item.progress = 0;
         item.error = null;
-        item.statusLabel = `retrying (${item._retries}/${MAX_RETRIES})\u2026`;
+        item.statusLabel = `retrying (${item._retries}/${MAX_RETRIES})...`;
         _updateDlPanelBadge();
         const res2 = await api('POST', '/api/download', item._payload);
         if (res2 && res2.download_id) {
@@ -23001,9 +23003,9 @@ function showSpotifyTransfer() {
           <select class="inp" id="sp-pl-select" style="flex:1;font-size:12px;padding:7px 10px" onchange="onSpPlSelect(this.value)">
             <option value="">- none -</option>
             ${plOpts}
-            <option value="__new__">+ create new playlist…</option>
+            <option value="__new__">+ create new playlist...</option>
           </select>
-          <input class="inp" id="sp-pl-new-name" placeholder="playlist name…"
+          <input class="inp" id="sp-pl-new-name" placeholder="playlist name..."
             style="flex:1;font-size:12px;padding:7px 10px;display:none"
             oninput="window._spPlNewName=this.value">
         </div>
@@ -23155,7 +23157,7 @@ async function _spOpenVerifyModal(jid) {
       </div>
       <div style="margin-bottom:10px">${_spSpeedSliderHtml('sp-verify-speed-'+jid,'sp-verify-speed-info-'+jid,initSpeed)}</div>
       <div id="sp-verify-table-${jid}" style="max-height:340px;overflow-y:auto;font-size:12px;border:1px solid var(--color-outline-variant);border-radius:var(--radius-md)">
-        <div style="color:var(--color-on-surface-variant);padding:16px;text-align:center">loading…</div>
+        <div style="color:var(--color-on-surface-variant);padding:16px;text-align:center">loading...</div>
       </div>
       <div id="sp-verify-prog-${jid}" style="margin-top:6px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)"></div>
     </div>`,
@@ -23178,7 +23180,7 @@ function _spRenderVerifyTable(jid, data) {
   const tracks   = (data.tracks || []).filter(Boolean);
   const total    = data.total || tracks.length;
   const resolved = data.resolved || tracks.length;
-  if (progEl) progEl.textContent = data.status !== 'done' ? `resolving… ${resolved} / ${total}` : '';
+  if (progEl) progEl.textContent = data.status !== 'done' ? `resolving... ${resolved} / ${total}` : '';
 
   const confFilter = parseInt(document.getElementById('sp-conf-filter-'+jid)?.value || '0', 10) / 100;
   const confValEl  = document.getElementById('sp-conf-val-'+jid);
@@ -23295,7 +23297,7 @@ function _spModifyTrack(jid, idx) {
     <div id="sp-mod-results" style="max-height:200px;overflow-y:auto;font-size:12px;margin-bottom:12px"></div>
     <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);margin-bottom:6px">or paste a youtube url / video id</div>
     <div style="display:flex;gap:6px">
-      <input class="inp" id="sp-mod-url" placeholder="https://youtube.com/watch?v=… or video id"
+      <input class="inp" id="sp-mod-url" placeholder="https://youtube.com/watch?v=... or video id"
         style="flex:1;font-size:12px;padding:7px 10px">
       <button class="btn btn-fill mu-ripple" onclick="_spModApplyUrl('${jid}',${idx})">use</button>
     </div>`,
@@ -23308,7 +23310,7 @@ async function _spModSearch(jid, idx) {
   const q = document.getElementById('sp-mod-q')?.value?.trim();
   const resEl = document.getElementById('sp-mod-results');
   if (!q || !resEl) return;
-  resEl.innerHTML = '<div style="color:var(--color-on-surface-variant);padding:8px 0">searching…</div>';
+  resEl.innerHTML = '<div style="color:var(--color-on-surface-variant);padding:8px 0">searching...</div>';
   const data = await api('POST', '/api/spotify/resolve-playlist/'+jid+'/ytm-search', {query: q});
   const tracks = data?.tracks || [];
   if (!tracks.length) { resEl.innerHTML = '<div style="color:var(--color-on-surface-variant);padding:8px 0">no results</div>'; return; }
@@ -23426,13 +23428,13 @@ async function _resolveAndDownloadSpotify(urls) {
     const pid = 'sp-' + Math.random().toString(36).slice(2);
     const ph = document.createElement('div');
     ph.className = 'dl-item'; ph.id = pid;
-    const phLabel = isLocal ? '\u{1F4C1} matching local file\u2026'
+    const phLabel = isLocal ? '\u{1F4C1} matching local file...'
                   : isPlaylist ? '\u2715 playlist urls not supported \u2014 copy tracks instead'
-                  : 'resolving ' + esc(url.slice(0, 64)) + '\u2026';
+                  : 'resolving ' + esc(url.slice(0, 64)) + '...';
     ph.innerHTML =
       '<div class="dl-info">' +
         '<div class="dl-name" style="color:var(--color-on-surface-variant)">' + phLabel + '</div>' +
-        '<div class="dl-stat" id="ph-st-' + pid + '">' + (isPlaylist ? '' : isLocal ? 'scanning\u2026' : 'fetching metadata') + '</div>' +
+        '<div class="dl-stat" id="ph-st-' + pid + '">' + (isPlaylist ? '' : isLocal ? 'scanning...' : 'fetching metadata') + '</div>' +
         '<div class="dl-bar"><div class="dl-bar-fill" id="ph-bar-' + pid + '" style="width:15%;transition:width .4s' + (isPlaylist ? ';background:var(--color-error)' : '') + '"></div></div>' +
       '</div>';
     if (list) list.prepend(ph);
@@ -23523,7 +23525,7 @@ async function startSpotifyTransfer() {
 
   for (let i = 0; i < urls.length; i++) {
     if (statusEl) statusEl.textContent =
-      'resolving ' + (i+1) + ' / ' + urls.length + '\u2026' +
+      'resolving ' + (i+1) + ' / ' + urls.length + '...' +
       (resolved ? '  \u2713 ' + resolved : '') + (failed ? '  \u2715 ' + failed : '') +
       (localImported ? '  \u{1F4C1} ' + localImported : '');
     try {
@@ -23596,7 +23598,7 @@ function songCtx(e, sid, pid) {
   if (!multi) {
     items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polygon points="2,2 19,12 2,22"></polygon></svg>', label:'play', fn:()=> playFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
     items.push({icon: ICON_PLAY_NEXT, label:'play next', fn:()=>{ S.queue.splice(S.qi+1,0,song); if(S.queueOpen)renderQueueSidebar(); }});
-    items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><polygon points="2,4 13,12 2,20"></polygon><circle cx="17.5" cy="12" r="1.4"></circle><circle cx="21.5" cy="12" r="1.4"></circle></svg>', label:'continue from here', fn:()=> continueFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
+    items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><polygon points="2,4 13,12 2,20"></polygon><circle cx="17.5" cy="12" r="1.4"></circle><circle cx="21.5" cy="12" r="1.4"></circle></svg>', label:'play from here next', fn:()=> continueFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
     items.push({icon: ICON_ADD_QUEUE, label:'add to queue', fn:()=>{ S.queue.push(song); if(S.queueOpen)renderQueueSidebar(); }});
   } else {
     items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ songs.reverse().forEach(sg=>S.queue.splice(S.qi+1,0,sg)); if(S.queueOpen)renderQueueSidebar(); }});
@@ -25139,7 +25141,7 @@ async function doExportBackup(btn) {
       await new Promise(r => setTimeout(r, 400));
       const s = await api('GET', '/api/export-backup/status/' + token);
       if (!s || s.error) { alert('export failed'); return; }
-      _ops[opId] = {status: 'zipping', progress: s.progress || 0, label: 'zipping backup\u2026'};
+      _ops[opId] = {status: 'zipping', progress: s.progress || 0, label: 'zipping backup...'};
       _updateGlobalProg();
       if (btn) btn.textContent = (s.progress || 0) + '%';
       if (s.status === 'done') {
@@ -25174,7 +25176,7 @@ async function doImportBackup(input) {
     if (!ok) return;
     const statusEl = document.createElement('div');
     statusEl.style.cssText = 'position:fixed;bottom:104px;left:50%;transform:translateX(-50%);background:var(--color-surface-container-highest);border:1px solid var(--color-outline-variant);border-radius:var(--radius-full);padding:8px 20px;font:var(--type-body-small);font-variation-settings:var(--fv-body);z-index:2000';
-    statusEl.textContent = 'restoring backup\u2026';
+    statusEl.textContent = 'restoring backup...';
     document.body.appendChild(statusEl);
     try {
       const fd = new FormData();
@@ -25196,7 +25198,7 @@ async function doImportBackup(input) {
 
 async function runCleanup(event) {
   const btn = event?.target;
-  if (btn) { btn.disabled = true; btn.textContent = 'running\u2026'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'running...'; }
   const res = await api('POST', '/api/cleanup');
   if (btn) { btn.disabled = false; btn.textContent = 'run'; }
   if (!res || res.error) {
@@ -25402,7 +25404,7 @@ function statsRowDetailed(song, rankNum, metaRight) {
 
 async function showSongStatsDetail(sid, title, artist) {
   showModal(esc(title||'song stats'),
-    `<div style="display:flex;align-items:center;justify-content:center;padding:24px;color:var(--color-on-surface-variant)">loading…</div>`,
+    `<div style="display:flex;align-items:center;justify-content:center;padding:24px;color:var(--color-on-surface-variant)">loading...</div>`,
     `<button class="btn btn-out mu-ripple" onclick="closeModal()">close</button>`
   );
   const data = await api('GET', `/api/songs/${sid}/stats-detail`).catch(()=>null);
@@ -25518,7 +25520,7 @@ function statsSection(title, songs, showRank) {
 async function importSpotifyHistory(input) {
   if (!input.files.length) return;
   const btn = document.querySelector('#tacts .btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'importing…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'importing...'; }
   const fd = new FormData();
   for (const f of input.files) fd.append('files', f);
   input.value = '';
@@ -25947,7 +25949,7 @@ async function showPlaysTimeline() {
     : '';
   const footerHtml = `<div style="display:flex;gap:8px;align-items:center">${showFullHistoryBtn}<button class="btn btn-out mu-ripple" onclick="closeModal()">close</button></div>`;
 
-  showModal('all plays', `<div style="display:flex;align-items:center;justify-content:center;padding:24px"><div style="color:var(--color-on-surface-variant)">loading…</div></div>`, footerHtml);
+  showModal('all plays', `<div style="display:flex;align-items:center;justify-content:center;padding:24px"><div style="color:var(--color-on-surface-variant)">loading...</div></div>`, footerHtml);
 
   let html = `<div style="font:var(--type-body-small);color:var(--color-on-surface-variant);margin-bottom:16px">${totalPlays.toLocaleString()} total plays · <span style="color:var(--color-primary);cursor:pointer" onclick="showFullPlayHistory()">view full event log →</span></div>`;
 
@@ -25988,7 +25990,7 @@ async function showFullPlayHistory() {
 
   const renderHeader = () => {
     const shown = Math.min(offset, total||0);
-    const totalStr = total != null ? total.toLocaleString() : '…';
+    const totalStr = total != null ? total.toLocaleString() : '...';
     return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div style="font:var(--type-body-small);color:var(--color-on-surface-variant)">showing ${shown.toLocaleString()} of ${totalStr} plays</div>
     </div>`;
@@ -26019,7 +26021,7 @@ async function showFullPlayHistory() {
     `<div id="fph-wrap" style="max-height:65vh;overflow-y:auto;padding-right:4px">
       <div id="fph-header"></div>
       <div id="fph-list"></div>
-      <div id="fph-load" style="text-align:center;padding:12px;color:var(--color-on-surface-variant);font:var(--type-body-small)">loading…</div>
+      <div id="fph-load" style="text-align:center;padding:12px;color:var(--color-on-surface-variant);font:var(--type-body-small)">loading...</div>
     </div>`,
     `<button class="btn btn-out mu-ripple" onclick="closeModal()">close</button>`
   );
@@ -26371,7 +26373,7 @@ function renderSettings() {
   const _pcSearchBar = _pcSearchMode ? `
     <div class="set-pc-search-bar">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="set-pc-search-input" type="text" placeholder="search all settings\u2026" value="${esc(S.globalSearch)}" oninput="onSettingsPopupSearch(this.value)">
+      <input id="set-pc-search-input" type="text" placeholder="search all settings..." value="${esc(S.globalSearch)}" oninput="onSettingsPopupSearch(this.value)">
     </div>` : '';
 
   const _backBtn = _isMob ? `
@@ -26729,7 +26731,7 @@ function renderSettings() {
 
       ${_sectionMatch('metadata') ? section('metadata', `
         ${row('genius token', 'free at genius.com/api-clients', `
-          <input class="input" type="password" autocomplete="off" value="${esc(CFG.genius_token||'')}" placeholder="paste token…" style="width:220px;text-align:right;padding:10px 14px"
+          <input class="input" type="password" autocomplete="off" value="${esc(CFG.genius_token||'')}" placeholder="paste token..." style="width:220px;text-align:right;padding:10px 14px"
             onchange="saveSetting('genius_token',this.value)">
         `)}
         ${row('auto genius', 'enrich metadata automatically after each download', toggle('auto_genius', CFG.auto_genius !== false))}
@@ -26748,12 +26750,12 @@ function renderSettings() {
             ${row('connect', 'sync your library across devices', `
               <button class="btn btn-fill mu-ripple" id="dbx-connect-btn"
                 onclick="dbxConnect(this)" ${waiting?'disabled':''}>
-                ${waiting ? (window._dbxManual ? 'waiting for code…' : 'waiting for browser…') : 'connect dropbox'}
+                ${waiting ? (window._dbxManual ? 'waiting for code...' : 'waiting for browser...') : 'connect dropbox'}
               </button>
             `)}
             ${waiting && window._dbxManual ? row('auth code', 'paste the code shown by Dropbox after authorization', `
               <div style="display:flex;gap:8px">
-                <input class="input" id="dbx-manual-code" placeholder="paste code…" style="width:180px;text-align:right;padding:10px 14px">
+                <input class="input" id="dbx-manual-code" placeholder="paste code..." style="width:180px;text-align:right;padding:10px 14px">
                 <button class="btn btn-fill mu-ripple" onclick="dbxSubmitCode()">submit</button>
               </div>
             `) : ''}
@@ -26796,7 +26798,7 @@ function renderSettings() {
 
               let fallback = '';
               if (!catRows) {
-                if (syncing)       fallback = `<span style="color:var(--color-primary);font:var(--type-label-small)">⟳ ${esc(status)||'syncing…'}</span>`;
+                if (syncing)       fallback = `<span style="color:var(--color-primary);font:var(--type-label-small)">⟳ ${esc(status)||'syncing...'}</span>`;
                 else if (status)   fallback = `<span style="color:var(--color-on-surface-variant);font:var(--type-label-small)">${esc(status)}</span>`;
                 else if (result && result.errors && result.errors.length)
                                    fallback = `<span style="color:var(--color-error);font:var(--type-label-small)">${result.errors.length} error${result.errors.length>1?'s':''}: ${esc(result.errors[0])}</span>`;
