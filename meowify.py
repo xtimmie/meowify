@@ -6961,9 +6961,12 @@ def _dbx_merge_db(local_path, remote_path):
                         deleted_ts = {r[0]: r[1] for r in del_rows}
                     else:
                         deleted_ts = {}
+                    src_idx = cols.index('source') if 'source' in cols else None
                     _batched_rows = []
                     for row in rows:
                         row = list(row)
+                        if src_idx is not None and row[src_idx] == 'downloading' and (fp_idx is None or not row[fp_idx]):
+                            continue
                         if syncid_idx is not None and row[syncid_idx] in deleted_ts:
                             row_modat = row[modat_idx] if modat_idx is not None else None
                             if row_modat is None or deleted_ts[row[syncid_idx]] >= row_modat:
