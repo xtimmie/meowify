@@ -994,6 +994,35 @@ def init_db():
             if 'shuffle_mode' not in _pe_cols:
                 c.execute("ALTER TABLE play_events ADD COLUMN shuffle_mode TEXT")
 
+        # queue_skip: song stays visible in library but is skipped when library is queued
+        _qs_cols = [r[1] for r in c.execute("PRAGMA table_info(songs)").fetchall()]
+        if 'queue_skip' not in _qs_cols:
+            c.execute("ALTER TABLE songs ADD COLUMN queue_skip INTEGER DEFAULT 0")
+        _qs_view = [r[1] for r in c.execute("PRAGMA table_info(songs_display)").fetchall()]
+        if 'queue_skip' not in _qs_view:
+            c.execute("DROP VIEW IF EXISTS songs_display")
+            c.execute("""
+                CREATE VIEW songs_display AS
+                SELECT id, sync_id, title, artist,
+                       COALESCE(
+                           (SELECT a.title FROM albums a WHERE a.id = songs.album_id),
+                           songs.album
+                       ) AS album,
+                       duration, file_path,
+                       cover_path, source, source_id, added_at, modified_at,
+                       album_id,
+                       COALESCE(
+                           (SELECT at.track_num FROM album_tracks at
+                            WHERE at.song_id = songs.id
+                              AND at.album_id = songs.album_id
+                            ORDER BY at.id LIMIT 1),
+                           songs.track_num
+                       ) AS track_num,
+                       play_count, last_played, lame_delay, genius_id,
+                       loudness_lufs, trim_start, trim_end, lyrics,
+                       featuring_artists, mv_video_id, mv_offset, queue_skip
+                FROM songs
+            """)
         c.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
         # backfill track_num from album_tracks where songs.track_num is still 0
@@ -6987,6 +7016,7 @@ def _dbx_merge_db(local_path, remote_path):
                         f'loudness_lufs=excluded.loudness_lufs, '
                         f'album_id=excluded.album_id, track_num=excluded.track_num, '
                         f'mv_video_id=COALESCE(excluded.mv_video_id, songs.mv_video_id), mv_offset=COALESCE(excluded.mv_offset, songs.mv_offset), '\
+                        f'{"queue_skip=excluded.queue_skip, " if "queue_skip" in cols else ""}'\
                         f'modified_at=excluded.modified_at '
                         f'WHERE excluded.modified_at IS NOT NULL '
                         f'AND (songs.modified_at IS NULL OR excluded.modified_at > songs.modified_at)',
@@ -9440,7 +9470,7 @@ def api_song_patch(sid):
     bare text overwrite, see cleanup_duplicate_covers' cover-merge bug for what
     happens when relational data gets touched without the right helper)."""
     data = request.json or {}
-    allowed = {'title', 'artist', 'featuring_artists', 'track_num'}
+    allowed = {'title', 'artist', 'featuring_artists', 'track_num', 'queue_skip'}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'no valid fields'}), 400
@@ -10572,6 +10602,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   contain:layout style;
 }
 .dl-unavailable{opacity:0.45;filter:grayscale(0.6);cursor:default;}
+.q-disabled{opacity:0.45;filter:grayscale(0.6);}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
@@ -12000,7 +12031,7 @@ body.design-glassy .list-header.pinned::before{
               </filter>
             </defs>
             <g id="spiky-opt-group" filter="url(#spiky-opt-gooey)">
-              <circle class="spiky-opt-base" cx="0" cy="0" r="34"/>
+              <circle class="spiky-opt-base" cx="0" cy="0" r="42"/>
               <g class="spiky-rot" style="transform:rotate(0deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
               <g class="spiky-rot" style="transform:rotate(40deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
               <g class="spiky-rot" style="transform:rotate(80deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
@@ -14739,6 +14770,12 @@ window._mdbg = false;
 function _mlog(...a) { if (window._mdbg) console.log('[meow]', ...a); }
 
 function buildQueue(songs, startIdx, source) {
+  // library plays skip songs flagged queue_skip, except the one explicitly played
+  if (source && source.type === 'library' && songs.some(s => s.queue_skip)) {
+    const _startId = (songs[Math.max(0, startIdx)] || {}).id;
+    songs = songs.filter(s => !s.queue_skip || s.id === _startId);
+    startIdx = songs.findIndex(s => s.id === _startId);
+  }
   if (startIdx < 0) startIdx = 0;
   if (source) S.queueSource = source;
   // snapshot source order for unshuffle - always store regardless of shuffle state
@@ -17300,7 +17337,7 @@ function renderNowPlaying() {
                    </filter>
                  </defs>
                  <g id="mob-spiky-opt-group" filter="url(#mob-spiky-opt-gooey)">
-                   <circle class="spiky-opt-base" cx="0" cy="0" r="34"/>
+                   <circle class="spiky-opt-base" cx="0" cy="0" r="42"/>
                    <g class="spiky-rot" style="transform:rotate(0deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
                    <g class="spiky-rot" style="transform:rotate(40deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
                    <g class="spiky-rot" style="transform:rotate(80deg)"><polygon class="spiky-opt-el" points="0,-56 -12,-34 12,-34"/></g>
@@ -19633,7 +19670,12 @@ function _rebuildViewIdx() {
   S.viewSongs.forEach((s, i) => _viewSongIdx.set(s.id, i));
 }
 
-function songRow(s,num,pid,opts={},vlistIdx,type){
+function songRow(s,num,pid,opts,vlistIdx,type){
+  const _h=_songRowBase(s,num,pid,opts,vlistIdx,type);
+  return (s.queue_skip&&S.view==='library')?_h.replace('class="song-row','class="q-disabled song-row'):_h;
+}
+
+function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   if(!type&&s.source==='downloading') type='downloading';
   if(!type&&s.dl_state==='downloading') type='downloading';
   if(!type&&s.dl_state==='unavailable') type='unavailable';
@@ -20443,7 +20485,7 @@ function _frameRate(rate) {
     const spikes = svg.querySelectorAll('.spiky-opt-el');
     for (let i = 0; i < SPIKY_NSPIKES && i < spikes.length; i++) {
       const energy = Math.max(0, (_spikyOuterR[i] - SPIKY_BASE_OUTER) / SPIKY_FREQ_GAIN);
-      const sy = 1 + energy * 1.4;
+      const sy = 0.5 + energy * 2;
       const syQ = Math.round(sy * 200) / 200;
       if (Math.abs(syQ - _spikyOptLastScales[i]) > 0.004) {
         // base rotation is baked into the parent <g class="spiky-rot"> in HTML
@@ -23604,6 +23646,18 @@ async function handleFiles(input) {
 // ═══════════════════════════════════════════════
 // CONTEXT MENU
 // ═══════════════════════════════════════════════
+async function toggleQueueSkip(ids, val) {
+  for (const id of ids) {
+    const sg = S.library.find(s => s.id === id);
+    if (sg) sg.queue_skip = val;
+    const vs = S.viewSongs.find(s => s.id === id);
+    if (vs) vs.queue_skip = val;
+    for (const row of _regGet(id)) row.classList.toggle('q-disabled', !!val && S.view === 'library');
+    try { await api('PATCH', '/api/songs/' + id, {queue_skip: val}); }
+    catch (err) { console.warn('queue_skip patch failed', err); }
+  }
+}
+
 function songCtx(e, sid, pid) {
   e.preventDefault();
   e.stopPropagation();
@@ -23629,6 +23683,10 @@ function songCtx(e, sid, pid) {
     items.push({icon: ICON_ADD_QUEUE, label:`add to queue (${ids.length})`, fn:()=>{ songs.forEach(sg=>S.queue.push(sg)); if(S.queueOpen)renderQueueSidebar(); }});
   }
   items.push({icon:'<svg width="16" height="14" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg>', label: multi ? `add to playlist (${ids.length})` : 'add to playlist', fn:()=> multi ? bulkAddToPl() : showAddToPl(sid)});
+  if (!pid) {
+    const _qOff = songs.length > 0 && songs.every(sg => sg.queue_skip);
+    items.push({icon: _qOff ? ICON_ADD_QUEUE : ICON_REMOVE, label: _qOff ? (multi ? `enable for queue (${ids.length})` : 'enable for queue') : (multi ? `disable from queue (${ids.length})` : 'disable from queue'), fn:()=> toggleQueueSkip(ids, _qOff ? 0 : 1)});
+  }
   if (pid && !multi) items.push({icon: ICON_REMOVE, label:'remove from playlist', fn:()=> rmFromPl(pid,sid)});
   if (pid && multi) items.push({icon: ICON_REMOVE, label:`remove from playlist (${ids.length})`, fn:()=>{ ids.forEach(id=>rmFromPl(pid,id)); }});
   if (!multi) items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><defs><mask id="ctx-m"><rect width="48" height="48" x="-12" y="-12" fill="white"/><rect x="5" y="6" width="14" height="2" rx="1" fill="black"/><rect x="5" y="10" width="8" height="2" rx="1" fill="black"/><rect x="5" y="14" width="6" height="2" rx="1" fill="black"/><rect x="5" y="18" width="12" height="2" rx="1" fill="black"/></mask></defs><rect x="0" y="0" width="24" height="24" rx="4.5" fill="currentColor" mask="url(#ctx-m)"/></svg>', label:'show details', fn:()=> showSongDetails(sid)});
