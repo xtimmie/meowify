@@ -517,10 +517,25 @@ def _backup_prune():
         total -= _size(f)
         _rm(f)
 
+_LOW_SPACE_MARGIN = 64 * 1024 * 1024
+
+def _free_space_ok(path, need_bytes, label, log):
+    try:
+        free = shutil.disk_usage(str(path)).free
+    except Exception:
+        return True
+    need = int(need_bytes) + _LOW_SPACE_MARGIN
+    if free < need:
+        log.warning(f'[{label}] skipped: low storage ({free // 1048576} MB free, need ~{need // 1048576} MB)')
+        return False
+    return True
+
 def _backup_snapshot(kind='daily'):
     with _BACKUP_LOCK:
         src_p = db_path()
         if not src_p.exists():
+            return None
+        if not _free_space_ok(src_p.parent, src_p.stat().st_size, 'snapshot', _log_backup):
             return None
         d = _backup_dir()
         ts = time.strftime('%Y%m%d-%H%M%S')
@@ -6378,7 +6393,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
                         tmp.unlink(missing_ok=True)
                         if _merge_ok is False:
                             _db_merge_failed = True
-                            results['errors'].append('db merge failed and was rolled back; library upload skipped (see [dbx merge] in the log)')
+                            results['errors'].append('db merge failed or was skipped (low storage?) and nothing was changed; library upload skipped (see [dbx merge] in the log)')
                         else:
                             results['pulled'].append('library.db')
                         _remote_db_hash_after_pull = None  # merged locally, remote is now stale
@@ -6827,6 +6842,12 @@ def _dbx_merge_db(local_path, remote_path):
     """returns True when the merge was applied, False when it failed and was rolled back."""
     import sqlite3 as _sq
     _merge_ok = True
+    try:
+        _need_merge = os.path.getsize(str(remote_path)) * 2
+    except Exception:
+        _need_merge = 0
+    if not _free_space_ok(Path(local_path).parent, _need_merge, 'dbx merge', _log_dbx):
+        return False
     # read all rows from remote into memory first, then write to local via the
     # WAL-safe db() context manager so we don't race with flask writes
     try:
