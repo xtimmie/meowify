@@ -10603,6 +10603,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 }
 .dl-unavailable{opacity:0.45;filter:grayscale(0.6);cursor:default;}
 .q-disabled{opacity:0.45;filter:grayscale(0.6);}
+.q-disabled.playing,.q-disabled.paused{opacity:1;filter:none;}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
