@@ -11367,14 +11367,14 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
     display:flex!important;
     transform:translateY(110%);
     pointer-events:none;
-    transition:transform var(--dur-5) var(--ease-spring-soft)!important;
+    transition:transform var(--dur-7) var(--ease-spring-soft)!important;
     animation:none!important;
     overflow-y:auto;
     gap:0!important;
   }
   #ctx.on,#dl-panel-float.on{
     display:flex!important;
-    transform:translateY(-100px);
+    transform:translateY(0);
     pointer-events:all;
     animation:none!important;
   }
