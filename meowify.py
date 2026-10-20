@@ -9858,7 +9858,7 @@ svg {overflow: visible}
 
 #app{
   display:grid;
-  grid-template-columns:200px 1fr;
+  grid-template-columns:var(--sidebar-w,200px) 1fr;
   grid-template-rows:1fr;
   height:calc(100vh / var(--zoom, 1));
   background:var(--color-surface-dim);
@@ -9878,6 +9878,12 @@ svg {overflow: visible}
   font:var(--type-headline-medium);font-variation-settings:var(--fv-headline);
   color:var(--color-primary);padding:4px 20px 20px;letter-spacing:-.5px;
 }
+#sidebar.narrow .logo-txt{display:none}
+#sidebar.narrow .logo{justify-content:center;padding-left:0;padding-right:0}
+#sidebar .nav-btn{white-space:nowrap}
+#sidebar-resize-handle{position:absolute;top:0;right:0;bottom:0;width:5px;cursor:col-resize;z-index:10;background:transparent;transition:background .15s}
+@media (hover: hover) {#sidebar-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent)}}
+#app.mobile #sidebar-resize-handle{display:none}
 .left-ear, .right-ear{
   transform-origin: bottom right;
 }
@@ -11867,6 +11873,7 @@ body.design-glassy .list-header.pinned::before{
 
 <div id="app" style="zoom:__BAKED_ZOOM__">
   <div id="sidebar" class="ui-sidebar">
+    <div id="sidebar-resize-handle" onmousedown="startSidebarResize(event)" ondblclick="_applySidebarW(200);saveSetting('sidebar_width',200).catch(()=>{})"></div>
     <div class="logo"> 
       <svg width="32" height="32" viewBox="0 0 164 179" style="flex-shrink:0">
         <g transform="translate(-46.33,-37.16)">
@@ -11885,7 +11892,7 @@ body.design-glassy .list-header.pinned::before{
           </g>
         </g>
       </svg>
-      meowify
+      <span class="logo-txt">meowify</span>
     </div>
     <div class="nav-sec">
       <button class="nav-btn mu-ripple active" id="nb-lib" onclick="setView('library')">
@@ -18921,6 +18928,55 @@ function _queueResizeMouseUp() {
 }
 
 // ── now playing sidebar resize ────────────────────────────────────────────────
+let _sbResizing = false;
+let _sbResizeStartX = 0;
+let _sbResizeStartW = 0;
+let _sbLogoNeed = 0;
+const SB_MIN_W = 64;
+const SB_MAX_W = 360;
+
+function _syncSidebarNarrow(w) {
+  const sb = document.getElementById('sidebar');
+  const txt = sb && sb.querySelector('.logo-txt');
+  if (!sb || !txt) return;
+  if (!sb.classList.contains('narrow')) {
+    const tw = txt.offsetWidth;
+    if (tw > 0) _sbLogoNeed = 40 + 32 + 10 + tw;
+  }
+  if (!_sbLogoNeed) return;
+  sb.classList.toggle('narrow', w < _sbLogoNeed);
+}
+
+function _applySidebarW(w) {
+  w = Math.max(SB_MIN_W, Math.min(SB_MAX_W, Math.round(w)));
+  document.getElementById('app').style.setProperty('--sidebar-w', w + 'px');
+  _syncSidebarNarrow(w);
+  return w;
+}
+
+function startSidebarResize(e) {
+  e.preventDefault();
+  _sbResizing = true;
+  _sbResizeStartX = e.clientX;
+  _sbResizeStartW = document.getElementById('sidebar').offsetWidth;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function _sidebarResizeMouseMove(e) {
+  if (!_sbResizing) return;
+  _applySidebarW(_sbResizeStartW + (e.clientX - _sbResizeStartX) / (_zoom || 1));
+}
+
+function _sidebarResizeMouseUp() {
+  if (!_sbResizing) return;
+  _sbResizing = false;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  const sb = document.getElementById('sidebar');
+  if (sb) saveSetting('sidebar_width', sb.offsetWidth).catch(() => {});
+}
+
 let _npResizing = false;
 let _npResizeStartX = 0;
 let _npResizeStartW = 0;
@@ -27307,6 +27363,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('vslider').value = Math.round(S.volume * 100);
   _updateVolSliderFill(S.volume);
   if (CFG.zoom !== undefined) { _zoom = _zoomTo = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
+  if (CFG.sidebar_width !== undefined) _applySidebarW(CFG.sidebar_width);
   if (CFG.queue_sidebar_width !== undefined) {
     const qs = document.getElementById('queue-sidebar');
     if (qs) qs.style.width = Math.max(Q_MIN_W, Math.min(Q_MAX_W, CFG.queue_sidebar_width)) + 'px';
@@ -27509,6 +27566,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.addEventListener('mousemove',e=>{
     _nowplayingResizeMouseMove(e);
+    _sidebarResizeMouseMove(e);
     _queueResizeMouseMove(e);
     _lyricsResizeMouseMove(e);
     if(!_dragCol)return;
@@ -27530,6 +27588,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.addEventListener('mouseup',()=>{
     _nowplayingResizeMouseUp();
+    _sidebarResizeMouseUp();
     _queueResizeMouseUp();
     _lyricsResizeMouseUp();
     if(_dragCol){
