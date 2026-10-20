@@ -20524,7 +20524,9 @@ function _frameRate(rate) {
     if (!svg) return;
 
     // fill — only write on change (theme switch, song load, etc.)
-    const themeStyle = _spikyThemeStyle(active);
+    const themeStyle = _spikyThemeStyle(true);
+    const _optOp = active ? '' : '0.35';
+    if (svg.style.opacity !== _optOp) svg.style.opacity = _optOp;
     if (themeStyle.fill !== _spikyOptLastFill) {
       svg.style.setProperty('--spiky-opt-fill', themeStyle.fill);
       _spikyOptLastFill = themeStyle.fill;
