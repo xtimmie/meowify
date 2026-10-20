@@ -9895,8 +9895,7 @@ svg {overflow: visible}
 #nb-pls{display:none}
 #sidebar.icons-only #nb-pls{display:flex}
 #sidebar.icons-only .pl-sec-hdr,#sidebar.icons-only #pl-list{display:none}
-#sidebar-resize-handle{position:absolute;top:0;right:0;bottom:0;width:5px;cursor:col-resize;z-index:10;background:transparent;transition:background .15s}
-@media (hover: hover) {#sidebar-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent)}}
+#sidebar-resize-handle{position:absolute;top:0;right:0;bottom:0;width:5px;cursor:col-resize;z-index:10;background:transparent}
 #app.mobile #sidebar-resize-handle{display:none}
 .left-ear, .right-ear{
   transform-origin: bottom right;
@@ -13102,7 +13101,7 @@ function applyVolSliderOrientation() {
   if (window.MU) MU.init(wrap);
 }
 
-const VOL_VERT_BELOW = 720;
+const VOL_VERT_BELOW = 580;
 function _fitVolOrientation() {
   const p = document.getElementById('player');
   const auto = !!p && p.clientWidth < VOL_VERT_BELOW;
