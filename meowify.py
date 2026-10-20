@@ -26830,7 +26830,9 @@ function renderSettings() {
               oninput="document.getElementById('zoom-lbl').textContent=Math.round(parseInt(this.value))+'%';"
               onpointerup="setZoom(parseInt(this.value)/100);if(S._vlist){S._vlist.ROW_H=0;S._vlist.refresh();}">
             <span id="zoom-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${Math.round((_zoomTo||1)*100)}%</span>
+            <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom out" onclick="adjustZoom(-0.1);setTimeout(renderSettings,50)">−</button>
             <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small)" onclick="setZoom(1);setTimeout(renderSettings,50)">reset</button>
+            <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom in" onclick="adjustZoom(0.1);setTimeout(renderSettings,50)">+</button>
           </div>
         `)}
       `) : ''}
