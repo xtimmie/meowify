@@ -11355,26 +11355,26 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   #ctx,#dl-panel-float{
     position:fixed!important;
     left:0!important;right:0!important;
-    bottom:0!important;top:auto!important;
+    bottom:-100px!important;top:auto!important;
     width:100%!important;
     max-height:calc(100% - 50px);
     border-radius:var(--radius-2xl) var(--radius-2xl) 0 0!important;
     border:none!important;
     box-shadow:var(--elevation-4)!important;
     z-index:1500;
-    padding:0 0 calc(env(safe-area-inset-bottom,0px) + 8px)!important;
+    padding:0 0 calc(env(safe-area-inset-bottom,0px) + 108px)!important;
     min-width:unset!important;
     display:flex!important;
-    transform:translateY(110%);
+    transform:translateY(0);
     pointer-events:none;
-    transition:transform var(--dur-5) var(--ease-out)!important;
+    transition:transform var(--dur-5) var(--ease-spring-soft)!important;
     animation:none!important;
     overflow-y:auto;
     gap:0!important;
   }
   #ctx.on,#dl-panel-float.on{
     display:flex!important;
-    transform:translateY(0);
+    transform:translateY(-100px);
     pointer-events:all;
     animation:none!important;
   }
@@ -17260,7 +17260,7 @@ function renderNowPlaying() {
   if (!S.nowPlayingOpen) return;
   const body = document.getElementById('nowplaying-body');
   if (!body) return;
-  const song = S.cur || {id: '', title: '-', artist: '', _empty: true};
+  const song = S.cur || {id: '', title: 'no song playing :v', artist: '', _empty: true};
 
   if (!song) {
     body.innerHTML = `<div class="np-cover-wrap"><div class="np-cover-inner"><div class="np-cover-placeholder">♪</div></div></div>
