@@ -15780,7 +15780,7 @@ function _updateMobNpWavy(prog) {
   // measure width only when cache is stale (set to 0 on resize or shell rebuild)
   if (_mobNpWavyW <= 0) {
     const rect = wrap.getBoundingClientRect();
-    if (rect.width > 0) _mobNpWavyW = rect.width;
+    if (rect.width > 0) _mobNpWavyW = rect.width / (_zoom || 1);
   }
   const W = _mobNpWavyW || 300;
   const H = 28;
@@ -15936,7 +15936,7 @@ function updateWavySeek(prog) {
   }
   const { wrap, trackPath, fillPath, thumb, svg } = _wavyElCache;
 
-  if (_wavyW <= 0) { const rect = wrap.getBoundingClientRect(); if (rect.width > 0) _wavyW = rect.width; }
+  if (_wavyW <= 0) { const rect = wrap.getBoundingClientRect(); if (rect.width > 0) _wavyW = rect.width / (_zoom || 1); }
   _wavyH = 28;
   if (_wavyW !== _wavyLastW) { svg.setAttribute('viewBox', `0 0 ${_wavyW} ${_wavyH}`); _wavyLastW = _wavyW; }
 
