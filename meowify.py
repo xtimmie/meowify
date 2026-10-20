@@ -10089,6 +10089,7 @@ svg {overflow: visible}
   position:relative;min-width:0;
   box-shadow:-2px 0 8px rgba(0,0,0,.10);
   align-self:stretch;
+  text-wrap: nowrap;
 }
 .nowplaying-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(110%);}
 .nowplaying-sidebar:not(.hidden){transform:translateX(0);}
@@ -10263,6 +10264,7 @@ svg {overflow: visible}
 }
 .np-cover-inner{
   width:100%;max-width:220px;
+  min-height: 220px;
   aspect-ratio:1;
   border-radius:18px;
   overflow:hidden;
@@ -10675,11 +10677,11 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .song-row.selected{background:color-mix(in oklch,var(--color-primary) 8%,transparent)}
 .song-row.selected .snum-num{color:var(--color-primary)}
 .sthumb{
-  width:44px;height:44px;border-radius:var(--radius-sm);
+  width:44px;height:44px;border-radius:var(--radius-md);
   object-fit:cover;background:var(--color-surface-container-high);flex-shrink:0;
   display:flex;align-items:center;justify-content:center;font-size:18px;
 }
-.sthumb img{width:100%;height:100%;border-radius:var(--radius-sm);object-fit:cover;display:block}
+.sthumb img{width:100%;height:100%;border-radius:var(--radius-md);object-fit:cover;display:block}
 .sinfo{overflow:hidden}
 .stitle{
   font:var(--type-body-medium);font-variation-settings:var(--fv-body);
@@ -20869,17 +20871,38 @@ function _setWinMode(v) {
   });
 }
 
-function setZoom(v) {
-  _zoom = Math.max(0.5, Math.min(2.0, Math.round(v * 10) / 10));
-  document.getElementById('app').style.zoom = _zoom;
-  document.documentElement.style.setProperty('--zoom', _zoom);
-  document.documentElement.style.setProperty('--ui-zoom', _zoom);
-  const lbl = document.getElementById('zoom-lbl');
-  if (lbl) lbl.textContent = Math.round(_zoom * 100) + '%';
-  saveSetting('zoom', _zoom);
+// ── zoom animation (tweak these) ──
+const ZOOM_ANIM_MS = 180;                 // 0 = instant
+const ZOOM_EASE = t => 1 - (1 - t) ** 3;  // easeOutCubic. linear: t => t, easeInOut: t => t < .5 ? 2*t*t : 1 - (-2*t + 2) ** 2 / 2
+
+let _zoomTo = _zoom;  // where zoom is heading (== _zoom when idle)
+let _zoomRaf = 0;
+
+function _applyZoom(z) {
+  _zoom = z;
+  document.getElementById('app').style.zoom = z;
+  document.documentElement.style.setProperty('--zoom', z);
+  document.documentElement.style.setProperty('--ui-zoom', z);
 }
 
-function adjustZoom(delta) { setZoom(_zoom + delta); }
+function setZoom(v) {
+  _zoomTo = Math.max(0.5, Math.min(2.0, Math.round(v * 10) / 10));
+  const lbl = document.getElementById('zoom-lbl');
+  if (lbl) lbl.textContent = Math.round(_zoomTo * 100) + '%';
+  saveSetting('zoom', _zoomTo);
+
+  cancelAnimationFrame(_zoomRaf);
+  const from = _zoom, to = _zoomTo, t0 = performance.now();
+  const step = now => {
+    const t = Math.min(1, (now - t0) / ZOOM_ANIM_MS);
+    _applyZoom(t < 1 ? from + (to - from) * ZOOM_EASE(t) : to);  // land exactly on target
+    if (t < 1) _zoomRaf = requestAnimationFrame(step);
+    else if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
+  };
+  _zoomRaf = requestAnimationFrame(step);
+}
+
+function adjustZoom(delta) { setZoom(_zoomTo + delta); }
 
 // ===============================================
 // NAVIGATION HISTORY
@@ -26728,11 +26751,11 @@ function renderSettings() {
         `) : ''}
         ${row('ui zoom', 'overrides browser zoom (ctrl+scroll also works)', `
           <div style="display:flex;align-items:center;gap:10px">
-            <input type="range" min="50" max="200" step="10" value="${Math.round((_zoom||1)*100)}"
+            <input type="range" min="50" max="200" step="10" value="${Math.round((_zoomTo||1)*100)}"
               class="slider" style="width:120px;"
               oninput="document.getElementById('zoom-lbl').textContent=Math.round(parseInt(this.value))+'%';"
               onpointerup="setZoom(parseInt(this.value)/100);if(S._vlist){S._vlist.ROW_H=0;S._vlist.refresh();}">
-            <span id="zoom-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${Math.round((_zoom||1)*100)}%</span>
+            <span id="zoom-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${Math.round((_zoomTo||1)*100)}%</span>
             <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small)" onclick="setZoom(1);setTimeout(renderSettings,50)">reset</button>
           </div>
         `)}
@@ -27195,7 +27218,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (CFG.volume !== undefined) engine.setVolume(CFG.volume);
   document.getElementById('vslider').value = Math.round(S.volume * 100);
   _updateVolSliderFill(S.volume);
-  if (CFG.zoom !== undefined) { _zoom = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
+  if (CFG.zoom !== undefined) { _zoom = _zoomTo = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
   if (CFG.queue_sidebar_width !== undefined) {
     const qs = document.getElementById('queue-sidebar');
     if (qs) qs.style.width = Math.max(Q_MIN_W, Math.min(Q_MAX_W, CFG.queue_sidebar_width)) + 'px';
