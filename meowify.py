@@ -10753,7 +10753,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   height:88px;
   box-shadow:0 -4px 24px rgba(0,0,0,.18);
 }
-.p-left{display:flex;align-items:center;gap:12px;overflow:visible;min-width:120px}
+.p-left{display:flex;align-items:center;gap:12px;overflow:visible;}
 .p-cover{
   width:52px;height:52px;border-radius:var(--radius-sm);
   background:var(--color-surface-container);flex-shrink:0;
@@ -13076,7 +13076,7 @@ function applyVolSliderOrientation() {
   const wrap = document.querySelector('.vol-row');
   const slider = document.getElementById('vslider');
   if (!wrap || !slider) return;
-  const vert = !!CFG.vertical_vol_slider;
+  const vert = !!CFG.vertical_vol_slider || !!window._volAuto;
   wrap.classList.toggle('vol-row-vert', vert);
   if (vert) {
     // move slider into popup div, create if needed
@@ -13100,6 +13100,28 @@ function applyVolSliderOrientation() {
   // re-init motionui on this slider
   slider._muInit = false;
   if (window.MU) MU.init(wrap);
+  requestAnimationFrame(_fitVolOrientation);
+}
+
+function _fitVolOrientation() {
+  const pr = document.querySelector('#player .p-right');
+  if (!pr || !(pr.clientWidth > 0)) return;
+  if (CFG.vertical_vol_slider) {
+    if (window._volAuto) { window._volAuto = false; applyVolSliderOrientation(); }
+    return;
+  }
+  const w = pr.clientWidth;
+  let want = !!window._volAuto;
+  if (!want) {
+    const squeezed = [...pr.querySelectorAll(':scope > .cbtn')].some(b => b.getBoundingClientRect().width < 31.5);
+    if (squeezed) { want = true; window._volAutoW = w; }
+  } else if (w > window._volAutoW + 8) {
+    want = false;
+  }
+  if (want !== !!window._volAuto) {
+    window._volAuto = want;
+    applyVolSliderOrientation();
+  }
 }
 
 function showNowPlayingCtx(e) {
@@ -27658,6 +27680,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   MU.init();
   applyVolSliderOrientation();
+  if (typeof ResizeObserver !== 'undefined') {
+    const _prEl = document.querySelector('#player .p-right');
+    if (_prEl) new ResizeObserver(_fitVolOrientation).observe(_prEl);
+  }
   updateVolIcon();
   updateSpikyBtn();
   initWavySeekbar();
