@@ -10758,7 +10758,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   font:var(--type-body-small);font-variation-settings:var(--fv-body);
   color:var(--color-on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.p-center{display:flex;flex-direction:column;align-items:center;gap:6px;padding:0 8px;position:absolute;left:50%;transform:translateX(-50%);pointer-events:none}
+.p-center{display:flex;flex-direction:column;align-items:center;gap:6px;padding:0 8px;position:absolute;left:50%;transform:translateX(-50%);pointer-events:none;width:min(480px,40cqi);max-width:40cqi}
 .p-center>*{pointer-events:all}
 .p-ctrls{display:flex;align-items:center;gap:4px}
 .cbtn{
