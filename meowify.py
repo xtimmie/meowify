@@ -11092,14 +11092,9 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .p-right{display:flex;align-items:center;justify-content:flex-end;gap:10px}
 .vol-row{display:flex;align-items:center;gap:5px;margin-right:6px;position:relative}
 @container(max-width:720px){
-  .p-right{gap:4px}
-  .vol-row{margin-right:2px;gap:3px}
-  input[type=range].vol{width:52px}
-}
-@container(max-width:560px){
-  .p-right{gap:2px}
-  .vol-row{margin-right:0;gap:2px}
-  input[type=range].vol{width:32px}
+  .p-right{gap:clamp(2px,0.8cqi,10px)}
+  .vol-row{margin-right:clamp(0px,0.5cqi,6px);gap:clamp(2px,0.5cqi,5px)}
+  input[type=range].vol{width:clamp(32px,8cqi,80px)}
 }
 .vol-row-vert{position:relative;align-items:center;justify-content:center;margin-right:6px}
 #vol-slider-popup{
