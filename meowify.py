@@ -10110,15 +10110,16 @@ svg {overflow: visible}
   .nowplaying-sidebar{
     position:fixed!important;
     left:0!important;right:0!important;
-    bottom:0!important;top:auto!important;
+    bottom:-100px!important;top:auto!important;
     width:100%!important;
-    max-height:calc(100% - 50px);
+    max-height:calc(100% - 50px + 100px);
     height:fit-content;
+    padding-bottom:100px;
     border-radius:var(--radius-2xl) var(--radius-2xl) 0 0;
     box-shadow:var(--elevation-4)!important;
     z-index:1500;
     transform:translateY(110%);
-    transition:transform var(--dur-5) var(--ease-out)!important;
+    transition:transform var(--dur-7) var(--ease-spring-soft)!important;
     overflow:hidden;
     flex-shrink:unset;
     min-width:unset;
