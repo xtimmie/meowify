@@ -10110,10 +10110,11 @@ svg {overflow: visible}
   .nowplaying-sidebar{
     position:fixed!important;
     left:0!important;right:0!important;
-    bottom:0!important;top:auto!important;
+    bottom:-100px!important;top:auto!important;
     width:100%!important;
-    max-height:calc(100% - 50px);
+    max-height:calc(100% - 50px + 100px);
     height:fit-content;
+    padding-bottom:100px;
     border-radius:var(--radius-2xl) var(--radius-2xl) 0 0;
     box-shadow:var(--elevation-4)!important;
     z-index:1500;
@@ -10257,6 +10258,14 @@ svg {overflow: visible}
 }
 .nowplaying-body::after{
   content:'';display:block;height:var(--bar-h);flex-shrink:0;
+}
+@media(max-width:767px){
+  .nowplaying-sidebar::before{
+    content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;
+    background:linear-gradient(to bottom,var(--cov-bleed-rgba,transparent) 0%,transparent 62%);
+    transition:background 1.1s cubic-bezier(0.4,0,0.2,1);
+    border-radius:inherit;
+  }
 }
 .np-cover-wrap{
   padding:12px 16px 0;
@@ -16169,6 +16178,10 @@ function _animateBleed(el, tR, tG, tB) {
 
 // apply cover color bleed to a container element
 function applyBleed(containerEl, imgEl) {
+  if (containerEl && containerEl.id === 'player') {
+    const _npSb = document.getElementById('nowplaying-sidebar');
+    if (_npSb) applyBleed(_npSb, imgEl);
+  }
   // accepts either an img element or a src string (legacy call from refreshBleed)
   if (!CFG.cover_art_bleed || !containerEl) {
     if (containerEl) {
@@ -16281,6 +16294,8 @@ function updatePlayerUI(song) {
     cov.innerHTML = '♪'; title.textContent = '-'; artist.textContent = '';
     const _playerEl = document.getElementById('player');
     if (_playerEl) _playerEl.style.removeProperty('--cov-bleed-rgba');
+    const _npSbClr = document.getElementById('nowplaying-sidebar');
+    if (_npSbClr) _npSbClr.style.removeProperty('--cov-bleed-rgba');
     document.getElementById('progfill').style.width = '0%';
     document.getElementById('progthumb').style.right = '100%';
     document.getElementById('tcur').textContent = '0:00';
@@ -16306,7 +16321,7 @@ function updatePlayerUI(song) {
     }
     const _albumLink = document.createElement('span');
     _albumLink.textContent = song.album;
-    _albumLink.style.cssText = 'cursor:pointer';
+    _albumLink.style.cssText = isMobile() ? '' : 'cursor:pointer';
     if (!isMobile()) {
       _albumLink.style.cursor = 'pointer';
       _albumLink.onmouseenter = () => { _albumLink.style.color = 'var(--color-primary)'; _albumLink.style.textDecoration = 'underline'; };
@@ -17244,7 +17259,7 @@ function renderNowPlaying() {
   if (!S.nowPlayingOpen) return;
   const body = document.getElementById('nowplaying-body');
   if (!body) return;
-  const song = S.cur;
+  const song = S.cur || {id: '', title: '-', artist: '', _empty: true};
 
   if (!song) {
     body.innerHTML = `<div class="np-cover-wrap"><div class="np-cover-inner"><div class="np-cover-placeholder">♪</div></div></div>
@@ -17290,9 +17305,9 @@ function renderNowPlaying() {
   </div></div>`;
 
   const _npHide = CFG.hidden_np_sections || {};
-  const lrcHtml = _npHide.lyrics ? '' : _npLrcSectionHtml(song);
+  const lrcHtml = (_npHide.lyrics || song._empty) ? '' : _npLrcSectionHtml(song);
   // if lyrics haven't loaded yet, kick off a fetch now regardless of how NP was opened
-  if (_npLrcMode === 'loading' && S.lyricsData == null && _npLrcFetchSongId !== song.id) {
+  if (song.id && _npLrcMode === 'loading' && S.lyricsData == null && _npLrcFetchSongId !== song.id) {
     _npLrcFetchSongId = song.id;
     (async (sid, fetchSong) => {
       const data = await fetch('/api/songs/' + sid + '/lyrics').then(r => r.json()).catch(() => null);
@@ -17402,8 +17417,8 @@ function renderNowPlaying() {
   const metaRows = [
     song.album ? ['album', null, song.album, song.album_id] : null,
     song.duration ? ['duration', fmt(song.duration), null, null] : null,
-    ['source', srcLabel, null, null],
-    ['plays', String(song.play_count || 0), null, null],
+    song._empty ? null : ['source', srcLabel, null, null],
+    song._empty ? null : ['plays', String(song.play_count || 0), null, null],
     feat ? ['featuring', feat, null, null] : null,
     song.loudness_lufs != null ? ['loudness', song.loudness_lufs.toFixed(1) + ' LUFS', null, null] : null,
   ].filter(Boolean);
@@ -17411,7 +17426,7 @@ function renderNowPlaying() {
   const metaHtml = metaRows.map(([l, v, albumName, albumId]) => {
     let valHtml;
     if (albumName != null) {
-      valHtml = albumId
+      valHtml = (albumId && !isMobile())
         ? `<span class="np-meta-value" style="cursor:pointer" onclick="${isMobile() ? 'toggleNowPlaying();' : ''}setView('album',null,'${albumId}')" onmouseenter="this.style.color='var(--color-primary)';this.style.textDecoration='underline'" onmouseleave="this.style.color='';this.style.textDecoration=''\">${esc(albumName)}</span>`
         : `<span class="np-meta-value">${esc(albumName)}</span>`;
     } else {
@@ -17426,7 +17441,7 @@ function renderNowPlaying() {
   // next in queue
   const nextSong = getNextSong();
   let nextHtml = '';
-  if (nextSong && nextSong.id !== song.id) {
+  if (nextSong && nextSong.id !== song.id && !song._empty) {
     const nCov = nextSong.cover_path
       ? `<img src="/cover/${nextSong.id}" alt="">`
       : '♪';
