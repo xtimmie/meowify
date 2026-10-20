@@ -20955,6 +20955,8 @@ function setZoom(v) {
   _zoomTo = Math.max(0.5, Math.min(2.0, Math.round(v * 10) / 10));
   const lbl = document.getElementById('zoom-lbl');
   if (lbl) lbl.textContent = Math.round(_zoomTo * 100) + '%';
+  const _zsl = document.getElementById('zoom-slider');
+  if (_zsl) _zsl.value = Math.round(_zoomTo * 100);
   CFG.zoom = _zoomTo;
   clearTimeout(_zoomSaveTimer);
   _zoomSaveTimer = setTimeout(_flushZoomSave, 400);
@@ -26824,15 +26826,17 @@ function renderSettings() {
           </div>
         `) : ''}
         ${row('ui zoom', 'overrides browser zoom (ctrl+scroll also works)', `
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="range" min="50" max="200" step="10" value="${Math.round((_zoomTo||1)*100)}"
+          <div style="display:flex;align-items:center;gap:5px">
+            <input type="range" id="zoom-slider" min="50" max="200" step="10" value="${Math.round((_zoomTo||1)*100)}"
               class="slider" style="width:120px;"
               oninput="document.getElementById('zoom-lbl').textContent=Math.round(parseInt(this.value))+'%';"
               onpointerup="setZoom(parseInt(this.value)/100);if(S._vlist){S._vlist.ROW_H=0;S._vlist.refresh();}">
             <span id="zoom-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${Math.round((_zoomTo||1)*100)}%</span>
-            <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom out" onclick="adjustZoom(-0.1);setTimeout(renderSettings,50)">−</button>
-            <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small)" onclick="setZoom(1);setTimeout(renderSettings,50)">reset</button>
-            <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom in" onclick="adjustZoom(0.1);setTimeout(renderSettings,50)">+</button>
+            <div style="display:flex;align-items:center;gap:2px">
+              <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom out" onclick="adjustZoom(-0.1)">−</button>
+              <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small)" onclick="setZoom(1)">reset</button>
+              <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small);min-width:28px" title="zoom in" onclick="adjustZoom(0.1)">+</button>
+            </div>
           </div>
         `)}
       `) : ''}
