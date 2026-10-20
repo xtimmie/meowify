@@ -13100,32 +13100,15 @@ function applyVolSliderOrientation() {
   // re-init motionui on this slider
   slider._muInit = false;
   if (window.MU) MU.init(wrap);
-  requestAnimationFrame(_fitVolOrientation);
 }
 
-const VOL_VERT_SLACK = 28;
+const VOL_VERT_BELOW = 720;
 function _fitVolOrientation() {
-  const pr = document.querySelector('#player .p-right');
-  if (!pr || !(pr.clientWidth > 0)) return;
-  if (CFG.vertical_vol_slider) {
-    if (window._volAuto) { window._volAuto = false; applyVolSliderOrientation(); }
-    return;
-  }
-  const w = pr.clientWidth;
-  let want = !!window._volAuto;
-  if (!want) {
-    const kids = [...pr.children].filter(c => c.getClientRects().length);
-    const gap = parseFloat(getComputedStyle(pr).columnGap) || 0;
-    const used = kids.reduce((a, c) => a + c.getBoundingClientRect().width, 0) + gap * Math.max(0, kids.length - 1);
-    const squeezed = kids.some(c => c.classList.contains('cbtn') && c.getBoundingClientRect().width < 31.5);
-    if (squeezed || w - used < VOL_VERT_SLACK) { want = true; window._volAutoW = w; }
-  } else if (w > window._volAutoW + VOL_VERT_SLACK + 8) {
-    want = false;
-  }
-  if (want !== !!window._volAuto) {
-    window._volAuto = want;
-    applyVolSliderOrientation();
-  }
+  const p = document.getElementById('player');
+  const auto = !!p && p.clientWidth < VOL_VERT_BELOW;
+  if (auto === !!window._volAuto) return;
+  window._volAuto = auto;
+  applyVolSliderOrientation();
 }
 
 function showNowPlayingCtx(e) {
@@ -27685,8 +27668,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   MU.init();
   applyVolSliderOrientation();
   if (typeof ResizeObserver !== 'undefined') {
-    const _prEl = document.querySelector('#player .p-right');
-    if (_prEl) new ResizeObserver(_fitVolOrientation).observe(_prEl);
+    const _plEl = document.getElementById('player');
+    if (_plEl) new ResizeObserver(_fitVolOrientation).observe(_plEl);
   }
   updateVolIcon();
   updateSpikyBtn();
