@@ -11649,9 +11649,8 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --pill: 4px 12px; --pill-r: 16px;
-  --ease-spring-bouncy: cubic-bezier(0.68, -0.35, 0.265, 1.50);
-  clip-path: inset(var(--pill) round var(--pill-r));
+  --pill: 4px 12px; --pill-r: 16px; --clip: 1px 9px;
+  clip-path: inset(var(--clip) round var(--pill-r));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
