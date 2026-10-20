@@ -10110,11 +10110,10 @@ svg {overflow: visible}
   .nowplaying-sidebar{
     position:fixed!important;
     left:0!important;right:0!important;
-    bottom:-100px!important;top:auto!important;
+    bottom:0!important;top:auto!important;
     width:100%!important;
-    max-height:calc(100% - 50px + 100px);
+    max-height:calc(100% - 50px);
     height:fit-content;
-    padding-bottom:100px;
     border-radius:var(--radius-2xl) var(--radius-2xl) 0 0;
     box-shadow:var(--elevation-4)!important;
     z-index:1500;
