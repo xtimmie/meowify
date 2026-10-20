@@ -10724,7 +10724,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 #player{
   position:fixed;bottom:0;left:0;right:0;z-index:120;
   container-type:inline-size;
-  display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  display:grid;grid-template-columns:minmax(0,1fr) 1fr minmax(0,1fr);
   align-items:center;
   background:var(--color-surface-container-lowest);
   border-top:1px solid var(--color-outline-variant);
@@ -12295,6 +12295,18 @@ const VIEW_COLS = {
 
 let _dragCol=null,_dragColRight=null,_dragStartX=0,_dragStartW=0,_dragStartWRight=0,_dragMoved=false;
 function isMobile(){return window.innerWidth<768;}
+let _listCompact=false;
+function isCompactList(){return isMobile()||_listCompact;}
+function _calcListCompact(view){
+  if(isMobile()){_listCompact=false;return true;}
+  const avail=_getAvailableTableW();
+  if(avail>0){
+    const cols=getViewCols(view||S.view);
+    const minW=cols.reduce((s,k)=>s+(COL_DEFS[k]?.min||24),0)+(cols.length-1)*12;
+    _listCompact=_listCompact?avail<minW+16:avail<minW;
+  }
+  return _listCompact;
+}
 
 function updateMobileClass(){
   const app = document.getElementById('app');
@@ -12795,7 +12807,7 @@ function applyColVars(cols,tableEl){
   targets.forEach(t=>{
     cols.forEach(k=>t.style.setProperty(`--cw-${k}`,_colVarValue(k)));
     t.style.setProperty('--song-table-tpl',tpl);
-    t.style.setProperty('--song-table-min-w', isMobile() ? '0px' : minW+'px');
+    t.style.setProperty('--song-table-min-w', isCompactList() ? '0px' : minW+'px');
   });
 }
 // get the true available width
@@ -12839,7 +12851,7 @@ function _tableStyle(cols){
   const tpl=cols.map(k=>`var(--cw-${k})`).join(' ');
   parts.push(`--song-table-tpl:${tpl}`);
   // on mobile rows don't use the grid - don't force desktop min-width via inline style
-  if(!isMobile()){
+  if(!isCompactList()){
     const minW=cols.reduce((s,k)=>s+(COL_DEFS[k]?.min||24),0)+(cols.length-1)*12;
     parts.push(`--song-table-min-w:${minW}px`);
   } else {
@@ -12850,7 +12862,8 @@ function _tableStyle(cols){
 function renderTable(viewName,songs,pid,listId,rowsOverride){
   const cols=getViewCols(viewName);
   const template=buildGridTemplate(cols);
-  const mob=isMobile();
+  const mob=_calcListCompact(viewName);
+  S._lastLibCompact=mob;
   const headerHtml=mob?'':`<div class="list-header">${buildHeaderCells(cols)}</div>`;
   const tStyle=_tableStyle(cols);
   S.viewSongs=[...songs];
@@ -16914,7 +16927,7 @@ function renderLibrary(){
   const _existingVlist = _lc.querySelector('[id^="vlist-"]');
   const _newIds = songs.map(s => s.id).join(',');
   const _oldIds = S._lastLibIds || '';
-  const _sameOrder = _newIds === _oldIds;
+  const _sameOrder = _newIds === _oldIds && _calcListCompact('library') === !!S._lastLibCompact;
 
   if (songs.length > 60) {
     // vlist path
@@ -17020,6 +17033,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   S.viewSongs=allTracks.filter(t=>t.owned).map(t=>S.library.find(s=>s.id===t.song_id)).filter(Boolean);
   _rebuildViewIdx();
   if(!filteredTracks.length){vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
+  _calcListCompact('album');
   const cols=getViewCols('album');
   const template=buildGridTemplate(cols);
   const rows=filteredTracks.map((t,i)=>{
@@ -19725,7 +19739,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   const cov=s.cover_path?`<img src="/cover/${covId}" alt="" onerror="this.parentElement.innerHTML='♪'">`:'♪';
   const titleStyle=isSpecial?'color:var(--color-on-surface-variant)':'';
 
-  if(isMobile()){
+  if(isCompactList()){
     const isSel=!isSpecial&&S.selected.has(s.id);
     const idx=vlistIdx!==undefined?vlistIdx:(_viewSongIdx.get(s.id)??S.viewSongs.indexOf(s));
     const _mobArtistHtml=artistNamesHtml(s.artist||'',s.featuring_artists||'');
@@ -21082,7 +21096,7 @@ class VirtualList {
     this.opts = opts;
     this.scrollerId = scrollerId || 'vc';
     this.rowRenderer = rowRenderer || null;
-    this.mob = isMobile();
+    this.mob = rowRenderer ? isMobile() : isCompactList();
     this.ROW_H = this.mob ? 66 : 58;
     this.BUFFER = 12;          // base buffer rows (normal scroll)
     this._bufferActive = 12;   // current effective buffer (expands on fast fling)
@@ -27593,6 +27607,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       rerenderCurrentView();
     },150);
   });
+
+  const _vcCompactEl=document.getElementById('vc');
+  if(_vcCompactEl&&typeof ResizeObserver!=='undefined'){
+    let _compactRaf=null;
+    new ResizeObserver(()=>{
+      if(_compactRaf)return;
+      _compactRaf=requestAnimationFrame(()=>{
+        _compactRaf=null;
+        if(isMobile()||_dragCol)return;
+        _vcPadCache=null;
+        const was=_listCompact;
+        if(_calcListCompact(S.view)===was)return;
+        clearTimeout(_resizeTimer);
+        _resizeTimer=setTimeout(()=>{
+          if(S._vlist){S._vlist.destroy();S._vlist=null;}
+          rerenderCurrentView();
+        },60);
+      });
+    }).observe(_vcCompactEl);
+  }
 
   function _syncSidebarsToMode(mobile) {
     const panels=[
