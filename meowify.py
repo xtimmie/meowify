@@ -10265,6 +10265,7 @@ svg {overflow: visible}
     background:linear-gradient(to bottom,var(--cov-bleed-rgba,transparent) 0%,transparent 62%);
     transition:background 1.1s cubic-bezier(0.4,0,0.2,1);
     border-radius:inherit;
+    corner-shape:inherit;
   }
 }
 .np-cover-wrap{
