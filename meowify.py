@@ -15771,6 +15771,8 @@ function _updateMobNpWavy(prog) {
     _mnwThumb = document.getElementById('mob-np-wavy-thumb');
     _mnwSvg   = document.getElementById('mob-np-wavy-svg');
     _mobNpWavyW = 0; // force re-measure after re-fetch
+    _mnwRO?.disconnect();
+    if (_mnwWrap && typeof ResizeObserver !== 'undefined') { _mnwRO = new ResizeObserver(_wavyResized); _mnwRO.observe(_mnwWrap); }
     _mnwLastPrimary = '';
     _mnwLastTrack = '';
   }
@@ -15875,6 +15877,15 @@ let _wavyH = 28;
 let _wavyLastPrimary = null;
 let _wavyLastTrack = null;
 let _wavyLastW = -1;
+let _wavyRO = null, _mnwRO = null;
+function _wavyResized() {
+  if (_zoomAnimating) return;
+  _wavyW = 0; _wavyLastW = -1; _mobNpWavyW = 0;
+  if (!CFG.wavy_seekbar) return;
+  const _p = _seekDragging ? _seekDragF : _wavyProgPct;
+  if (!isMobile()) updateWavySeek(_p);
+  if (S.nowPlayingOpen) _updateMobNpWavy(_p);
+}
 let _wavyElCache = null; // {wrap, trackPath, fillPath, thumb, svg}
 let _wavyProgPct = 0; // authoritative position 0..1 — written by updateProg/_commitSeekFrac, read by _wavyAnimTick
   const WAVY_AMP_IDLE   = 0.0;
@@ -15932,6 +15943,8 @@ function updateWavySeek(prog) {
       svg:      document.getElementById('wavy-seek-svg'),
     };
     _wavyLastPrimary = null; // force stroke write on next frame now that cache exists
+    _wavyRO?.disconnect();
+    if (typeof ResizeObserver !== 'undefined') { _wavyRO = new ResizeObserver(_wavyResized); _wavyRO.observe(wrap); }
     _wavyLastTrack = null;
   }
   const { wrap, trackPath, fillPath, thumb, svg } = _wavyElCache;
@@ -20877,6 +20890,7 @@ const ZOOM_EASE = t => 1 - (1 - t) ** 3;  // easeOutCubic. linear: t => t, easeI
 
 let _zoomTo = _zoom;  // where zoom is heading (== _zoom when idle)
 let _zoomRaf = 0;
+let _zoomAnimating = false;
 
 function _applyZoom(z) {
   _zoom = z;
@@ -20893,18 +20907,15 @@ function setZoom(v) {
 
   cancelAnimationFrame(_zoomRaf);
   const from = _zoom, to = _zoomTo, t0 = performance.now();
-  if (from === to) return;
+  if (from === to) { _zoomAnimating = false; return; }
+  _zoomAnimating = true;
   const step = now => {
     const t = ZOOM_ANIM_MS > 0 ? Math.max(0, Math.min(1, (now - t0) / ZOOM_ANIM_MS)) : 1;
     _applyZoom(t < 1 ? from + (to - from) * ZOOM_EASE(t) : to);  // land exactly on target
     if (t < 1) _zoomRaf = requestAnimationFrame(step);
     else {
-      _wavyW = 0; _wavyLastW = -1; _mobNpWavyW = 0;
-      if (CFG.wavy_seekbar) {
-        const _p = _seekDragging ? _seekDragF : _wavyProgPct;
-        if (!isMobile()) updateWavySeek(_p);
-        if (S.nowPlayingOpen) _updateMobNpWavy(_p);
-      }
+      _zoomAnimating = false;
+      _wavyResized();
       if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
     }
   };
