@@ -16322,7 +16322,7 @@ function updatePlayerUI(song) {
     }
     const _albumLink = document.createElement('span');
     _albumLink.textContent = song.album;
-    _albumLink.style.cssText = isMobile() ? '' : 'cursor:pointer';
+    _albumLink.style.cssText = isMobile() ? 'pointer-events:none' : 'cursor:pointer';
     if (!isMobile()) {
       _albumLink.style.cursor = 'pointer';
       _albumLink.onmouseenter = () => { _albumLink.style.color = 'var(--color-primary)'; _albumLink.style.textDecoration = 'underline'; };
@@ -17416,12 +17416,12 @@ function renderNowPlaying() {
   const srcLabel = (song.source || 'local').replace('_', ' ');
   const feat = song.featuring_artists ? song.featuring_artists : null;
   const metaRows = [
-    song.album ? ['album', null, song.album, song.album_id] : null,
-    song.duration ? ['duration', fmt(song.duration), null, null] : null,
-    song._empty ? null : ['source', srcLabel, null, null],
-    song._empty ? null : ['plays', String(song.play_count || 0), null, null],
-    feat ? ['featuring', feat, null, null] : null,
-    song.loudness_lufs != null ? ['loudness', song.loudness_lufs.toFixed(1) + ' LUFS', null, null] : null,
+    song._empty ? ['album', null, '-', null] : (song.album ? ['album', null, song.album, song.album_id] : null),
+    song._empty ? ['duration', '-', null, null] : (song.duration ? ['duration', fmt(song.duration), null, null] : null),
+    ['source', song._empty ? '-' : srcLabel, null, null],
+    ['plays', song._empty ? '-' : String(song.play_count || 0), null, null],
+    (!song._empty && feat) ? ['featuring', feat, null, null] : null,
+    (!song._empty && song.loudness_lufs != null) ? ['loudness', song.loudness_lufs.toFixed(1) + ' LUFS', null, null] : null,
   ].filter(Boolean);
 
   const metaHtml = metaRows.map(([l, v, albumName, albumId]) => {
