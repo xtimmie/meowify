@@ -11651,10 +11651,10 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --py: 4px; --px: min(12px, calc(50% - 32px)); --pill-r: 16px; --s: .8;
+  --lw: 36px; --py: 4px; --px: max(2px, min(12px, calc(50% - var(--lw)))); --pill-r: 16px; --s: .8;
   clip-path: inset(
     min(calc(50% - (50% - var(--py)) * var(--s)), 6px)
-    min(calc(50% - (50% - var(--px)) * var(--s)), calc(50% - 32px))
+    min(calc(50% - (50% - var(--px)) * var(--s)), max(0px, calc(50% - var(--lw))))
     round calc(var(--pill-r) * var(--s)));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
