@@ -11650,6 +11650,7 @@ body.design-glassy .list-header.pinned::before{
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
   --pill: 4px 12px; --pill-r: 16px;
+  --ease-spring-bouncy: cubic-bezier(0.68, -0.35, 0.265, 1.50);
   clip-path: inset(var(--pill) round var(--pill-r));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
@@ -11674,7 +11675,7 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab.active::before {
   opacity: 1;
   transform: scale(1);
-  transition: opacity .1s, transform var(--dur-3) var(--ease-spring);
+  transition: opacity .1s, transform var(--dur-3) var(--ease-spring-bouncy);
 }
 .mob-tab.active { color: var(--color-primary); }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
