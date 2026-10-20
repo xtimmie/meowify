@@ -11652,10 +11652,11 @@ body.design-glassy .list-header.pinned::before{
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
   --py: 4px; --px: 12px; --pill-r: 16px; --s: .8;
+  --c: max(var(--s), .9);
   clip-path: inset(
-    min(calc(50% - (50% - var(--py)) * var(--s)), 6px)
-    min(calc(50% - (50% - var(--px)) * var(--s)), calc(50% - 32px))
-    round calc(var(--pill-r) * var(--s)));
+    calc(50% - (50% - var(--py)) * var(--c))
+    calc(50% - (50% - var(--px)) * var(--c))
+    round calc(var(--pill-r) * var(--c)));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
