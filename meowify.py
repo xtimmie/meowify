@@ -20883,12 +20883,6 @@ function _applyZoom(z) {
   document.getElementById('app').style.zoom = z;
   document.documentElement.style.setProperty('--zoom', z);
   document.documentElement.style.setProperty('--ui-zoom', z);
-  _wavyW = 0; _wavyLastW = -1; _mobNpWavyW = 0;
-  if (CFG.wavy_seekbar) {
-    const _p = _seekDragging ? _seekDragF : _wavyProgPct;
-    if (!isMobile()) updateWavySeek(_p);
-    if (S.nowPlayingOpen) _updateMobNpWavy(_p);
-  }
 }
 
 function setZoom(v) {
@@ -20904,7 +20898,15 @@ function setZoom(v) {
     const t = ZOOM_ANIM_MS > 0 ? Math.max(0, Math.min(1, (now - t0) / ZOOM_ANIM_MS)) : 1;
     _applyZoom(t < 1 ? from + (to - from) * ZOOM_EASE(t) : to);  // land exactly on target
     if (t < 1) _zoomRaf = requestAnimationFrame(step);
-    else if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
+    else {
+      _wavyW = 0; _wavyLastW = -1; _mobNpWavyW = 0;
+      if (CFG.wavy_seekbar) {
+        const _p = _seekDragging ? _seekDragF : _wavyProgPct;
+        if (!isMobile()) updateWavySeek(_p);
+        if (S.nowPlayingOpen) _updateMobNpWavy(_p);
+      }
+      if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
+    }
   };
   _zoomRaf = requestAnimationFrame(step);
 }
