@@ -24829,9 +24829,9 @@ function _applyDesignImpl(design) {
   body.design-glassy .inp:focus{background:rgba(255,255,255,.08)!important;border-color:color-mix(in oklch,var(--color-primary) 70%,var(--glass-border-hi))!important;box-shadow:0 0 0 3px color-mix(in oklch,var(--color-primary) 15%,transparent)}
   body.design-glassy .prog-wrap{background:rgba(255,255,255,.08)!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #mobile-nav{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border)}
-  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:54px;bottom:6px;margin:0 5px;overflow:hidden;border:1px solid var(--glass-border);border-top:none;border-radius:0 0 28px 28px;box-shadow:none}
+  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:54px;bottom:0;margin:0;overflow:hidden;border:none;border-radius:0;box-shadow:none;background:color-mix(in oklch,var(--glass-bg-mid) 40%,transparent)!important}
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
-  body.design-glassy #app.mobile #player{bottom:60px;border-bottom:none;border-radius:34px 34px 0 0}
+  body.design-glassy #app.mobile #player{bottom:54px;margin:0;border-width:1px 0 0;border-radius:34px 34px 0 0}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
   body.design-glassy #global-prog{background:rgba(255,255,255,.07)!important}
   body.design-glassy .pl-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important;box-shadow:var(--glass-spec-panel)}
