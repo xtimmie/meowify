@@ -11648,7 +11648,9 @@ body.design-glassy .list-header.pinned::before{
 #app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; }
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 1px; flex: 1; padding: 2px 0 3px;
+  gap: 0; flex: 1; padding: 2px 0 3px;
+  --pill: 4px 12px; --pill-r: 16px;
+  clip-path: inset(var(--pill) round var(--pill-r));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
@@ -11661,8 +11663,8 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab::before {
   content: '';
   position: absolute;
-  inset: 4px 12px;
-  border-radius: 16px;
+  inset: var(--pill);
+  border-radius: var(--pill-r);
   background: color-mix(in oklch,var(--color-primary) 20%,#0000);
   opacity: 0;
   transform: scale(.6);
