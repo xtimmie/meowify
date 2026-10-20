@@ -9892,6 +9892,9 @@ svg {overflow: visible}
 #sidebar.icons-only .nav-btn{justify-content:center;gap:0;padding-left:0;padding-right:0}
 #sidebar.icons-only .nav-btn .nl{display:none}
 #sidebar.icons-only .pl-item .ni{display:none}
+#nb-pls{display:none}
+#sidebar.icons-only #nb-pls{display:flex}
+#sidebar.icons-only .pl-sec-hdr,#sidebar.icons-only #pl-list{display:none}
 #sidebar-resize-handle{position:absolute;top:0;right:0;bottom:0;width:5px;cursor:col-resize;z-index:10;background:transparent;transition:background .15s}
 @media (hover: hover) {#sidebar-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent)}}
 #app.mobile #sidebar-resize-handle{display:none}
@@ -11942,6 +11945,9 @@ body.design-glassy .list-header.pinned::before{
     </div>
     <div class="sdiv ui-divider"></div>
     <div class="pl-sec">
+      <button class="nav-btn mu-ripple" id="nb-pls" onclick="openPlaylistsView()" title="playlists">
+        <span class="ni" id="sb-pls-icon" style="overflow:visible;display:flex;align-items:center;justify-content:center"></span><span class="nl">playlists</span>
+      </button>
       <div class="pl-sec-hdr ui-section-hdr">
         <span>playlists</span>
         <button onclick="showCreatePl()" title="new playlist">+</button>
@@ -12359,6 +12365,13 @@ function setMobileTab(tab){
   } else {
     setView(tab);
   }
+}
+
+function openPlaylistsView(){
+  if(S._vlist){S._vlist.destroy();S._vlist=null;}
+  document.getElementById('vc').scrollTop=0;
+  setMobileTab('playlists');
+  document.getElementById('nb-pls')?.classList.add('active');
 }
 
 function renderMobilePlaylists(){
@@ -16662,6 +16675,8 @@ function updateHighlights() {
   window.plNoteAnim=function(pid){
     const el=document.querySelector(`.pl-item[data-id="${pid}"] svg.pl-note`);
     if(el)playNote(el);
+    const sbEl=document.querySelector('#nb-pls svg.pl-note');
+    if(sbEl&&sbEl.children.length>=3&&sbEl.getClientRects().length)playNote(sbEl);
     // animate mobile tab icon - re-query live each time
     if(isMobile()){
       const mobEl=document.querySelector('#mobile-nb-pls svg.pl-note');
@@ -16669,6 +16684,8 @@ function updateHighlights() {
     }
   };
   window.playMobNote=function(){
+    const sbEl=document.querySelector('#nb-pls svg.pl-note');
+    if(sbEl&&sbEl.children.length>=3&&sbEl.getClientRects().length)playNote(sbEl);
     const mobEl=document.querySelector('#mobile-nb-pls svg.pl-note');
     if(mobEl&&mobEl.children.length>=3) playNote(mobEl);
   };
@@ -16723,6 +16740,7 @@ function setView(v, pid, aid) {
   else if (v === 'add') document.getElementById('nb-add').classList.add('active');
   else if (v === 'stats') document.getElementById('nb-stats').classList.add('active');
   else if (v === 'settings') document.getElementById('nb-cfg').classList.add('active');
+  else if (v === 'playlist') document.getElementById('nb-pls')?.classList.add('active');
 
   const tacts = document.getElementById('tacts');
   tacts.innerHTML = '';
@@ -27662,6 +27680,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       noteSvg.setAttribute('height', '22');
       noteSvg.style.cssText = 'overflow:visible;translate:0 8px';
       mobPlSpan.appendChild(noteSvg);
+    }
+    const sbPlSpan = document.getElementById('sb-pls-icon');
+    if (sbPlSpan && window.makeNoteIcon) {
+      const noteSvg2 = window.makeNoteIcon();
+      noteSvg2.setAttribute('width', '22');
+      noteSvg2.setAttribute('height', '22');
+      noteSvg2.style.cssText = 'overflow:visible;translate:0 8px';
+      sbPlSpan.appendChild(noteSvg2);
     }
   })();
 
