@@ -9878,6 +9878,8 @@ svg {overflow: visible}
   font:var(--type-headline-medium);font-variation-settings:var(--fv-headline);
   color:var(--color-primary);padding:4px 20px 20px;letter-spacing:-.5px;
 }
+.logo-txt{font-size:calc(1em * var(--logo-s,1));white-space:nowrap}
+.logo-probe{position:absolute;visibility:hidden;pointer-events:none;white-space:nowrap}
 #sidebar.narrow .logo-txt{display:none}
 #sidebar.narrow .logo{justify-content:center;padding-left:0;padding-right:0}
 #sidebar .nav-btn{white-space:nowrap;min-width:0}
@@ -18944,18 +18946,37 @@ let _sbLogoNeed = 0;
 const SB_MIN_W = 64;
 const SB_MAX_W = 360;
 const SB_ICONS_W = 110;
+const SB_LOGO_MIN_S = 0.6;
 
 function _syncSidebarNarrow(w) {
   const sb = document.getElementById('sidebar');
+  if (!(w > 0)) return;
   if (sb) sb.classList.toggle('icons-only', w < SB_ICONS_W);
   const txt = sb && sb.querySelector('.logo-txt');
   if (!sb || !txt) return;
-  if (!sb.classList.contains('narrow')) {
-    const tw = txt.offsetWidth;
-    if (tw > 0) _sbLogoNeed = 40 + 32 + 10 + tw;
+  const logo = txt.parentElement;
+  let probe = logo.querySelector('.logo-probe');
+  if (!probe) {
+    probe = document.createElement('span');
+    probe.className = 'logo-probe';
+    probe.textContent = txt.textContent;
+    logo.appendChild(probe);
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        const ww = sb.offsetWidth;
+        if (ww > 0) _syncSidebarNarrow(ww);
+      });
+      ro.observe(probe);
+      ro.observe(sb);
+    }
   }
-  if (!_sbLogoNeed) return;
-  sb.classList.toggle('narrow', w < _sbLogoNeed);
+  const natural = probe.offsetWidth;
+  if (!natural) return;
+  const avail = w - 40 - 32 - 10;
+  const s = Math.floor(Math.min(1, avail / natural) * 1000) / 1000;
+  const hide = s < SB_LOGO_MIN_S;
+  sb.classList.toggle('narrow', hide);
+  if (!hide) txt.style.setProperty('--logo-s', s);
 }
 
 function _applySidebarW(w) {
@@ -27375,6 +27396,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   _updateVolSliderFill(S.volume);
   if (CFG.zoom !== undefined) { _zoom = _zoomTo = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
   if (CFG.sidebar_width !== undefined) _applySidebarW(CFG.sidebar_width);
+  else _syncSidebarNarrow(document.getElementById('sidebar').offsetWidth);
   if (CFG.queue_sidebar_width !== undefined) {
     const qs = document.getElementById('queue-sidebar');
     if (qs) qs.style.width = Math.max(Q_MIN_W, Math.min(Q_MAX_W, CFG.queue_sidebar_width)) + 'px';
