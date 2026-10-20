@@ -9848,7 +9848,7 @@ body.design-glassy input[type='range'].slider.slider-vert::-moz-range-thumb {
   --bar-track-margin:90px;
 }
 @media (max-width:767px){
-  :root{--bar-h:132px;--bar-track-margin:122px;}
+  :root{--bar-h:142px;--bar-track-margin:132px;}
   .queue-sidebar,.lyrics-sidebar{--bar-h:10px;--bar-track-margin:0px;}
   .nowplaying-sidebar{--bar-h:0px;--bar-track-margin:0px;}
   .nowplaying-sidebar .nowplaying-body{padding-bottom:16px;}
@@ -11619,7 +11619,7 @@ body.design-glassy .list-header.pinned::before{
   grid-template-columns: 1fr auto;
   padding: 8px 12px 19px;
   position: fixed;
-  bottom: 35px;
+  bottom: 45px;
   left: 0; right: 0;
   height: 87px;
   gap: 8px;
@@ -11645,7 +11645,7 @@ body.design-glassy .list-header.pinned::before{
   z-index: 50;
   border-top: 1px solid color-mix(in oklch, var(--color-outline-variant) 60%, transparent);
 }
-#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; }
+#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; }
 @property --s { syntax: '<number>'; inherits: true; initial-value: .8; }
 @keyframes tab-pop { from { --s: .6; } }
 .mob-tab {
