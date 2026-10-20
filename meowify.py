@@ -12297,6 +12297,8 @@ let _dragCol=null,_dragColRight=null,_dragStartX=0,_dragStartW=0,_dragStartWRigh
 function isMobile(){return window.innerWidth<768;}
 let _listCompact=false;
 function isCompactList(){return isMobile()||_listCompact;}
+const COMPACT_COLS=['num','title','menu'];
+function _effCols(cols){return(_listCompact&&!isMobile())?COMPACT_COLS:cols;}
 function _calcListCompact(view){
   if(isMobile()){_listCompact=false;return true;}
   const avail=_getAvailableTableW();
@@ -12793,6 +12795,7 @@ function buildHeaderCells(cols){
 // compute CSS value for one column - always returns px, no 1fr ever
 function _colVarValue(key){
   const c=COL_DEFS[key];if(!c)return'auto';
+  if(key==='title'&&_listCompact&&!isMobile())return'minmax(0,1fr)';
   if(c.fixed)return c.w+'px';
   let w=S.colWidths?.[key]??c.w;
   if(key==='source'&&(CFG.source_display||'icon')==='text')w=S.colWidths?.source??80;
@@ -12800,6 +12803,7 @@ function _colVarValue(key){
 }
 // push computed widths as CSS vars onto .song-table container(s)
 function applyColVars(cols,tableEl){
+  cols=_effCols(cols);
   const targets=tableEl?[tableEl]:document.querySelectorAll('.song-table');
   const tpl=cols.map(k=>`var(--cw-${k})`).join(' ');
   // min-width = sum of all col mins + gaps so table never collapses below readable size
@@ -12845,6 +12849,7 @@ function buildGridTemplate(cols){
   return cols.map(k=>COL_DEFS[k]?`var(--cw-${k})`:'auto').join(' ');
 }
 function _tableStyle(cols){
+  cols=_effCols(cols);
   // build the CSS vars inline so the element has correct columns from frame 0
   // - no rAF race, no flash of collapsed grid, VirtualList probe gets real height
   const parts=cols.map(k=>`--cw-${k}:${_colVarValue(k)}`);
@@ -19739,7 +19744,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   const cov=s.cover_path?`<img src="/cover/${covId}" alt="" onerror="this.parentElement.innerHTML='♪'">`:'♪';
   const titleStyle=isSpecial?'color:var(--color-on-surface-variant)':'';
 
-  if(isCompactList()){
+  if(isMobile()){
     const isSel=!isSpecial&&S.selected.has(s.id);
     const idx=vlistIdx!==undefined?vlistIdx:(_viewSongIdx.get(s.id)??S.viewSongs.indexOf(s));
     const _mobArtistHtml=artistNamesHtml(s.artist||'',s.featuring_artists||'');
@@ -19765,7 +19770,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
     </div>`;
   }
 
-  const cols=opts.cols||VIEW_COLS.library;
+  const cols=_effCols(opts.cols||VIEW_COLS.library);
   const template=opts.template||buildGridTemplate(cols);
   const isSel=!isSpecial&&S.selected.has(s.id);
   const idx=_viewSongIdx.get(s.id)??S.viewSongs.indexOf(s);
@@ -19779,7 +19784,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
 
   cell.thumb=`<div class="sthumb">${cov}</div>`;
   const _ghostTitleWrap = isGhost ? 'opacity:0.45;' : '';
-  cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):artistNamesHtml(s.artist||'',s.featuring_artists||'')}</div></div></div>`;
+  cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):artistNamesHtml(s.artist||'',s.featuring_artists||'')}${(!isSpecial&&_listCompact&&!isMobile()&&opts.view!=='album'&&s.album)?' · '+esc(s.album):''}</div></div></div>`;
   const _inAlbumView = opts.view === 'album';
   const _albLink = s.album_id && !_inAlbumView && !isMobile();
   cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}" onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${s.album_id}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(s.album||'')}</div>`;
@@ -21100,7 +21105,7 @@ class VirtualList {
     this.opts = opts;
     this.scrollerId = scrollerId || 'vc';
     this.rowRenderer = rowRenderer || null;
-    this.mob = rowRenderer ? isMobile() : isCompactList();
+    this.mob = isMobile();
     this.ROW_H = this.mob ? 66 : 58;
     this.BUFFER = 12;          // base buffer rows (normal scroll)
     this._bufferActive = 12;   // current effective buffer (expands on fast fling)
