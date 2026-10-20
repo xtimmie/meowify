@@ -11646,15 +11646,20 @@ body.design-glassy .list-header.pinned::before{
   border-top: 1px solid color-mix(in oklch, var(--color-outline-variant) 60%, transparent);
 }
 #app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; }
+@property --s { syntax: '<number>'; inherits: true; initial-value: .8; }
+@keyframes tab-pop { from { --s: .6; } }
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --pill: 4px 12px; --pill-r: 16px; --clip: 1px 9px;
-  clip-path: inset(var(--clip) round var(--pill-r));
+  --py: 4px; --px: 12px; --pill-r: 16px; --s: .8;
+  clip-path: inset(
+    min(calc(50% - (50% - var(--py)) * var(--s)), 6px)
+    min(calc(50% - (50% - var(--px)) * var(--s)), calc(50% - 32px))
+    round calc(var(--pill-r) * var(--s)));
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
-  transition: color var(--dur-2);
+  transition: color var(--dur-2), --s .15s;
   -webkit-tap-highlight-color: transparent;
   position: relative;
   overflow: hidden;
@@ -11663,20 +11668,16 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab::before {
   content: '';
   position: absolute;
-  inset: var(--pill);
+  inset: var(--py) var(--px);
   border-radius: var(--pill-r);
   background: color-mix(in oklch,var(--color-primary) 20%,#0000);
   opacity: 0;
-  transform: scale(.6);
-  transition: opacity .1s;
+  transform: scale(var(--s));
+  transition: opacity .15s;
   z-index: -1;
 }
-.mob-tab.active::before {
-  opacity: 1;
-  transform: scale(1);
-  transition: opacity .1s, transform var(--dur-3) var(--ease-spring-bouncy);
-}
-.mob-tab.active { color: var(--color-primary); }
+.mob-tab.active { color: var(--color-primary); --s: 1; animation: tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy); }
+.mob-tab.active::before { opacity: 1; transition: opacity .1s; }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
 /* mobile seekbar */
 #mob-seek {
