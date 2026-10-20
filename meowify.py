@@ -13103,6 +13103,7 @@ function applyVolSliderOrientation() {
   requestAnimationFrame(_fitVolOrientation);
 }
 
+const VOL_VERT_SLACK = 28;
 function _fitVolOrientation() {
   const pr = document.querySelector('#player .p-right');
   if (!pr || !(pr.clientWidth > 0)) return;
@@ -13113,9 +13114,12 @@ function _fitVolOrientation() {
   const w = pr.clientWidth;
   let want = !!window._volAuto;
   if (!want) {
-    const squeezed = [...pr.querySelectorAll(':scope > .cbtn')].some(b => b.getBoundingClientRect().width < 31.5);
-    if (squeezed) { want = true; window._volAutoW = w; }
-  } else if (w > window._volAutoW + 8) {
+    const kids = [...pr.children].filter(c => c.getClientRects().length);
+    const gap = parseFloat(getComputedStyle(pr).columnGap) || 0;
+    const used = kids.reduce((a, c) => a + c.getBoundingClientRect().width, 0) + gap * Math.max(0, kids.length - 1);
+    const squeezed = kids.some(c => c.classList.contains('cbtn') && c.getBoundingClientRect().width < 31.5);
+    if (squeezed || w - used < VOL_VERT_SLACK) { want = true; window._volAutoW = w; }
+  } else if (w > window._volAutoW + VOL_VERT_SLACK + 8) {
     want = false;
   }
   if (want !== !!window._volAuto) {
