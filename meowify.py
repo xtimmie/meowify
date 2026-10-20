@@ -11658,18 +11658,22 @@ body.design-glassy .list-header.pinned::before{
   overflow: hidden;
   line-height: 14px;
 }
-/* top indicator line */
 .mob-tab::before {
   content: '';
   position: absolute;
-  top: 0; left: 0%; right: 0%;
-  height: 100%;
-  background:color-mix(in oklch,var(--color-primary) 20%,#0000);
-  transform: scaleX(0);
-  transition: .1s cubic-bezier(1,0,1,0);
-  z-index: 1;
+  inset: 4px 12px;
+  border-radius: 16px;
+  background: color-mix(in oklch,var(--color-primary) 20%,#0000);
+  opacity: 0;
+  transform: scale(.6);
+  transition: opacity .1s;
+  z-index: -1;
 }
-.mob-tab.active::before { transform: scaleX(1); transition: transform var(--dur-3) var(--ease-spring)}
+.mob-tab.active::before {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity .1s, transform var(--dur-3) var(--ease-spring);
+}
 .mob-tab.active { color: var(--color-primary); }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
 /* mobile seekbar */
@@ -24823,7 +24827,7 @@ function _applyDesignImpl(design) {
   @media (hover: hover) {body.design-glassy .search-track:hover{background:var(--glass-bg-hi)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .dl-item{background:var(--glass-bg-mid)!important;border-color:var(--glass-border)!important}
   body.design-glassy .mob-tab{transition:color var(--dur-2)}
-  body.design-glassy .mob-tab::after{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
+  body.design-glassy .mob-tab::before{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
   body.design-glassy #mobile-nav{box-shadow:0 -1px 0 var(--glass-border-hi) inset}
   body.design-glassy .inp{background:rgba(255,255,255,.05)!important;border-color:var(--glass-border)!important}
   body.design-glassy .inp:focus{background:rgba(255,255,255,.08)!important;border-color:color-mix(in oklch,var(--color-primary) 70%,var(--glass-border-hi))!important;box-shadow:0 0 0 3px color-mix(in oklch,var(--color-primary) 15%,transparent)}
