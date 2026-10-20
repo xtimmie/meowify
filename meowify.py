@@ -11365,7 +11365,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
     padding:0 0 calc(env(safe-area-inset-bottom,0px) + 108px)!important;
     min-width:unset!important;
     display:flex!important;
-    transform:translateY(0);
+    transform:translateY(110%);
     pointer-events:none;
     transition:transform var(--dur-5) var(--ease-spring-soft)!important;
     animation:none!important;
