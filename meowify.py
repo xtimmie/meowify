@@ -27679,7 +27679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const noteSvg = window.makeNoteIcon();
       noteSvg.setAttribute('width', '22');
       noteSvg.setAttribute('height', '22');
-      noteSvg.style.cssText = 'overflow:visible;translate:0 8px';
+      noteSvg.style.cssText = 'overflow:visible;translate:-1.5px 8px';
       mobPlSpan.appendChild(noteSvg);
     }
     const sbPlSpan = document.getElementById('sb-pls-icon');
@@ -27687,7 +27687,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const noteSvg2 = window.makeNoteIcon();
       noteSvg2.setAttribute('width', '22');
       noteSvg2.setAttribute('height', '22');
-      noteSvg2.style.cssText = 'overflow:visible;translate:-2.5px 8px';
+      noteSvg2.style.cssText = 'overflow:visible;translate:-1.5px 8px';
       sbPlSpan.appendChild(noteSvg2);
     }
   })();
