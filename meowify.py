@@ -24690,6 +24690,7 @@ function _applyDesignImpl(design) {
   body.design-glassy .mob-sort-btn{background:color-mix(in oklch,var(--color-primary) 16%,rgba(255,255,255,.06))!important;color:var(--color-primary)!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #ctx,body.design-glassy #dl-panel-float{background:color-mix(in oklch,var(--color-surface-container-highest) 50%,transparent)!important;backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-color:var(--glass-border-hi)!important;box-shadow:var(--glass-spec-panel)!important}
   @media(max-width:767px){body.design-glassy #ctx,body.design-glassy #dl-panel-float{border:none!important;border-top:1px solid var(--glass-border-hi)!important;box-shadow:none!important}}
+  body.design-glassy #ctx{border:none!important}
   body.design-glassy .subnav-btn{background:var(--glass-bg)!important}
   @media (hover: hover) {body.design-glassy .subnav-btn:hover{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .subnav-btn.on{background:color-mix(in oklch,var(--color-primary) 22%,rgba(255,255,255,.06))!important;box-shadow:var(--glass-spec-panel)}
