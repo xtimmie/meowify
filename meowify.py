@@ -9880,7 +9880,16 @@ svg {overflow: visible}
 }
 #sidebar.narrow .logo-txt{display:none}
 #sidebar.narrow .logo{justify-content:center;padding-left:0;padding-right:0}
-#sidebar .nav-btn{white-space:nowrap}
+#sidebar .nav-btn{white-space:nowrap;min-width:0}
+#sidebar .nav-btn .ni{flex-shrink:0}
+#sidebar .nav-btn .nl,.pl-item .pl-name,.pl-sec-hdr>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-sec{overflow-x:hidden}
+.pl-item{min-width:0}
+.pl-item .ni{flex-shrink:0}
+.pl-sec-hdr button{flex-shrink:0}
+#sidebar.icons-only .nav-btn{justify-content:center;gap:0;padding-left:0;padding-right:0}
+#sidebar.icons-only .nav-btn .nl{display:none}
+#sidebar.icons-only .pl-item .ni{display:none}
 #sidebar-resize-handle{position:absolute;top:0;right:0;bottom:0;width:5px;cursor:col-resize;z-index:10;background:transparent;transition:background .15s}
 @media (hover: hover) {#sidebar-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent)}}
 #app.mobile #sidebar-resize-handle{display:none}
@@ -11900,20 +11909,20 @@ body.design-glassy .list-header.pinned::before{
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path d="M12.6,15.1c-9,-4.2 -11,6.9 -3.1,6.9c3.5,0 5.5,-1.8 5.5,-5c0,-.1 0,-9.4 0,-11.2c0,0 2.4,.5 3.8,4c3.2,-5.4 -6.3,-9.8 -6.3,-6.7c0,2.8 .1,8.7 .1,12.1Z" fill="currentColor"/>
           </svg>
-        </span>library
+        </span><span class="nl">library</span>
       </button>
       <button class="nav-btn mu-ripple" id="nb-add" onclick="setView('add')">
         <span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4">
           <line x1="12" y1="4" x2="12" y2="20"/>
           <line x1="4" y1="12" x2="20" y2="12"/>
-        </svg></span>add music
+        </svg></span><span class="nl">add music</span>
       </button>
       <button class="nav-btn mu-ripple" id="nb-stats" onclick="setView('stats')">
         <span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="5" y2="19"/>
           <line x1="19" y1="9" x2="19" y2="19"/>
-        </svg></span>stats
+        </svg></span><span class="nl">stats</span>
       </button>
 
       <button class="nav-btn mu-ripple" id="nb-cfg" onclick="setView('settings')" style="display:none">
@@ -11925,7 +11934,7 @@ body.design-glassy .list-header.pinned::before{
             </mask>
           </defs>
           <path id="gear-path" fill="currentColor" mask="url(#gear-mask-inline)"/>
-        </svg></span>settings
+        </svg></span><span class="nl">settings</span>
       </button>
 
     </div>
@@ -18934,9 +18943,11 @@ let _sbResizeStartW = 0;
 let _sbLogoNeed = 0;
 const SB_MIN_W = 64;
 const SB_MAX_W = 360;
+const SB_ICONS_W = 110;
 
 function _syncSidebarNarrow(w) {
   const sb = document.getElementById('sidebar');
+  if (sb) sb.classList.toggle('icons-only', w < SB_ICONS_W);
   const txt = sb && sb.querySelector('.logo-txt');
   if (!sb || !txt) return;
   if (!sb.classList.contains('narrow')) {
@@ -24006,7 +24017,7 @@ function renderPlNav() {
   el.innerHTML = S.playlists.map(p => `
     <div class="pl-item mu-ripple ${S.activePid===p.id&&S.view==='playlist'?'active':''}\" data-id="${p.id}"
       onclick="setView('playlist','${p.id}')" oncontextmenu="plCtx(event,'${p.id}')">
-      <span class="ni" data-note-pid="${p.id}"></span>${esc(p.name)}
+      <span class="ni" data-note-pid="${p.id}"></span><span class="pl-name">${esc(p.name)}</span>
     </div>`).join('');
   el.querySelectorAll('[data-note-pid]').forEach(span => span.appendChild(makeNoteIcon()));
 }
