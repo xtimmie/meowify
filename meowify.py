@@ -10418,6 +10418,11 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   min-height:38px;
   display:flex;align-items:flex-start;flex-direction:column;gap:3px;
   text-align:left;
+  text-wrap:wrap;
+  justify-content:space-evenly;
+}
+.np-lrc-preview:has(.np-lrc-line) {
+  min-height:105px;
 }
 .np-lrc-section{margin:10px 14px 0}
 .np-lrc-label{
@@ -11324,7 +11329,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #ctx,#dl-panel-float{
   position:fixed;z-index:1000;
   background:var(--color-surface-container-high);
-  border:1px solid var(--color-outline-variant);
+  border:1px solid var(--color-surface-container-highest);
   border-radius:var(--radius-lg);
   box-shadow:0 8px 32px rgba(0,0,0,.55);
   padding:5px;min-width:176px;
@@ -11387,7 +11392,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .cx-item.err{color:var(--color-error)}
 .cx-item.err .cx-icon{color:color-mix(in oklch,var(--color-error) 70%,var(--color-on-surface-variant))}
 .cx-icon{font-size:14px;width:20px;text-align:center;color:var(--color-on-surface-variant);flex-shrink:0;}
-.cx-sep{height:1px;background:var(--color-outline-variant);margin:3px 0}
+.cx-sep{height:1px;background:var(--color-surface-container);margin:3px 0}
 .cx-header{padding:6px 14px 2px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.08em;pointer-events:none;user-select:none}
 /* modal */
 #modal{
@@ -18512,7 +18517,7 @@ function _npLrcSectionHtml(song) {
       <div class="np-lrc-label ui-section-hdr">lyrics</div>
       <div class="np-lrc-preview np-lrc-plain-wrap" onclick="toggleLyrics()" style="position:relative;overflow:hidden">
         ${lines.map(l => `<div class="np-lrc-plain-line">${esc(l)}</div>`).join('')}
-        <div style="position:absolute;bottom:0;left:0;right:0;height:28px;background:linear-gradient(transparent,var(--color-surface-container));pointer-events:none"></div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:50px;background:linear-gradient(transparent,var(--color-surface-container));pointer-events:none"></div>
       </div>
     </div>`;
   }
@@ -20886,7 +20891,7 @@ function _setWinMode(v) {
 
 // ── zoom animation (tweak these) ──
 const ZOOM_ANIM_MS = 180;                 // 0 = instant
-const ZOOM_EASE = t => 1 - (1 - t) ** 3;  // easeOutCubic. linear: t => t, easeInOut: t => t < .5 ? 2*t*t : 1 - (-2*t + 2) ** 2 / 2
+const ZOOM_EASE = t => 1 - (1 - t) ** 10;  // easeOutCubic. linear: t => t, easeInOut: t => t < .5 ? 2*t*t : 1 - (-2*t + 2) ** 2 / 2
 
 let _zoomTo = _zoom;  // where zoom is heading (== _zoom when idle)
 let _zoomRaf = 0;
@@ -20899,11 +20904,29 @@ function _applyZoom(z) {
   document.documentElement.style.setProperty('--ui-zoom', z);
 }
 
+let _zoomSaveTimer = 0;
+
+function _flushZoomSave() {
+  clearTimeout(_zoomSaveTimer);
+  _zoomSaveTimer = 0;
+  CFG.zoom = _zoomTo;
+  api('POST', '/api/settings', {zoom: _zoomTo});
+}
+
+window.addEventListener('beforeunload', () => {
+  if (!_zoomSaveTimer) return;
+  clearTimeout(_zoomSaveTimer);
+  _zoomSaveTimer = 0;
+  navigator.sendBeacon('/api/settings', new Blob([JSON.stringify({zoom: _zoomTo})], {type: 'application/json'}));
+});
+
 function setZoom(v) {
   _zoomTo = Math.max(0.5, Math.min(2.0, Math.round(v * 10) / 10));
   const lbl = document.getElementById('zoom-lbl');
   if (lbl) lbl.textContent = Math.round(_zoomTo * 100) + '%';
-  saveSetting('zoom', _zoomTo);
+  CFG.zoom = _zoomTo;
+  clearTimeout(_zoomSaveTimer);
+  _zoomSaveTimer = setTimeout(_flushZoomSave, 400);
 
   cancelAnimationFrame(_zoomRaf);
   const from = _zoom, to = _zoomTo, t0 = performance.now();
