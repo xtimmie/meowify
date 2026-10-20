@@ -19769,7 +19769,7 @@ function _initColResizeObserver() {
   _fitColsToWidth(cols,_getAvailableTableW());
   applyColVars(cols);
   _colResizeObserver = new ResizeObserver(() => {
-    if(_dragCol)return;
+    if(_dragCol||_zoomAnimating)return;
     if(_colResizeRaf)return; // already queued for this frame
     _colResizeRaf=requestAnimationFrame(()=>{
       _colResizeRaf=null;
@@ -20872,11 +20872,12 @@ function _setWinMode(v) {
 }
 
 // ── zoom animation (tweak these) ──
-const ZOOM_ANIM_MS = 180;                 // 0 = instant
+const ZOOM_ANIM_MS = 130;                 // 0 = instant. lower = snappier/less lag
 const ZOOM_EASE = t => 1 - (1 - t) ** 3;  // easeOutCubic. linear: t => t, easeInOut: t => t < .5 ? 2*t*t : 1 - (-2*t + 2) ** 2 / 2
 
 let _zoomTo = _zoom;  // where zoom is heading (== _zoom when idle)
 let _zoomRaf = 0;
+let _zoomAnimating = false;  // lets the column-fit observer sit out until the anim ends
 
 function _applyZoom(z) {
   _zoom = z;
@@ -20895,9 +20896,9 @@ function setZoom(v) {
   const from = _zoom, to = _zoomTo, t0 = performance.now();
   const step = now => {
     const t = Math.min(1, (now - t0) / ZOOM_ANIM_MS);
+    _zoomAnimating = t < 1;
     _applyZoom(t < 1 ? from + (to - from) * ZOOM_EASE(t) : to);  // land exactly on target
     if (t < 1) _zoomRaf = requestAnimationFrame(step);
-    else if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
   };
   _zoomRaf = requestAnimationFrame(step);
 }
@@ -26754,7 +26755,7 @@ function renderSettings() {
             <input type="range" min="50" max="200" step="10" value="${Math.round((_zoomTo||1)*100)}"
               class="slider" style="width:120px;"
               oninput="document.getElementById('zoom-lbl').textContent=Math.round(parseInt(this.value))+'%';"
-              onpointerup="setZoom(parseInt(this.value)/100);if(S._vlist){S._vlist.ROW_H=0;S._vlist.refresh();}">
+              onpointerup="setZoom(parseInt(this.value)/100)">
             <span id="zoom-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${Math.round((_zoomTo||1)*100)}%</span>
             <button class="btn btn-out mu-ripple" style="padding:5px 10px;font:var(--type-label-small)" onclick="setZoom(1);setTimeout(renderSettings,50)">reset</button>
           </div>
