@@ -9967,6 +9967,7 @@ svg {overflow: visible}
 @media (hover: hover) {.nav-btn:hover{background:color-mix(in oklch,var(--color-on-surface) 8%,transparent);color:var(--color-on-surface)}}
 .nav-btn.active{background:var(--color-primary-container);color:var(--color-on-primary-container)}
 .nav-btn .ni{font-size:18px;width:22px;text-align:center;line-height:1}
+#nb-stats .ni svg{translate:-1px 0}
 .sdiv{height:1px;background:color-mix(in oklch,var(--color-outline-variant) 40%,transparent);margin:8px 16px}
 .pl-sec{flex:1;overflow-y:auto;padding:0 8px var(--bar-h)}
 .pl-sec::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
@@ -27686,7 +27687,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const noteSvg2 = window.makeNoteIcon();
       noteSvg2.setAttribute('width', '22');
       noteSvg2.setAttribute('height', '22');
-      noteSvg2.style.cssText = 'overflow:visible;translate:0 8px';
+      noteSvg2.style.cssText = 'overflow:visible;translate:-2.5px 8px';
       sbPlSpan.appendChild(noteSvg2);
     }
   })();
