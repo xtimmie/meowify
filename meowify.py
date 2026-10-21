@@ -1419,7 +1419,14 @@ def _spotify_track_info(track_url, retries=4):
         except Exception as e:
             if attempt < retries - 1: time.sleep(2.0 * (attempt + 1))
             else: _log_spotify.warning('spotify page scrape err: %s', e)
-    return {'title': title, 'artist': artist} if title else None
+    return {'title': title, 'artist': artist, 'url': _canon_spotify_url(clean)} if title else None
+
+def _canon_spotify_url(u):
+    """any spotify track url / uri -> https://open.spotify.com/track/ID, or None (local files, junk)"""
+    u = (u or '').strip()
+    m = re.search(r'open\.spotify\.com/(?:intl-[a-z]{2,}/|[a-z]{2}/)?track/([A-Za-z0-9]{22})', u) \
+        or re.match(r'spotify:track:([A-Za-z0-9]{22})', u)
+    return f'https://open.spotify.com/track/{m.group(1)}' if m else None
 
 # ── download manager ───────────────────────────────────────────────────────────
 
@@ -3415,7 +3422,7 @@ def _delete_placeholder(sid):
     if deleted:
         _safe_remove_cover(cover_path, exclude_song_id=sid)
 
-def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=False, is_video=False, ytm_album=None, ytm_track_num=0, ytm_track_title='', batch_id=None):
+def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=False, is_video=False, ytm_album=None, ytm_track_num=0, ytm_track_title='', batch_id=None, spotify_url=None):
     import tempfile, random as _rnd
     with _cfg_lock:
         _pname = CFG.get('dl_speed_batch' if is_batch else 'dl_speed_single',
@@ -3917,6 +3924,8 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                     # the downloaded video is the music video, link it so the mv feature has it from the start
                     c.execute("UPDATE songs SET mv_video_id=?, mv_url=? WHERE id=?",
                               (_dl_vid, f'https://www.youtube.com/watch?v={_dl_vid}', sid))
+            if spotify_url:
+                c.execute("UPDATE songs SET spotify_url=? WHERE id=?", (spotify_url, sid))
             _final = c.execute("SELECT title,artist,album,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
         if _final:
             write_meta(str(dest), _final[0], _final[1] or '', _final[2] or '', track_num, _final[3] or '')
@@ -5863,6 +5872,7 @@ def api_dl():
     ytm_track_title = data.get('ytm_track_title') or ''
     is_batch = bool(data.get('is_batch', False))
     batch_id = data.get('batch_id') or None
+    spotify_url = _canon_spotify_url(data.get('spotify_url') or '')
     if not q and not video_id:
         return jsonify({'error': 'query or video_id required'}), 400
     did = str(uuid.uuid4())
@@ -5872,7 +5882,7 @@ def api_dl():
     with _dl_lock:
         _dls[did] = {'status': 'pending', 'progress': 0, 'error': None, 'song_id': None, 'query': q or video_id}
     threading.Thread(target=_run_dl, args=(did, q, fmt, quality, genius_track_id, video_id),
-                     kwargs={'is_video': is_video, 'ytm_album': ytm_album, 'ytm_track_num': int(ytm_track_num or 0), 'ytm_track_title': ytm_track_title, 'is_batch': is_batch, 'batch_id': batch_id},
+                     kwargs={'is_video': is_video, 'ytm_album': ytm_album, 'ytm_track_num': int(ytm_track_num or 0), 'ytm_track_title': ytm_track_title, 'is_batch': is_batch, 'batch_id': batch_id, 'spotify_url': spotify_url},
                      daemon=True).start()
     return jsonify({'download_id': did})
 
@@ -9161,7 +9171,7 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                 duration_secs = duration_ms / 1000 if duration_ms else 0
 
                 result = {
-                    'idx': i, 'sp_title': title, 'sp_artist': artist,
+                    'idx': i, 'sp_title': title, 'sp_artist': artist, 'sp_url': _canon_spotify_url(url),
                     'sp_duration_ms': duration_ms, 'status': 'pending',
                     'ytm': None, 'confidence': 0.0, 'dl_id': None,
                     'user_override': None, 'is_local': False, 'local_sid': None,
@@ -9351,7 +9361,7 @@ def api_sp_job_download(jid):
             }
         threading.Thread(
             target=_run_dl, args=(did, q, fmt, quality),
-            kwargs={'video_id': video_id, 'is_batch': True, 'batch_id': batch_id},
+            kwargs={'video_id': video_id, 'is_batch': True, 'batch_id': batch_id, 'spotify_url': t.get('sp_url') or None},
             daemon=True,
         ).start()
         with _sp_job_lock:
@@ -18922,7 +18932,7 @@ function _makeQueueRow(s, i) {
   el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
-  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:100%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 2px;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:100%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center">' +
       '<span class=\"snum-num\">' + (isCur ? (S.isPlaying ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="3,2 21,12 3,22"/></svg>' : (i + 1)) : i + 1) + '</span>' +
@@ -22313,6 +22323,7 @@ async function _resolveOneUrl(url) {
       _query: q,
       _video_id: '',
       _spotify: true,
+      _spotify_url: t.url || '',
     };
     _urlPreviewCache.set(url, entry);
     return entry;
@@ -22591,6 +22602,7 @@ async function startBatchDl(items) {
     const video_id = isObj ? (item.video_id || '') : '';
     const payload = {query: q, is_batch: isBatch, batch_id: batchId};
     if (video_id) payload.video_id = video_id;
+    if (isObj && item.spotify_url) payload.spotify_url = item.spotify_url;
     if (isObj && item.is_video !== undefined) payload.is_video = item.is_video;
     if (isObj && item.ytm_album) { payload.ytm_album = item.ytm_album; payload.ytm_track_num = item.ytm_track_num; payload.ytm_track_title = item.ytm_track_title; }
     const res = await api('POST', '/api/download', payload);
@@ -22646,7 +22658,7 @@ async function startDl() {
   for (const url of urlLines) {
     if (_urlPreviewCache.has(url)) {
       const c = _urlPreviewCache.get(url);
-      if (!c._error && !c._imported) cachedItems.push({query: c._query, video_id: c._video_id || ''});
+      if (!c._error && !c._imported) cachedItems.push({query: c._query, video_id: c._video_id || '', spotify_url: c._spotify_url || ''});
     } else if (url.includes('spotify.com')) {
       uncachedSpotify.push(url);
     } else {
@@ -23889,7 +23901,7 @@ async function _resolveAndDownloadSpotify(urls) {
   const downloadPromises = resolvePromises.map(async (p) => {
     const tracks = await p;
     if (!tracks.length) return;
-    const items = tracks.map(t => ({query: [t.artist, t.title].filter(Boolean).join(' - ')}));
+    const items = tracks.map(t => ({query: [t.artist, t.title].filter(Boolean).join(' - '), spotify_url: t.url || ''}));
     for (let i = 0; i < items.length; i += 3) {
       await startBatchDl(items.slice(i, i + 3));
       if (i + 3 < items.length) await new Promise(r => setTimeout(r, 500));
@@ -23963,7 +23975,7 @@ async function startSpotifyTransfer() {
   if (localImported > 0) await loadData();
   if (!allTracks.length) return;
 
-  const items = allTracks.map(t => ({query: [t.artist, t.title].filter(Boolean).join(' - '), _targetPlId: targetPlId}));
+  const items = allTracks.map(t => ({query: [t.artist, t.title].filter(Boolean).join(' - '), spotify_url: t.url || '', _targetPlId: targetPlId}));
   await startBatchDl(items);
   if (targetPlId) {
     // note: playlist association handled by startBatchDl polling for url flow
