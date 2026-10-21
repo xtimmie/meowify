@@ -14246,6 +14246,7 @@ class AudioEngine {
       tickNowPlaying();
     }
     tickLyrics(t);
+    _colorPredictTick(t, d);
     if (now - _sessionLastT >= _SESSION_INTERVAL) {
       _sessionLastT = now;
       saveSession();
@@ -16222,12 +16223,12 @@ function _oklab2rgb(L,a,bb){
 // per-element bleed state {L,a,b,raf} in oklab space
 const _bleedState = new WeakMap();
 
-function _animateBleed(el, tR, tG, tB) {
+function _animateBleed(el, tR, tG, tB, dur = 950) {
   const [tL,ta,tb] = _rgb2oklab(tR,tG,tB);
   let state = _bleedState.get(el);
   if (!state) { state={L:tL,a:ta,b:tb,raf:null}; _bleedState.set(el,state); }
   if (state.raf) cancelAnimationFrame(state.raf);
-  const DUR = 950;
+  const DUR = dur;
   const start = performance.now();
   const sL=state.L, sa=state.a, sb=state.b;
   function step(now) {
@@ -16282,6 +16283,125 @@ function applyBleed(containerEl, imgEl) {
 function refreshBleed() {
   const src = S.cur?.cover_path ? `/cover/${S.cur.id}` : null;
   applyBleed(document.getElementById('player'), src);
+}
+
+// ── cover color transitions (hue sync + bleed) ───────────────────────────────
+// predicted: ~1s before a song ends we already fade towards the next song's color.
+// getNextSong() covers the queue, "play next" and "play from here next".
+// abrupt: any other song change fades after the fact, shorter.
+const COLOR_FADE_PREDICT_MS = 2000;
+const COLOR_FADE_ABRUPT_MS  = 1000;
+const COLOR_PREDICT_LEAD_S  = 1.0;  // start the predicted fade this long before the end (+ crossfade)
+const COLOR_PREFETCH_LEAD_S = 6.0;  // pre-extract the next song's color this early
+const _coverColorCache   = new Map();
+const _coverColorPending = new Map();
+let _colorPredict = null; // { fromId, toId } while a predicted fade is in effect
+let _colorSongId  = null; // song whose color we last transitioned to
+
+function _coverColorForSong(song) {
+  if (!song?.cover_path) return Promise.resolve(null);
+  if (_coverColorCache.has(song.id)) return Promise.resolve(_coverColorCache.get(song.id));
+  if (_coverColorPending.has(song.id)) return _coverColorPending.get(song.id);
+  const p = new Promise(res => {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      // canvas readback is a gpu round-trip, keep it out of the song-change tick
+      requestAnimationFrame(() => {
+        let col = null;
+        try { col = _extractCoverColor(img); } catch(e) { /* tainted canvas */ }
+        _coverColorCache.set(song.id, col);
+        if (_coverColorCache.size > 24) _coverColorCache.delete(_coverColorCache.keys().next().value);
+        _coverColorPending.delete(song.id);
+        res(col);
+      });
+    };
+    img.onerror = () => { _coverColorPending.delete(song.id); res(null); };
+    img.src = '/cover/' + song.id;
+  });
+  _coverColorPending.set(song.id, p);
+  return p;
+}
+
+function _applyBleedColor(containerEl, col, fadeMs) {
+  if (!containerEl || !col) return;
+  if (containerEl.id === 'player') {
+    const sb = document.getElementById('nowplaying-sidebar');
+    if (sb) _applyBleedColor(sb, col, fadeMs);
+  }
+  _animateBleed(containerEl, col.r, col.g, col.b, fadeMs);
+}
+
+function _applyCoverColor(col, fadeMs) {
+  if (CFG.cover_art_hue_sync && col) {
+    const h = Math.round(col.h);
+    CFG.theme_hue = h;
+    applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0, false, fadeMs);
+    const slider = document.getElementById('hue-slider');
+    const lbl = document.getElementById('hue-lbl');
+    if (slider) slider.value = h;
+    if (lbl) lbl.textContent = h + 'deg';
+  }
+  if (CFG.cover_art_bleed) {
+    const pl = document.getElementById('player');
+    if (pl) {
+      if (col) _applyBleedColor(pl, col, fadeMs);
+      else {
+        pl.style.removeProperty('--cov-bleed-rgba');
+        document.getElementById('nowplaying-sidebar')?.style.removeProperty('--cov-bleed-rgba');
+      }
+    }
+  }
+}
+
+// called from updatePlayerUI on every song change
+function _onSongColorChange(song) {
+  if (!song || (!CFG.cover_art_hue_sync && !CFG.cover_art_bleed)) return;
+  if (_colorSongId === song.id) {
+    // already faded (predicted) or already showing this song - don't restart the fade
+    if (_colorPredict?.toId === song.id) _colorPredict = null;
+    return;
+  }
+  _colorPredict = null;
+  _colorSongId = song.id;
+  if (!song.cover_path) return;
+  _coverColorForSong(song).then(col => {
+    if (S.cur?.id !== song.id || _colorSongId !== song.id) return;
+    _applyCoverColor(col, COLOR_FADE_ABRUPT_MS);
+  });
+}
+
+// called from engine.onProgress (~4x/s)
+function _colorPredictTick(t, d) {
+  if (!S.cur || !d || (!CFG.cover_art_hue_sync && !CFG.cover_art_bleed)) return;
+  const rem  = d - t;
+  const lead = COLOR_PREDICT_LEAD_S + (engine.crossfade || 0);
+  if (_colorPredict) {
+    // seeked back after we already faded ahead: go back to this song's color
+    if (_colorPredict.fromId === S.cur.id && rem > lead + 1.5) {
+      const cur = S.cur;
+      _colorPredict = null; _colorSongId = cur.id;
+      _coverColorForSong(cur).then(col => {
+        if (S.cur?.id === cur.id && _colorSongId === cur.id) _applyCoverColor(col, COLOR_FADE_ABRUPT_MS);
+      });
+    }
+    return;
+  }
+  if (rem > lead) {
+    if (rem <= lead + COLOR_PREFETCH_LEAD_S) {
+      const n = getNextSong();
+      if (n?.cover_path && n.id !== S.cur.id) _coverColorForSong(n);
+    }
+    return;
+  }
+  const next = getNextSong();
+  if (!next || next.id === S.cur.id) return;
+  const pred = { fromId: S.cur.id, toId: next.id };
+  _colorPredict = pred; _colorSongId = next.id;
+  if (!next.cover_path) return;
+  _coverColorForSong(next).then(col => {
+    if (_colorPredict !== pred) return;
+    _applyCoverColor(col, COLOR_FADE_PREDICT_MS);
+  });
 }
 
 function _extractAndApplyHue(img) {
@@ -16420,7 +16540,6 @@ function updatePlayerUI(song) {
       _pre.onload = _pre.onerror = () => {
         if (_coverGen !== _myGen) return; // superseded by a newer song
         cov.innerHTML = `<img src="${_newSrc}" alt="">`;
-        applyBleed(document.getElementById('player'), _newSrc);
       };
       _pre.src = _newSrc;
     }
@@ -16438,21 +16557,7 @@ function updatePlayerUI(song) {
     updatePositionState();
   }
   if (S.isPlaying) syncMediaAudio(song, false);
-  if ((CFG.cover_art_hue_sync || CFG.cover_art_bleed) && song?.cover_path) {
-    const _hueImg = new Image(); _hueImg.crossOrigin = 'anonymous';
-    _hueImg.onload = () => {
-      // _extractCoverColor does a synchronous 32x32 canvas draw + getImageData
-      // pixel readback, which is a GPU round-trip - expensive on weaker mobile
-      // GPUs/WebViews. Defer it one frame so it never lands in the same tick
-      // as the rest of the song-change work (engine.play, graph rewire, etc).
-      requestAnimationFrame(() => {
-        if (S.cur?.id !== song.id) return;
-        if (CFG.cover_art_hue_sync) _extractAndApplyHue(_hueImg);
-        if (CFG.cover_art_bleed) applyBleed(document.getElementById('player'), _hueImg);
-      });
-    };
-    _hueImg.src = `/cover/${song.id}`;
-  }
+  _onSongColorChange(song);
 }
 
 // ── live bar analyser for song list ──────────────────────────────────────────
@@ -25266,7 +25371,7 @@ let _themeTransT = null;
 // MU handles the 700ms arc-interpolated hue animation internally.
 // sat/bri are applied immediately (no animation needed for those).
 // _noFade=true → bypass MU's hue animation (used by slider drag).
-function applyTheme(hue, sat, bri, _noFade) {
+function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
   const h = (hue == null || hue === '') ? 145 : parseFloat(hue);
   const s = (sat == null || sat === '') ? 50  : parseFloat(sat);
   const b = (bri == null || bri === '') ? 1.0 : parseFloat(bri);
@@ -25275,7 +25380,7 @@ function applyTheme(hue, sat, bri, _noFade) {
   } else {
     // sat/bri apply immediately; only hue gets animated arc transition
     MU.setPalette({ sat: s, bri: b });
-    MU.setHue(h, true);
+    MU.setHue(h, _fadeMs || true);
   }
   _wavyColorCache = null;
   _mnwLastPrimary = '';
