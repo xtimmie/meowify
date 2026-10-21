@@ -762,6 +762,8 @@ def init_db():
             c.execute("ALTER TABLE songs ADD COLUMN mv_offset REAL")
         if 'mv_url' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN mv_url TEXT")
+        if 'spotify_url' not in _mv_cols:
+            c.execute("ALTER TABLE songs ADD COLUMN spotify_url TEXT")
         if 'release_date' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN release_date TEXT")
         _av_new = False
@@ -7024,6 +7026,7 @@ def _dbx_merge_db(local_path, remote_path):
                         f'loudness_lufs=excluded.loudness_lufs, '
                         f'album_id=excluded.album_id, track_num=excluded.track_num, '
                         f'mv_video_id=COALESCE(excluded.mv_video_id, songs.mv_video_id), mv_offset=COALESCE(excluded.mv_offset, songs.mv_offset), '\
+                        f'{"spotify_url=COALESCE(excluded.spotify_url, songs.spotify_url), " if "spotify_url" in cols else ""}'\
                         f'{"queue_skip=excluded.queue_skip, " if "queue_skip" in cols else ""}'\
                         f'modified_at=excluded.modified_at '
                         f'WHERE excluded.modified_at IS NOT NULL '
