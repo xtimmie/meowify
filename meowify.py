@@ -15882,21 +15882,19 @@ function _updateMobNpWavy(prog) {
   // stroke-linecap are constants set once in the HTML template, never written here
   const primaryChanged = primary !== _mnwLastPrimary;
   const trackChanged   = track   !== _mnwLastTrack;
-  if (primaryChanged) _mnwLastPrimary = primary;
-  if (trackChanged)   _mnwLastTrack   = track;
 
   if (prog > 0.005) {
     const pw = Math.max(1, W * prog - HANDLE_PAD);
     const { d: fd } = MU.wavyLinePath({ width: pw, height: H, amplitude: amp, frequency: Math.max(0.5, WAVY_FREQ * prog), phase: _mobNpWavyPhase, strokeWidth: WAVY_SW, progress: 1 });
     fillPath.setAttribute('d', fd);
-    if (primaryChanged) fillPath.setAttribute('stroke', primary);
+    if (primaryChanged) { fillPath.setAttribute('stroke', primary); _mnwLastPrimary = primary; }
     fillPath.style.display = '';
   } else { fillPath.style.display = 'none'; }
 
   const flatX = W * prog + HANDLE_PAD;
   if (prog < 0.995 && flatX < W) {
     trackPath.setAttribute('d', `M${flatX.toFixed(2)},${mid.toFixed(2)} L${W.toFixed(2)},${mid.toFixed(2)}`);
-    if (trackChanged) trackPath.setAttribute('stroke', track);
+    if (trackChanged) { trackPath.setAttribute('stroke', track); _mnwLastTrack = track; }
     trackPath.style.display = '';
   } else { trackPath.style.display = 'none'; }
 
