@@ -18932,7 +18932,7 @@ function _makeQueueRow(s, i) {
   el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
-  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 2px;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:100%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center">' +
       '<span class=\"snum-num\">' + (isCur ? (S.isPlaying ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="3,2 21,12 3,22"/></svg>' : (i + 1)) : i + 1) + '</span>' +
@@ -21510,7 +21510,8 @@ class VirtualList {
     if (this._nodes.has(i)) return false;
     const row = this._makeRow(i);
     if (!row) return false;
-    row.style.cssText += ';position:absolute;top:' + (i * this.ROW_H) + 'px;left:0;right:0;width:100%';
+    const _rowW = row.style.width;
+    row.style.cssText += ';position:absolute;top:' + (i * this.ROW_H) + 'px;left:0;right:0;width:' + (_rowW || '100%');
 
     // library-specific post-processing (only when no custom renderer)
     if (!this.rowRenderer) {
