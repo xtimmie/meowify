@@ -1069,6 +1069,12 @@ def _stats_match_score(ct, ca, cand_ct, cand_ca):
     be _canonical()-normalized. returns 0.0 if below the title floor, else a
     0-1 score combining title+artist similarity."""
     t_score = _SequenceMatcher(None, ct, cand_ct).ratio()
+    if ct != cand_ct:
+        if min(len(ct), len(cand_ct)) < 12:
+            return 0.0
+        wa, wb = ct.split(), cand_ct.split()
+        if len(wa) == len(wb) and any(x != y and (x + 's' == y or y + 's' == x) for x, y in zip(wa, wb)):
+            return 0.0
     if t_score < 0.80:
         return 0.0
     a_score = _SequenceMatcher(None, ca, cand_ca).ratio() if (ca or cand_ca) else 1.0
@@ -9895,7 +9901,7 @@ svg {overflow: visible}
   font:var(--type-headline-medium);font-variation-settings:var(--fv-headline);
   color:var(--color-primary);padding:4px 20px 20px;letter-spacing:-.5px;
 }
-.logo-txt{font-size:calc(1em * var(--logo-s,1));white-space:nowrap}
+.logo-txt{font-size:calc(1em * var(--logo-s,1));white-space:nowrap;line-height:1;}
 .logo-probe{position:absolute;visibility:hidden;pointer-events:none;white-space:nowrap}
 #sidebar.narrow .logo-txt{display:none}
 #sidebar.narrow .logo{justify-content:center;padding-left:0;padding-right:0}
