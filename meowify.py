@@ -3867,7 +3867,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
 
         # determine actual source from yt-dlp info
         _ie_key = (info.get('ie_key') or info.get('extractor') or '').lower()
-        src_name = 'soundcloud' if 'soundcloud' in _ie_key else 'youtube'
+        src_name = 'soundcloud' if 'soundcloud' in _ie_key else ('youtube_video' if is_video else 'youtube')
         if info.get('track'):
             title = clean_title(info['track'], artist)
         # deduplicate primary artist from featuring
