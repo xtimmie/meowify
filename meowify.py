@@ -1061,7 +1061,7 @@ from difflib import SequenceMatcher as _SequenceMatcher
 
 # shared scoring core for all "is this stats row the same song as this library
 # row" comparisons (stats lookup, spotify-history backsync, ghost-play check).
-# title floor of 0.70 filters obvious non-matches before computing the
+# title floor of 0.80 filters obvious non-matches before computing the
 # artist score; 0.65/0.35 weighting favors title since artist strings vary
 # more (feat., remix credits, etc). all three call sites must pass already
 # _canonical()-normalized strings in (ct, ca) order - do not swap.
@@ -1797,8 +1797,8 @@ def _merge_duplicate_albums_impl(throttle=False):
                     # their own album text field still shows the discarded
                     # album's old name in any UI that reads it directly.
                     c.execute(
-                        "UPDATE songs SET album_id=?, album=? WHERE album_id=?",
-                        (keep['id'], keep['title'], d['id'])
+                        "UPDATE songs SET album_id=?, album=?, modified_at=? WHERE album_id=?",
+                        (keep['id'], keep['title'], int(time.time()), d['id'])
                     )
                     # repoint album_tracks - for conflicting track_nums, keep the one
                     # that has a song_id (owned) rather than blindly deleting the other
@@ -1817,6 +1817,7 @@ def _merge_duplicate_albums_impl(throttle=False):
                         else:
                             c.execute("UPDATE album_tracks SET album_id=? WHERE id=?", (keep['id'], at_id))
                     c.execute("DELETE FROM albums WHERE id=?", (d['id'],))
+                    _record_sync_action('album_delete', d['id'], conn=c)
                     merged += 1
             _log_cleanup.info(f'album merge: kept {keep["title"]!r} ({keep["id"]}), dropped {[d["id"] for d in discard]}')
             _relink_album_tracks(keep['id'])
@@ -1949,12 +1950,10 @@ def _analyze_loudness_numpy(path):
         n = max(0, (len(x) - block) // hop + 1)
         if n == 0:
             return None
-        frames = np.lib.stride_tricks.as_strided(
-            x, shape=(n, block),
-            strides=(x.strides[0] * hop, x.strides[0]),
-            writeable=False,
-        )
-        ms = np.mean(frames ** 2, axis=1)
+        # prefix sum of squares: O(len) memory instead of an (n, block) temp array
+        cs = np.concatenate(([0.0], np.cumsum(x.astype(np.float64) ** 2)))
+        starts = np.arange(n) * hop
+        ms = np.maximum((cs[starts + block] - cs[starts]) / block, 0.0)
         with np.errstate(divide='ignore', invalid='ignore'):
             db = 10.0 * np.log10(ms + 1e-12) - 0.691
         # absolute gate at -70 LKFS: db already includes the -0.691 offset so db > -70.0 is correct
@@ -2220,7 +2219,7 @@ def _lyrics_fetch_and_cache(song):
             if (row[2] or '').lower() == 'genius':
                 # genius already tried and found nothing, serve the empty result
                 with _lyrics_lock:
-                    _lyrics_cache[sid] = {'lrc': row[0], 'plain': row[1], 'source': row[2], 'fetched_at': row[3]}
+                    _lyrics_cache_put(sid, {'lrc': row[0], 'plain': row[1], 'source': row[2], 'fetched_at': row[3]})
                 return
             # fall through: lrclib miss, genius not tried yet
         # fetch from lrclib
@@ -2242,14 +2241,8 @@ def _lyrics_fetch_and_cache(song):
                 plain = result.get('plainLyrics') or None
             if result and not lrc and not plain:
                 result = None
-        if not result and is_video and song.get('duration'):
-            # video sources: retry with duration but without is_video flag (different lrclib matching path)
-            result = _lrclib_fetch(song.get('artist') or '', song.get('title') or '', song.get('duration'), False)
-            if result:
-                lrc = result.get('syncedLyrics') or None
-                plain = result.get('plainLyrics') or None
-            if result and not lrc and not plain:
-                result = None
+        # (removed: the old video-only third retry re-sent the same request as the first call,
+        #  _lrclib_fetch already does the no-duration retry for video sources itself)
         # fallback to genius scraping if lrclib found nothing at all
         _genius_fail_reason = None
         if not lrc and not plain:
@@ -2512,6 +2505,7 @@ def _fuzzy_tokens(a, b):
 
 _DUP_TITLE_MIN  = 0.88   # title similarity needed to call two songs duplicates
 _DUP_ARTIST_MIN = 0.80   # primary artist similarity needed on top of that
+_STATS_LIB_MATCH_MIN = 0.88  # min score to treat a song_stats row as "the same song" as a library row
 
 def _norm_artist(s):
     """normalize artist name for fuzzy comparison - strips features, punct, extra spaces"""
@@ -3197,7 +3191,7 @@ atexit.register(_shutdown_pools)
 
 # ── music video cache: song_id -> {status, offset, stream_url, expires, video_id} ──
 _mv_cache      = {}
-_mv_cache_lock = threading.Lock()
+_mv_cache_lock = threading.RLock()  # rlock: _cancelled() takes it while callers already hold it
 _ytm_profile_cache      = {}
 _ytm_profile_cache_lock = threading.Lock()
 _lyrics_cache  = {}  # song_id -> {lrc, plain, source, fetched_at}  (LRU, max 200)
@@ -3417,7 +3411,7 @@ def _prune_dls():
 
 def _get_url_metadata(url):
     try:
-        r = _subrun(['yt-dlp', '--dump-json', '--no-playlist', url],
+        r = _subrun(['yt-dlp', '--dump-json', '--no-playlist', '--', url],
                     capture_output=True, text=True, timeout=20)
         if r.returncode == 0 and r.stdout.strip():
             d = json.loads(r.stdout.strip())
@@ -3602,6 +3596,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                     and d.get('song_id')
                     and d.get('pre_title')
                     and d['song_id'] not in _db_ids
+                    and d['song_id'] != sid
                 ]
             for _cd in list(_db_cands) + _inflight_cands:
                 _ts = _fuzzy(pre_title, _cd[1] or '') if _same_markers(pre_title, _cd[1]) else 0.0
@@ -4301,17 +4296,12 @@ def _cleanup_sync_actions():
             cur = c.execute("""
                 DELETE FROM sync_actions
                 WHERE action='pref_reset'
-                AND id NOT IN (
-                    SELECT id FROM sync_actions sa2
-                    WHERE sa2.action='pref_reset'
-                    GROUP BY sa2.device_id, sa2.target
-                    HAVING sa2.id = (
-                        SELECT id FROM sync_actions sa3
-                        WHERE sa3.action='pref_reset'
-                        AND sa3.device_id=sa2.device_id
-                        AND sa3.target=sa2.target
-                        ORDER BY sa3.ts DESC LIMIT 1
-                    )
+                AND id != (
+                    SELECT sa3.id FROM sync_actions sa3
+                    WHERE sa3.action='pref_reset'
+                    AND sa3.device_id=sync_actions.device_id
+                    AND sa3.target=sync_actions.target
+                    ORDER BY sa3.ts DESC, sa3.rowid DESC LIMIT 1
                 )
             """)
             removed += cur.rowcount
@@ -4319,14 +4309,12 @@ def _cleanup_sync_actions():
             cutoff = int(time.time()) - 90 * 86400
             cur = c.execute("""
                 DELETE FROM sync_actions
-                WHERE ts < ? AND id NOT IN (
-                    SELECT id FROM sync_actions sa2
-                    GROUP BY sa2.action, sa2.target
-                    HAVING sa2.id = (
-                        SELECT id FROM sync_actions sa3
-                        WHERE sa3.action=sa2.action AND sa3.target=sa2.target
-                        ORDER BY sa3.ts DESC LIMIT 1
-                    )
+                WHERE ts < ? AND id != (
+                    SELECT sa3.id FROM sync_actions sa3
+                    WHERE sa3.action=sync_actions.action
+                    AND sa3.target=sync_actions.target
+                    AND sa3.target2 IS sync_actions.target2
+                    ORDER BY sa3.ts DESC, sa3.rowid DESC LIMIT 1
                 )
             """, (cutoff,))
             removed += cur.rowcount
@@ -4481,6 +4469,18 @@ def _touch_cleanup():
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024 * 1024
 
+_LOCAL_HOSTS = ('127.0.0.1', 'localhost')
+
+@app.before_request
+def _guard_local_only():
+    """block dns-rebinding (bad Host) and cross-site state changes (bad Origin)"""
+    if (request.host or '').split(':')[0].lower() not in _LOCAL_HOSTS:
+        return '', 403
+    origin = request.headers.get('Origin')
+    if origin and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        if re.sub(r'^https?://', '', origin).split('/')[0].split(':')[0].lower() not in _LOCAL_HOSTS:
+            return '', 403
+
 
 @app.route('/api/perf-sample')
 def api_perf_sample():
@@ -4548,7 +4548,7 @@ def audio(sid):
     fp = row[0]
     fp_path = Path(fp) if fp else None
     fp_exists = fp_path.exists() if fp_path else False
-    _log_server.info(
+    _log_server.debug(
         f'[audio] sid={sid} title={row[2]!r} artist={row[3]!r} album={row[4]!r} '
         f'source={row[5]} source_id={row[6]} sync_id={row[7]}\n'
         f'  file_path={fp!r}  exists={fp_exists}\n'
@@ -4585,8 +4585,7 @@ def cover(sid):
             row = c.execute("SELECT cover_path FROM albums WHERE id=?", (sid,)).fetchone()
         if not row or not row[0] or not Path(row[0]).exists():
             # fallback: if sid looks like a song, try its album cover
-            with db() as _fc:
-                _alb = _fc.execute("SELECT a.cover_path FROM albums a JOIN songs s ON s.album_id=a.id WHERE s.id=?", (sid,)).fetchone()
+            _alb = c.execute("SELECT a.cover_path FROM albums a JOIN songs s ON s.album_id=a.id WHERE s.id=?", (sid,)).fetchone()
             if _alb and _alb[0] and Path(_alb[0]).exists():
                 return send_file(_alb[0], mimetype='image/jpeg', conditional=True)
             return '', 404
@@ -4809,7 +4808,7 @@ def api_import_spotify_history():
                     if score > best_score:
                         best_score = score
                         best_sid = lib_id
-                if best_sid and best_score >= 0.88:
+                if best_sid and best_score >= _STATS_LIB_MATCH_MIN:
                     c.execute(
                         "UPDATE songs SET play_count=?, last_played=MAX(COALESCE(last_played,0),?) WHERE id=?",
                         (new_pc, new_lp, best_sid)
@@ -5030,7 +5029,7 @@ def api_stats():
                 if item[0] in seen:
                     continue
                 seen.add(item[0])
-                if _stats_match_score(ct, ca, item[2], item[1]) >= 0.88:
+                if _stats_match_score(ct, ca, item[2], item[1]) >= _STATS_LIB_MATCH_MIN:
                     return True
         return False
 
@@ -5053,7 +5052,7 @@ def api_stats():
     # ── merge ghost into top/recent lists ─────────────────────────────────
     top_played_merged = [dict(r) for r in top_played] + ghost_plays
     top_played_merged.sort(key=lambda x: -(x.get('play_count') or 0))
-    recently_played_merged = [dict(r) for r in top_played] + ghost_plays
+    recently_played_merged = [dict(r) for r in recently_played] + ghost_plays
     recently_played_merged = [x for x in recently_played_merged if x.get('last_played')]
     recently_played_merged.sort(key=lambda x: -(x.get('last_played') or 0))
 
@@ -5223,7 +5222,7 @@ def api_play_events():
             FROM play_events pe
             JOIN song_stats ss ON ss.id = pe.song_stats_id
             LEFT JOIN songs s ON _canonical(coalesce(s.title,'')) = ss.canonical_title
-                AND _canonical(coalesce(s.artist,'')) = ss.canonical_artist
+                AND _canonical(TRIM(SUBSTR(coalesce(s.artist,''), 1, CASE WHEN INSTR(s.artist,',')>0 THEN INSTR(s.artist,',')-1 ELSE LENGTH(s.artist) END))) = ss.canonical_artist
                 AND s.source != 'downloading'
             ORDER BY pe.timestamp DESC
             LIMIT ? OFFSET ?
@@ -5864,9 +5863,11 @@ def api_url_info():
     url = request.args.get('url', '').strip()
     if not url:
         return jsonify({'error': 'url required'}), 400
+    if not re.match(r'https?://', url):
+        return jsonify({'error': 'invalid url'}), 400
     try:
         r = _subrun(
-            ['yt-dlp', '--dump-json', '--no-playlist', '--no-warnings', url],
+            ['yt-dlp', '--dump-json', '--no-playlist', '--no-warnings', '--', url],
             capture_output=True, text=True, timeout=18)
         if r.returncode == 0 and r.stdout.strip():
             d = json.loads(r.stdout.strip())
@@ -6088,10 +6089,12 @@ def _dbx_get_device_id():
     """get or generate a stable device_id, persisted in cfg."""
     did = CFG.get('device_id', '')
     if not did:
-        did = str(uuid.uuid4())
         with _cfg_lock:
-            CFG['device_id'] = did
-            save_cfg(CFG)
+            did = CFG.get('device_id', '')
+            if not did:
+                did = str(uuid.uuid4())
+                CFG['device_id'] = did
+                save_cfg(CFG)
     return did
 
 def _dbx_get_device_name():
@@ -7608,6 +7611,13 @@ def _dbx_pkce_start(android=False):
         f'&code_challenge={challenge}'
     )
 
+    if _dbx_pkce_state.get('server'):
+        # an earlier connect click may still be blocked in handle_request(): poke it so its
+        # thread closes the socket and frees the port before we bind again
+        try:
+            socket.create_connection(('127.0.0.1', port), timeout=1).close()
+            time.sleep(0.1)
+        except Exception: pass
     _dbx_pkce_state.clear()
     _dbx_pkce_state.update({'verifier': verifier, 'redirect_uri': redirect_uri, 'port': port, 'done': threading.Event()})
 
@@ -7626,7 +7636,7 @@ def _dbx_pkce_start(android=False):
             self.wfile.write(body)
             _dbx_pkce_state['done'].set()
 
-    srv = http.server.HTTPServer(('', port), _Handler)
+    srv = http.server.HTTPServer(('127.0.0.1', port), _Handler)
     _dbx_pkce_state['server'] = srv
 
     def _serve():
@@ -7667,9 +7677,10 @@ def _dbx_pkce_finish(skip_wait=False):
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = _json.loads(resp.read())
         _log_dbx.info(f'[dbx token exchange] keys={list(data.keys())} has_refresh={bool(data.get("refresh_token"))}')
-        refresh_token = data.get('refresh_token') or data.get('access_token', '')
+        refresh_token = data.get('refresh_token', '')
         if not refresh_token:
-            return False, f'no token in response: {data}'
+            _log_dbx.warning(f'[dbx token exchange] no refresh_token in response keys={list(data.keys())}')
+            return False, 'no refresh token in response'
         with _cfg_lock:
             CFG['dropbox_refresh_token'] = refresh_token
             CFG['dropbox_sync_enabled']  = True
@@ -7723,7 +7734,8 @@ def dropbox_callback():
     code = request.args.get('code', '').strip()
     error = request.args.get('error', '')
     if error or not code:
-        return f'<html><body><h2>dropbox auth failed: {error or "no code"}</h2></body></html>', 400
+        import html as _html
+        return f'<html><body><h2>dropbox auth failed: {_html.escape(error) or "no code"}</h2></body></html>', 400
     _dbx_pkce_state['code'] = code
     done = _dbx_pkce_state.get('done')
     if done:
@@ -7940,6 +7952,7 @@ def api_deps():
 def api_get_cfg():
     with _cfg_lock:
         c = dict(CFG)
+    c.pop('dropbox_refresh_token', None)
     c['_platform'] = sys.platform
     return jsonify(c)
 
@@ -7958,7 +7971,7 @@ def api_restart():
 # ── music video backend ────────────────────────────────────────────────────────
 def _mv_ytdlp_stream_url(video_id):
     """Get direct video stream URLs for a YouTube video_id via yt-dlp.
-    Returns (video_url, audio_url, expires_at) or raises on failure."""
+    Returns (video_url, expires_at) or raises on failure."""
     cmd = [
         'yt-dlp', '--no-warnings', '-J',
         '--format', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best',
@@ -7971,7 +7984,6 @@ def _mv_ytdlp_stream_url(video_id):
     # find video-only and audio-only streams
     formats = info.get('formats', [])
     video_url = None
-    audio_url = None
     # prefer video-only stream (no audio) for video element (we sync our own audio)
     for f in reversed(formats):
         if f.get('vcodec', 'none') != 'none' and f.get('acodec', 'none') == 'none':
@@ -8027,7 +8039,7 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
 
         S_fft = np.fft.rfft(song_pcm, n=fft_n)
         M_fft = np.fft.rfft(mv_pcm,   n=fft_n)
-        corr  = np.fft.irfft(np.conj(S_fft) * M_fft, n=fft_n)[:n]
+        corr  = np.fft.irfft(np.conj(S_fft) * M_fft, n=fft_n)  # circular: negative lags live at the end of fft_n
 
         # search both positive offsets (MV leads) and negative (MV lags)
         # corr[k]     → MV starts k/sr seconds before song  (positive offset)
@@ -8036,7 +8048,7 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
         max_lag = int(MAX_OFFSET_SECS * sr)
 
         pos_search = corr[:max_lag + 1]
-        neg_search = corr[n - max_lag:n]
+        neg_search = corr[fft_n - max_lag:fft_n]
 
         pos_peak_idx = int(np.argmax(np.abs(pos_search)))
         pos_peak_val = float(np.abs(pos_search[pos_peak_idx]))
@@ -8066,7 +8078,7 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
         # loudness, so there's a huge safety margin between real matches and
         # the noise ceiling - raising the floor only rejects noise, not
         # legitimate low-signal matches.
-        threshold_val = float(np.percentile(np.abs(corr), 95))
+        threshold_val = float(np.percentile(np.abs(corr[:n]), 95))
         confidence = peak_val / (threshold_val + 1e-9)
         min_confidence = max(12.0, min(16.0, 12.0 + (min(len(song_pcm), len(mv_pcm)) / sr) / 60.0))
 
@@ -8103,13 +8115,20 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
     def _cancelled():
         with _mv_find_gen_lock:
-            return _mv_find_gen != my_gen
+            gone = _mv_find_gen != my_gen
+        if gone:
+            # drop our own in-progress marker so the next poll can retry instead of seeing 'searching' forever
+            with _mv_cache_lock:
+                e = _mv_cache.get(song_id)
+                if e and e.get('status') in ('searching', 'downloading', 'correlating') and e.get('_gen', my_gen) == my_gen:
+                    _mv_cache.pop(song_id, None)
+        return gone
 
     def _set(status, **kw):
         # only write if we're still the active job for this song
         if _cancelled(): return
         with _mv_cache_lock:
-            _mv_cache[song_id] = {'status': status, **kw}
+            _mv_cache[song_id] = {'status': status, '_gen': my_gen, **kw}
 
     _set('searching')
     try:
@@ -8185,7 +8204,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
             with _mv_cache_lock:
                 if not _cancelled():
-                    _mv_cache[song_id] = {'status': 'downloading', 'video_id': vid}
+                    _mv_cache[song_id] = {'status': 'downloading', '_gen': my_gen, 'video_id': vid}
 
             tmp_dir  = tempfile.mkdtemp(prefix='meowify-mv-')
             mv_audio = Path(tmp_dir) / 'mv_audio.%(ext)s'
@@ -8214,7 +8233,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
                 if _cancelled(): return
                 with _mv_cache_lock:
                     if not _cancelled():
-                        _mv_cache[song_id] = {'status': 'correlating', 'video_id': vid}
+                        _mv_cache[song_id] = {'status': 'correlating', '_gen': my_gen, 'video_id': vid}
 
                 offset = _mv_cross_correlate_offset(song_path, mv_audio_path)
             finally:
@@ -9112,9 +9131,9 @@ def api_spotify_resolve():
     url  = data.get('url', '').strip()
     if not url or 'spotify.com' not in url:
         return jsonify({'error': 'invalid spotify url', 'tracks': []}), 400
-    is_track = bool(re.search(r'open\.spotify\.com/(?:[a-z]{2}/)?track/', url))
+    is_track = bool(_canon_spotify_url(url))
     is_local = bool(re.search(r'open\.spotify\.com/local/', url))
-    is_playlist = bool(re.search(r'open\.spotify\.com/(?:[a-z]{2}/)?playlist/', url))
+    is_playlist = bool(re.search(r'open\.spotify\.com/(?:intl-[a-z]{2,}/|[a-z]{2}/)?playlist/', url))
     if is_local:
         parsed = _parse_spotify_local(url)
         if not parsed:
@@ -9209,10 +9228,7 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                                 result.update({'is_local': True, 'local_sid': sid,
                                                'status': 'local_imported', 'confidence': 1.0})
                                 results[i] = result
-                                with done_lock:
-                                    done_count[0] += 1
-                                    _sp_job_update(jid, resolved=done_count[0], tracks=list(results))
-                                return
+                                return  # finally block counts it
                     result['is_local'] = True
                     result['status'] = 'local_no_match'
                     if parsed:
@@ -9231,10 +9247,7 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                 if not title and not artist:
                     result['status'] = 'error'
                     results[i] = result
-                    with done_lock:
-                        done_count[0] += 1
-                        _sp_job_update(jid, resolved=done_count[0], tracks=list(results))
-                    return
+                    return  # finally block counts it
 
                 q = ' '.join(filter(None, [artist, title]))
                 ytm_tracks, _ = _search_ytm(q)
@@ -15751,7 +15764,7 @@ function setSmartShuffle(on) {
 }
 
 function _updateShuffleBtnTitle() {
-  const TITLES = { random: 'shuffle', chaos: 'shuffle: chaos', flow: 'shuffle: flow', block: 'shuffle: block' };
+  const TITLES = { random: 'shuffle', chaos: 'shuffle: chaos', flow: 'shuffle: flow', intact: 'shuffle: intact' };
   const t = (S.shuffle ? '' : '') + (TITLES[S.shuffleMode] || 'shuffle');
   document.getElementById('bshuf')?.setAttribute('title', t);
   document.getElementById('mob-np-bshuf')?.setAttribute('title', t);
@@ -19737,7 +19750,7 @@ function _showSyncToast(msg) {
     t = document.createElement('div');
     t.id = '_sync-toast';
     t.style.cssText = 'position:fixed;bottom:calc(var(--bar-h) + 12px);left:50%;transform:translateX(-50%);' +
-      'background:var(--surface2);color:var(--on-surface);padding:8px 18px;border-radius:20px;' +
+      'background:var(--color-surface-container-highest);color:var(--color-on-surface);padding:8px 18px;border-radius:20px;' +
       'font:var(--type-label-medium);z-index:9999;pointer-events:none;transition:opacity .2s;opacity:0;white-space:nowrap;' +
       'box-shadow:0 2px 8px #0006';
     document.body.appendChild(t);
@@ -20176,9 +20189,7 @@ function stripBrackets(t) {
 }
 
 function esc(t) {
-  const d = document.createElement('div');
-  d.textContent = t || '';
-  return d.innerHTML;
+  return String(t || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 
 // ===============================================
@@ -23505,7 +23516,11 @@ async function _spGo() {
   const raw = document.getElementById('sp-input')?.value?.trim();
   if (!raw) return;
   let tracks;
-  try { tracks = JSON.parse(raw); } catch(e) { alert('invalid json: ' + e.message); return; }
+  if (raw.startsWith('[')) {
+    try { tracks = JSON.parse(raw); } catch(e) { alert('invalid json: ' + e.message); return; }
+  } else {
+    tracks = raw.split('\n').map(l => l.trim()).filter(l => l.includes('spotify.com')).map(url => ({url}));
+  }
   if (!Array.isArray(tracks) || !tracks.length) { alert('no tracks in json'); return; }
 
   const verify  = document.getElementById('sp-verify')?.checked ?? true;
@@ -23831,7 +23846,7 @@ async function _spDownload(jid, indices, speed) {
   for (const {idx, dl_id} of (res.downloads||[])) {
     const track = data?.tracks?.find(t => t?.idx === idx);
     const label = track ? [(track.sp_artist||''), (track.sp_title||'')].filter(Boolean).join(' — ') : 'track';
-    _dlPanelItems[dl_id] = {did:dl_id, label, status:'pending', progress:0, error:null, _payload:{}, _retries:0};
+    _dlPanelItems[dl_id] = {did:dl_id, label, status:'pending', progress:0, error:null, _payload:null, _retries:0};
     polls.push(pollDl(dl_id, batchId));
   }
   _updateDlPanelBadge();
@@ -26253,7 +26268,7 @@ function _renderStatsContent() {
     // shuffle mode breakdown donut-style bar
     const smBreak = data.shuffle_mode_breakdown || [];
     const smTotal = smBreak.reduce((s,r)=>s+r.cnt,0)||1;
-    const smColors = {random:'var(--color-primary)',chaos:'var(--color-tertiary)',flow:'var(--color-secondary)',block:'var(--color-error)'};
+    const smColors = {random:'var(--color-primary)',chaos:'var(--color-tertiary)',flow:'var(--color-secondary)',intact:'var(--color-error)'};
     const smBar = smBreak.map(r=>`<div title="${r.mode}: ${r.cnt}" style="flex:${r.cnt};height:100%;background:${smColors[r.mode]||'var(--color-outline)'};min-width:4px"></div>`).join('');
 
     // end reasons breakdown
@@ -28333,7 +28348,7 @@ def main():
         threading.Event().wait()
         return
 
-    profile_dir = Path.home() / '.local/share/meowify/chrome-profile'
+    profile_dir = _HOME / 'chrome-profile'
     profile_dir.mkdir(parents=True, exist_ok=True)
     browser_proc = None
 
@@ -28357,7 +28372,7 @@ def main():
             browser_proc.wait()
             time.sleep(1.5)
             still = subprocess.run(
-                ["pgrep", "-f", f"--user-data-dir={profile_dir}"],
+                ["pgrep", "-f", "--", f"--user-data-dir={profile_dir}"],
                 capture_output=True
             )
             if still.returncode != 0:
