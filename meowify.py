@@ -10013,6 +10013,8 @@ svg {overflow: visible}
   overflow:hidden;min-width:0;
 }
 /* title + search overlay container */
+.topbar:has(>.mu-ptr-bar){flex-wrap:wrap;row-gap:0}
+.topbar>.mu-ptr-bar{flex:0 0 calc(100% + 20px);margin:0 -12px 0 -8px;transform:translateY(4px)}
 .topbar-title-area{
   flex:1;min-width:0;position:relative;
   display:flex;align-items:center;
@@ -19650,6 +19652,7 @@ async function triggerForceSync() {
   if (!vc) return;
   window._ptrHandle = MU.pullToRefresh(vc, triggerForceSync, {
     barHeight:        25,
+    mount:            '.topbar',
     triggerThreshold: 200,
     canPull:       () => isMobile() && S.view === 'library' && !!window._dbxConnected,
     label:         'syncing with dropbox...',
