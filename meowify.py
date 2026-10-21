@@ -2486,6 +2486,23 @@ def _fuzzy(a, b):
     from difflib import SequenceMatcher
     return SequenceMatcher(None, (a or '').lower(), (b or '').lower()).ratio()
 
+_TITLE_MARKER_WORDS = {'part', 'remix', 'rmx', 'live', 'acoustic', 'instrumental', 'sped', 'slowed',
+                       'reverb', 'nightcore', 'cover', 'demo', 'vip', 'flip', 'bootleg'}
+_TITLE_ROMAN = {'ii', 'iii', 'iv', 'vi', 'vii', 'viii', 'ix'}
+
+def _title_markers(s):
+    """numbers, roman numerals, part and version words in a title. two titles with different
+    marker sets are different songs however similar the rest of the text is"""
+    out = set()
+    for w in re.findall(r'[a-z0-9]+', (s or '').lower()):
+        if w == 'pt': w = 'part'
+        if w.isdigit() or w in _TITLE_ROMAN or w in _TITLE_MARKER_WORDS:
+            out.add(w)
+    return out
+
+def _same_markers(a, b):
+    return _title_markers(a) == _title_markers(b)
+
 def _fuzzy_tokens(a, b):
     """token-set ratio: sort tokens, deduplicate, then compare.
     much better than sequence ratio for 'slayr respect' vs 'respect' type mismatches
@@ -2586,7 +2603,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
             _log_genius.debug(f'genius api: confidence={api_confidence:.2f} t={t_sc:.2f} a={a_sc:.2f} for {_st!r} -> {best.get("title","")!r}')
             # accept if title matches well; loosen artist gate when title is very strong
             # (handles alias mismatch e.g. stored "countdragons" vs genius "slayr")
-            if t_sc >= 0.45 and (not _sa or a_sc >= 0.30 or t_sc >= 0.85):
+            if t_sc >= 0.60 and (not _sa or a_sc >= 0.55) and _same_markers(best.get('title', ''), _st):
                 api_best = best
 
         # 3. DDG fallback - only when API match is weak or missing
@@ -2628,7 +2645,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
                             # accept if the genius "artist title" combined fuzzy-matches _st.
                             combined_sc = _fuzzy_tokens(f'{g_a} {g_t}', _st)
                             _log_genius.debug(f'ddg genius: id={scraped_id} title={g_t!r} t={t_sc:.2f} a={a_sc:.2f} sc={sc:.2f} combined={combined_sc:.2f}')
-                            if (t_sc >= 0.50 and sc >= 0.55) or combined_sc >= 0.72:
+                            if _same_markers(g_t, _st) and ((t_sc >= 0.60 and (not _sa or a_sc >= 0.55)) or (not _sa and combined_sc >= 0.80)):
                                 ddg_id = scraped_id
                                 confidence = sc
                                 _ddg_song_data = sd
@@ -2984,6 +3001,7 @@ def _prefetch_genius(title, artist, token):
     result = _genius_resolve(title, artist, token)
     if not result: return None
     # lower threshold here since download worker handles low-confidence popup separately
+    if not result.get('song_data'): return None
     t_sc = _fuzzy(result['song_data'].get('title', ''), _strip_brackets(title))
     if t_sc < 0.45: return None
     return result
@@ -3583,7 +3601,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                     and d['song_id'] not in _db_ids
                 ]
             for _cd in list(_db_cands) + _inflight_cands:
-                _ts = _fuzzy(pre_title, _cd[1] or '')
+                _ts = _fuzzy(pre_title, _cd[1] or '') if _same_markers(pre_title, _cd[1]) else 0.0
                 _as = _fuzzy(pre_artist or '', _cd[2] or '') if (pre_artist or _cd[2]) else 1.0
                 if _ts > 0.82 and _as > 0.72:
                     _dup_sid = _cd[0]; break
@@ -4050,7 +4068,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                                 (sid,)
                             ).fetchall()
                         for _cd in _post_cands:
-                            _ts = _fuzzy(_cur_title, _cd[1] or '')
+                            _ts = _fuzzy(_cur_title, _cd[1] or '') if _same_markers(_cur_title, _cd[1]) else 0.0
                             _as = _fuzzy(_cur_artist or '', _cd[2] or '') if (_cur_artist or _cd[2]) else 1.0
                             if _ts > 0.82 and _as > 0.72:
                                 _dup_sid = _cd[0]
@@ -4140,7 +4158,7 @@ def merge_duplicate_songs(throttle=False):
                 _la, _lb = len(a[1] or ''), len(b[1] or '')
                 if _la and _lb and (2 * min(_la, _lb) / (_la + _lb)) < 0.82:
                     continue
-                ts = _fuzzy(a[1] or '', b[1] or '')
+                ts = _fuzzy(a[1] or '', b[1] or '') if _same_markers(a[1], b[1]) else 0.0
                 if ts <= 0.82:
                     continue
                 # compare primary artist only (first comma-segment) so that
@@ -9387,7 +9405,7 @@ def api_check_duplicate(sid):
         ).fetchall()
     dupes = []
     for cand in candidates:
-        t_sc = _fuzzy(title or '', cand[1] or '')
+        t_sc = _fuzzy(title or '', cand[1] or '') if _same_markers(title, cand[1]) else 0.0
         a_sc = _fuzzy(artist or '', cand[2] or '') if (artist or cand[2]) else 1.0
         if t_sc > 0.82 and a_sc > 0.72:
             dupes.append({'id': cand[0], 'title': cand[1], 'artist': cand[2] or '',
