@@ -2993,7 +2993,7 @@ def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_so
     if not result or not result.get('song_data'): return
 
     # for API-search path: enforce confidence threshold (DDG already verified its match)
-    if not genius_song_id and result['confidence'] < 0.62:
+    if not genius_song_id and result['confidence'] < 0.70:
         _log_genius.info(f'genius: low confidence {result["confidence"]:.2f}, skipping'); return
 
     _genius_write(sid, result['song_data'], token, skip_title=skip_title)
@@ -4159,7 +4159,7 @@ def merge_duplicate_songs(throttle=False):
                 # it can never cause a missed match, unlike a prefix/token
                 # blocking scheme would.
                 _la, _lb = len(a[1] or ''), len(b[1] or '')
-                (2 * min(_la, _lb) / (_la + _lb)) < _DUP_TITLE_MIN
+                if _la and _lb and (2 * min(_la, _lb) / (_la + _lb)) < _DUP_TITLE_MIN:
                     continue
                 ts = _fuzzy(a[1] or '', b[1] or '') if _same_markers(a[1], b[1]) else 0.0
                 if ts <= _DUP_TITLE_MIN:
@@ -9261,7 +9261,7 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                     result['status'] = 'resolved'
                 else:
                     result['status'] = 'no_match'
-                    result['confidence'] < 0.70
+                    result['confidence'] = 0.0
 
                 results[i] = result
         except Exception as e:
