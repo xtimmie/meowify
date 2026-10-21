@@ -48,7 +48,6 @@ _miniaudio = None
 
 # ── platform helpers ───────────────────────────────────────────────────────────
 IS_ANDROID = hasattr(sys, 'getandroidapilevel') or 'ANDROID_ROOT' in os.environ
-_ANDROID_PORT = 5000  # fixed port on android - register http://localhost:5000/dropbox-callback in dropbox console
 def _subp(args, **kw):
     """subprocess.Popen without console window on windows"""
     if sys.platform == 'win32':
@@ -1294,7 +1293,7 @@ def _import_local_file(file_path):
     _analysis_pool.submit(_analyze_and_save)
     return sid
 
-_SPOTIFY_UA_POOL = [
+_UA_POOL = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -1307,8 +1306,8 @@ _sp_ua_lock = threading.Lock()
 def _next_spotify_ua():
     import random
     with _sp_ua_lock:
-        _sp_ua_idx[0] = (_sp_ua_idx[0] + 1) % len(_SPOTIFY_UA_POOL)
-        return _SPOTIFY_UA_POOL[_sp_ua_idx[0]]
+        _sp_ua_idx[0] = (_sp_ua_idx[0] + 1) % len(_UA_POOL)
+        return _UA_POOL[_sp_ua_idx[0]]
 
 def _spotify_track_info(track_url, retries=4):
     """resolve a spotify track url → {title, artist} via oembed + __NEXT_DATA__ + title tag"""
@@ -1528,30 +1527,6 @@ def _decode_pcm(path):
     if decoded.nchannels > 1:
         samples = samples.reshape(-1, decoded.nchannels).mean(axis=1)
     return samples, decoded.sample_rate
-
-def _phash_cover(path):
-    """8x8 average perceptual hash  64-bit int. requires Pillow."""
-    try:
-        from PIL import Image
-        import numpy as np
-        img = Image.open(path).convert('L').resize((8, 8), Image.LANCZOS)
-        arr = np.array(img, dtype=np.float32)
-        mean = arr.mean()
-        bits = (arr > mean).flatten()
-        h = 0
-        for b in bits:
-            h = (h << 1) | int(b)
-        return h
-    except Exception:
-        return None
-
-def _hamming(a, b):
-    x = a ^ b
-    count = 0
-    while x:
-        count += x & 1
-        x >>= 1
-    return count
 
 # ── album dedup/merge ──────────────────────────────────────────────────────────
 def _album_canonical(title):
@@ -2018,7 +1993,7 @@ def _genius_scrape_lyrics(song):
     def _fetch_url(url, attempt=0):
         # random pre-request delay: base 0.8-2.5s, grows with attempt
         time.sleep(random.uniform(0.8 + attempt * 1.2, 2.5 + attempt * 2.0))
-        ua = _SPOTIFY_UA_POOL[random.randint(0, len(_SPOTIFY_UA_POOL) - 1)]
+        ua = _UA_POOL[random.randint(0, len(_UA_POOL) - 1)]
         headers = {**headers_base, 'User-Agent': ua}
         # vary referer to look more organic
         if random.random() > 0.5:
@@ -2453,16 +2428,7 @@ def _align_song(song_id):
     except Exception as e:
         _log_lyrics.warning(f'align_song err {song_id}: {e}')
 
-def prefetch_lyrics(song):
-    if not song or not song.get('id'):
-        return
-    sid = song['id']
-    with _lyrics_lock:
-        if sid in _lyrics_cache or sid in _lyrics_prefetch_set:
-            return
-    _search_pool.submit(_lyrics_fetch_and_cache, song)
-
-# ── flask ──────────────────────────────────────────────────────────────────────
+# ── genius ──────────────────────────────────────────────────────────────────────
 def _genius_get(path, token):
     import urllib.request
     _genius_rate_wait()
@@ -4453,14 +4419,6 @@ def cleanup_orphans():
     except Exception as e:
         _log_cleanup.warning('cleanup err: %s', e)
     return stats
-def _cleanup_stale():
-    flag = ddir() / '.last_cleanup'
-    try:
-        if flag.exists() and time.time() - float(flag.read_text()) < 86400:
-            return False
-    except Exception: pass
-    return True
-
 def _touch_cleanup():
     try: (ddir() / '.last_cleanup').write_text(str(time.time()))
     except Exception: pass
@@ -13460,9 +13418,8 @@ class AudioEngine {
   }
 
   setVolume(v) {
-    // v is 0-1 linear from slider; convert to log gain
-    const db = v <= 0 ? -Infinity : (Math.log10(v) * 20);
-    const gain = v <= 0 ? 0 : Math.pow(10, Math.max(-60, db) / 20);
+    // v is 0-1 linear from slider; squaring gives a perceptual (roughly logarithmic) volume curve
+    const gain = v <= 0 ? 0 : v * v;
     S.volume = v;
     if (this.gain) this.gain.gain.value = gain;
     if (typeof updateVolIcon === 'function') updateVolIcon();
@@ -15546,6 +15503,7 @@ function _mvOnSettingChange() {
 }
 
 async function togglePlay() {
+  _lastHighlightId = null; // force updateHighlights to re-scan on next call
   _enqueueCmd(async () => {
     try {
       if (!S.cur && !engine.hasPaused) return;
@@ -17914,14 +17872,14 @@ function _mvUpdateToggleIcon() {
 }
 
 let _mvStatusFillTarget = 0;
+const _mvStatusMap = {
+  searching:   ['finding video...',  0.25],
+  downloading: ['downloading...',    0.55],
+  correlating: ['syncing audio...',  0.82],
+  warming:     ['loading...',        0.92],
+};
 function _mvShowStatus(status) {
-  const _map = {
-    searching:   ['finding video...',  0.25],
-    downloading: ['downloading...',    0.55],
-    correlating: ['syncing audio...',  0.82],
-    warming:     ['loading...',        0.92],
-  };
-  const [label, progress] = _map[status] || ['loading...', 0.3];
+  const [label, progress] = _mvStatusMap[status] || ['loading...', 0.3];
   _mvSetStatus(label, progress);
 }
 function _mvSetStatus(label, progress) {
@@ -18061,26 +18019,6 @@ async function _mvLoadForSong(song, reopenFullscreen) {
   let _pollAborted = false;
   let attempts = 0;
   const MAX_ATTEMPTS = 60; // 60 * 3s = 3 min max
-
-  const _mvStatusMap = {
-    searching:   ['finding video...',  0.25],
-    downloading: ['downloading...',    0.55],
-    correlating: ['syncing audio...',  0.82],
-    warming:     ['loading...',        0.92],
-  };
-
-  function _mvShowStatus(status) {
-    const [label, progress] = _mvStatusMap[status] || ['loading...', 0.3];
-    _mvSetStatus(label, progress);
-  }
-
-  function _mvClearStatus() {
-    const btn = _mvToggleBtn();
-    if (btn) { btn.disabled = false; delete btn.dataset.mvSearching; }
-    _mvStatusFillTarget = 0;
-    _mvSetStatus(null);
-    _mvUpdateToggleIcon();
-  }
 
   async function _poll() {
     if (_pollAborted || _mvPollGeneration !== myPollGen || S.cur?.id !== sid) { _mvClearStatus(); return; }
@@ -22919,7 +22857,7 @@ function _hideDlPanel() {
   if (!panel) return;
   // always remove the listener - it's a no-op if it wasn't added
   document.removeEventListener('click', _dlPanelOutsideClick, true);
-  const mobile = window.innerWidth <= 767;
+  const mobile = isMobile();
   if (mobile) {
     panel.style.transform = '';
     panel.style.transformOrigin = '';
@@ -22938,7 +22876,7 @@ function _renderDlPanel(opening) {
   const panel = document.getElementById('dl-panel-float');
   const btn = document.getElementById('dl-panel-btn');
   if (!panel || !btn) return;
-  const mobile = window.innerWidth <= 767;
+  const mobile = isMobile();
 
   panel.innerHTML = '';
   if (mobile) {
@@ -23960,65 +23898,6 @@ function onSpPlSelect(val) {
   if (val !== '__new__') window._spPlNewName = '';
 }
 
-async function startSpotifyTransfer() {
-  const raw = document.getElementById('sp-urls')?.value?.trim();
-  if (!raw) return;
-  const urls = raw.split('\n').map(l => l.trim()).filter(l => l.includes('spotify.com'));
-  if (!urls.length) {
-    const st = document.getElementById('sp-status');
-    if (st) st.textContent = 'no valid spotify urls found';
-    return;
-  }
-  let targetPlId = null;
-  const plSel = document.getElementById('sp-pl-select')?.value || '';
-  if (plSel === '__new__') {
-    const newName = (window._spPlNewName || '').trim();
-    if (newName) {
-      const r = await api('POST', '/api/playlists', {name: newName});
-      if (r?.id) { targetPlId = r.id; await loadData(); renderPlNav(); }
-    }
-  } else if (plSel) { targetPlId = plSel; }
-
-  const statusEl = document.getElementById('sp-status');
-  document.querySelectorAll('#modal .btn, #modal-overlay .btn').forEach(b => { b.disabled = true; });
-
-  let resolved = 0, failed = 0, localImported = 0;
-  const allTracks = [], localImportedIds = [];
-
-  for (let i = 0; i < urls.length; i++) {
-    if (statusEl) statusEl.textContent =
-      'resolving ' + (i+1) + ' / ' + urls.length + '...' +
-      (resolved ? '  \u2713 ' + resolved : '') + (failed ? '  \u2715 ' + failed : '') +
-      (localImported ? '  \u{1F4C1} ' + localImported : '');
-    try {
-      const result = await _resolveSpotifyUrl(urls[i]);
-      if (result.imported) { localImported++; resolved++; if (result.imported_sid) localImportedIds.push(result.imported_sid); }
-      else if (result.tracks?.length) { allTracks.push(...result.tracks); resolved++; }
-      else { failed++; if (result.error) console.warn('spotify resolve failed:', urls[i], result.error); }
-    } catch(e) { failed++; console.warn('spotify resolve err', e); }
-    if (i < urls.length - 1) await new Promise(r => setTimeout(r, 350));
-  }
-
-  closeModal();
-
-  if (targetPlId && localImportedIds.length) {
-    for (const sid of localImportedIds) await api('POST', '/api/playlists/'+targetPlId+'/songs', {song_id: sid});
-    S.plSongs[targetPlId] = undefined;
-  }
-  if (!allTracks.length && localImported === 0) {
-    if (failed > 0) alert('spotify transfer: 0 tracks resolved (' + failed + ' url(s) failed)');
-    return;
-  }
-  if (localImported > 0) await loadData();
-  if (!allTracks.length) return;
-
-  const items = allTracks.map(t => ({query: [t.artist, t.title].filter(Boolean).join(' - '), spotify_url: t.url || '', _targetPlId: targetPlId}));
-  await startBatchDl(items);
-  if (targetPlId) {
-    // note: playlist association handled by startBatchDl polling for url flow
-  }
-}
-
 // ═══════════════════════════════════════════════
 // FILE IMPORT
 // ═══════════════════════════════════════════════
@@ -24114,7 +23993,7 @@ let _ctxGeneration = 0;
 
 function showCtx(e, items) {
   const ctx = document.getElementById('ctx');
-  const mobile = window.innerWidth <= 767;
+  const mobile = isMobile();
   const myGen = ++_ctxGeneration;
 
   ctx.innerHTML = '';
@@ -24196,7 +24075,7 @@ function showCtx(e, items) {
 
 function hideCtx() {
   const ctx = document.getElementById('ctx');
-  const wasMobile = ctx.classList.contains('mob-ctx-active') || window.innerWidth <= 767;
+  const wasMobile = ctx.classList.contains('mob-ctx-active') || isMobile();
   const genAtHide = _ctxGeneration; // if showCtx fires after us, gen will be higher
   if (wasMobile) {
     // only clear inline transform if no new ctx opened while this dismiss was in flight
@@ -27484,13 +27363,6 @@ async function _loadDeps() {
   if (typeof S !== 'undefined' && S.view === 'settings') renderSettings();
 }
 
-// invalidate highlight cache when play state changes externally
-const _origTogglePlay = togglePlay;
-togglePlay = async function() {
-  _lastHighlightId = null; // force updateHighlights to re-scan on next call
-  return _origTogglePlay.apply(this, arguments);
-};
-
 document.addEventListener('DOMContentLoaded', async () => {
   // paint skeleton immediately before any data fetch
   updateMobileClass();
@@ -28289,7 +28161,7 @@ def main():
                     _log_server.error('failed to start server'); sys.exit(1)
                 webview.settings['OPEN_DEVTOOLS_IN_DEBUG'] = False
                 webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
-                webview.start(debug=True)
+                webview.start(debug=False)
                 return
             except ImportError:
                 pass
