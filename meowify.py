@@ -10015,6 +10015,7 @@ svg {overflow: visible}
 /* title + search overlay container */
 .topbar:has(>.mu-ptr-bar){flex-wrap:wrap;row-gap:0}
 .topbar>.mu-ptr-bar{flex:0 0 calc(100% + 20px);margin:0 -12px 0 -8px;transform:translateY(4px)}
+.mu-ptr-fp[style*="mu-ptr-chase"]{-webkit-mask-image:linear-gradient(90deg,transparent,#000 35%,#000 65%,transparent);mask-image:linear-gradient(90deg,transparent,#000 35%,#000 65%,transparent)}
 .topbar-title-area{
   flex:1;min-width:0;position:relative;
   display:flex;align-items:center;
