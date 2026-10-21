@@ -143,7 +143,7 @@ _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.envir
 _SCFG   = _HOME / "settings.json"
 _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
-_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500})
+_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -6752,7 +6752,7 @@ _DBX_SHARED_PREFS = frozenset([
     'volume_norm', 'target_lufs',
     'theme_hue', 'theme_sat', 'theme_bri',
     'prev_restarts', 'dl_speed_single', 'dl_speed_batch',
-    'auto_align_lyrics', 'ui_design',
+    'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
     'volume', 'eq', 'enhance_audio', 'immersive_audio',
 ])
 
@@ -24789,6 +24789,9 @@ function applyFontOverride(val) {
   el.textContent = `body, body * { font-family: ${val} !important; }`;
 }
 
+function applyGlass(c = CFG) {
+  MU.setGlass({ alpha: c.glass_alpha ?? 1, blur: c.glass_blur ?? 1 });
+}
 function applyDesign(design) {
   _applyDesignImpl(design);
   _repaintWavyColors();
@@ -24810,8 +24813,8 @@ function _applyDesignImpl(design) {
   body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
-  body.design-glassy #app.mobile .topbar{border-radius:22px;corner-shape:superellipse(3)}
-  body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) 30%,#0004)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
+  body.design-glassy #app.mobile .topbar{border-radius:22px;corner-shape:superellipse(2.5)}
+  body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,calc(30% * var(--glass-a,1))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .45), var(--glass-spec-panel);}
   @media (hover: hover) {body.design-glassy .song-row:hover,body.design-glassy .song-row-mobile:hover{background:var(--glass-bg-hi)!important}}
   body.design-glassy .song-row.playing,body.design-glassy .song-row-mobile.playing{background: color-mix(in oklch, var(--color-primary) 18%, rgba(255, 255, 255, .06)) !important; box-shadow: var(--glass-spec-panel)}
@@ -24822,13 +24825,13 @@ function _applyDesignImpl(design) {
   body.design-glassy .nav-btn.active{background:color-mix(in oklch,var(--color-primary) 18%,rgba(255,255,255,.06))!important;box-shadow:var(--glass-spec-panel)}
   @media (hover: hover) {body.design-glassy .nav-btn.active:hover{background:color-mix(in oklch,var(--color-primary) 26%,rgba(255,255,255,.09))!important}}
   body.design-glassy .mob-sort-btn{background:color-mix(in oklch,var(--color-primary) 16%,rgba(255,255,255,.06))!important;color:var(--color-primary)!important;box-shadow:var(--glass-spec-panel)}
-  body.design-glassy #ctx,body.design-glassy #dl-panel-float{background:color-mix(in oklch,var(--color-surface-container-highest) 50%,transparent)!important;backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border-color:var(--glass-border-hi)!important;box-shadow:var(--glass-spec-panel)!important}
+  body.design-glassy #ctx,body.design-glassy #dl-panel-float{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,calc(50% * var(--glass-a,1))),transparent)!important;backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);border-color:var(--glass-border-hi)!important;box-shadow:var(--glass-spec-panel)!important}
   @media(max-width:767px){body.design-glassy #ctx,body.design-glassy #dl-panel-float{border:none!important;border-top:1px solid var(--glass-border-hi)!important;box-shadow:none!important}}
   body.design-glassy #ctx{border:none!important}
   body.design-glassy .subnav-btn{background:var(--glass-bg)!important}
   @media (hover: hover) {body.design-glassy .subnav-btn:hover{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .subnav-btn.on{background:color-mix(in oklch,var(--color-primary) 22%,rgba(255,255,255,.06))!important;box-shadow:var(--glass-spec-panel)}
-  body.design-glassy .mbox{background:color-mix(in oklch,var(--color-surface-container) 75%,transparent)!important;backdrop-filter:blur(22px) saturate(1.6);-webkit-backdrop-filter:blur(22px) saturate(1.6);border:1px solid var(--glass-border-hi);box-shadow:var(--glass-spec-panel)!important}
+  body.design-glassy .mbox{background:color-mix(in oklch,var(--color-surface-container) min(100%,calc(75% * var(--glass-a,1))),transparent)!important;backdrop-filter:blur(calc(22px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(22px * var(--glass-b,1))) saturate(1.6);border:1px solid var(--glass-border-hi);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy .lib-album,body.design-glassy .album-card{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}
   @media (hover: hover) {body.design-glassy .lib-album:hover,body.design-glassy .album-card:hover{background:var(--glass-bg-hi)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .search-track{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}
@@ -25351,6 +25354,7 @@ async function loadData() {
       MU.setPalette({ hue: cfg.theme_hue, sat: cfg.theme_sat ?? 50, bri: cfg.theme_bri ?? 1.0 });
       _repaintWavyColors(); updateSpikyBtn(); _updateMobNpSpiky();
     }
+    applyGlass(cfg);
     if (cfg.ui_design !== undefined) applyDesign(cfg.ui_design);
     if (cfg.font_override !== undefined) applyFontOverride(cfg.font_override);
     applyPlayerBtnVisibility();
@@ -26919,6 +26923,24 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
+        ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength', `
+          <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:40px;text-align:right">opacity</span>
+              <input type="range" min="0" max="200" value="${Math.round((CFG.glass_alpha ?? 1)*100)}" class="slider" style="width:120px;"
+                oninput="CFG.glass_alpha=parseInt(this.value)/100;document.getElementById('glass-a-lbl').textContent=this.value+'%';applyGlass()"
+                onpointerup="saveSetting('glass_alpha',CFG.glass_alpha)">
+              <span id="glass-a-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px">${Math.round((CFG.glass_alpha ?? 1)*100)}%</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:40px;text-align:right">blur</span>
+              <input type="range" min="0" max="200" value="${Math.round((CFG.glass_blur ?? 1)*100)}" class="slider" style="width:120px;"
+                oninput="CFG.glass_blur=parseInt(this.value)/100;document.getElementById('glass-b-lbl').textContent=this.value+'%';applyGlass()"
+                onpointerup="saveSetting('glass_blur',CFG.glass_blur)">
+              <span id="glass-b-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px">${Math.round((CFG.glass_blur ?? 1)*100)}%</span>
+            </div>
+          </div>
+        `) : ''}
         ${row('track source', 'how sources appear in the library', `
           <div class="select-wrap" style="width:160px">
             <select class="input" style="width:160px" onchange="saveSetting('source_display',this.value).then(()=>{renderSettings();rerenderCurrentView();})">
@@ -27419,6 +27441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateSpikyBtn();
       _updateMobNpSpiky();
     }
+    applyGlass(cfg);
     if (cfg.ui_design !== undefined) applyDesign(cfg.ui_design);
   }
   renderPlNav();
