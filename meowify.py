@@ -140,7 +140,7 @@ except ImportError:
 # ── settings ───────────────────────────────────────────────────────────────────
 _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.environ else Path.home() / ".local" / "share" / "meowify"
 _SCFG   = _HOME / "settings.json"
-_DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
+_DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_boost": False, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
 _DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0})
 
@@ -6755,7 +6755,7 @@ _DBX_SHARED_PREFS = frozenset([
     'theme_hue', 'theme_sat', 'theme_bri',
     'prev_restarts', 'dl_speed_single', 'dl_speed_batch',
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
-    'volume', 'eq', 'enhance_audio', 'immersive_audio',
+    'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
 ])
 
 def _dbx_push_prefs(dbx):
@@ -9672,6 +9672,7 @@ body.design-glassy input[type='range'].slider::-webkit-slider-runnable-track {
   /* 3-stop instead of 7-stop — top specular, body, bottom shadow
      two gradient layers for fill/empty split, reusing precomputed vars */
   background-image:
+    linear-gradient(to right, var(--_warn-line, transparent) 0 2px, var(--_warn-tint, transparent) 2px 100%),
     linear-gradient(to bottom,
       var(--_cyl-top) 0%, var(--_cyl-top) 8%,
       var(--_cyl-mid) 50%,
@@ -9683,9 +9684,10 @@ body.design-glassy input[type='range'].slider::-webkit-slider-runnable-track {
       var(--_cyl-bot-e) 100%
     );
   background-size:
+    var(--_warn-w, 0%) var(--_track-h),
     var(--_fill-pct)  var(--_track-h),
     var(--_empty-pct) var(--_track-h);
-  background-position: 0 center, 100% center;
+  background-position: 100% center, 0 center, 100% center;
   background-repeat: no-repeat;
 
   /* single inset shadow only — top catchlight is the only one visible
@@ -9785,15 +9787,17 @@ body.design-glassy input[type='range'].slider.slider-vert::-webkit-slider-runnab
     inset  1px 0 0   color-mix(in oklch, black 20%, transparent),
     inset -1px 0 0   color-mix(in oklch, white 18%, transparent);
   background-image:
+    linear-gradient(to top, var(--_warn-line, transparent) 0 2px, var(--_warn-tint, transparent) 2px 100%),
     linear-gradient(var(--color-primary), var(--color-primary)),
     linear-gradient(
       color-mix(in oklch, var(--color-primary) 20%, var(--color-surface-container-highest)),
       color-mix(in oklch, var(--color-primary) 20%, var(--color-surface-container-highest))
     );
   background-size:
+    var(--_track-h) var(--_warn-w, 0%),
     var(--_track-h) var(--_fill-pct),
     var(--_track-h) var(--_empty-pct);
-  background-position: center 100%, center 0%;
+  background-position: center 0%, center 100%, center 0%;
 }
 
 body.design-glassy input[type='range'].slider.slider-vert::-webkit-slider-thumb {
@@ -13085,6 +13089,9 @@ function showVolRowCtx(e) {
   const spikyVol = CFG.spiky_vol_icon !== false;
   showCtx(e, [
     { _header: true, label: 'volume' },
+    { icon: CFG.volume_boost ? '☑' : '☐', label: 'volume boost', fn: () => {
+        saveSetting('volume_boost', !CFG.volume_boost).then(() => applyVolBoost());
+    }},
     { icon: spikyVol ? '☑' : '☐', label: 'spiky volume icon', fn: () => {
         saveSetting('spiky_vol_icon', !spikyVol).then(() => { CFG.spiky_vol_icon = !spikyVol; updateVolIcon(); });
     }},
@@ -13122,6 +13129,20 @@ function applyVolSliderOrientation() {
   // re-init motionui on this slider
   slider._muInit = false;
   if (window.MU) MU.init(wrap);
+}
+
+function volMax() { return CFG.volume_boost ? 2 : 1; }
+
+function applyVolBoost() {
+  const el = document.getElementById('vslider');
+  if (!el) return;
+  const max = volMax();
+  if (_preMuteVol !== null && _preMuteVol > max) _preMuteVol = max;
+  if (S.volume > max) engine.setVolumeAndSave(max);
+  el.max = String(max * 100);
+  if (CFG.volume_boost) el.dataset.warnFrom = '100'; else delete el.dataset.warnFrom;
+  _updateVolSliderFill(S.volume);
+  updateVolIcon();
 }
 
 const VOL_VERT_BELOW = 580;
@@ -20280,7 +20301,7 @@ function esc(t) {
     const dot  = document.getElementById('vol-inner-dot');
     const grp  = document.getElementById('vol-spiky-group');
     if (!path || !dot) return;
-    const v = S.volume;
+    const v = Math.min(1, S.volume);
     const outerR = 4 + v * 8;
     const st = _volSpikyT;
     const effectiveOuter = outerR;
@@ -20294,7 +20315,7 @@ function esc(t) {
     const holeR = effectiveOuter * VOL_HOLE_MULT * v;
 
     if (_preMuteVol !== null) {
-      const ref = _muteAnimVol || _preMuteVol;
+      const ref = Math.min(1, _muteAnimVol || _preMuteVol);
       // muteT: 0 = at full vol, 1 = fully muted
       const muteT = Math.min(1, Math.max(0, 1 - v / (ref || 0.001)));
       const refV = ref;
@@ -26843,6 +26864,7 @@ function renderSettings() {
       `) : ''}
 
       ${_sectionMatch('audio') ? section('audio', `
+        ${row('volume boost', 'volume slider goes up to 200%, anything past 100% is marked red', toggle('volume_boost', CFG.volume_boost, 'applyVolBoost()'))}
         ${row('volume normalization', 'loudness matching across tracks', toggle('volume_norm', CFG.volume_norm, 'applyNormToCurrentSong()'))}
         ${row('target loudness', 'LUFS target for normalization', `
           <input class="input" type="number" step="0.5" value="${CFG.target_lufs ?? -14}" style="width:90px;text-align:right;padding:8px 6px"
@@ -27491,9 +27513,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   }
-  if (CFG.volume !== undefined) engine.setVolume(CFG.volume);
-  document.getElementById('vslider').value = Math.round(S.volume * 100);
-  _updateVolSliderFill(S.volume);
+  if (CFG.volume !== undefined) engine.setVolume(Math.min(volMax(), CFG.volume));
+  applyVolBoost();
   if (CFG.zoom !== undefined) { _zoom = _zoomTo = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
   if (CFG.sidebar_width !== undefined) _applySidebarW(CFG.sidebar_width);
   else _syncSidebarNarrow(document.getElementById('sidebar').offsetWidth);
@@ -27633,7 +27654,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         break;
       case 'ArrowUp':
         e.preventDefault();
-        { const v = Math.min(1, S.volume + 0.05); onVolSlider(v); document.getElementById('vslider').value = Math.round(v*100); _updateVolSliderFill(v); }
+        { const v = Math.min(volMax(), S.volume + 0.05); onVolSlider(v); document.getElementById('vslider').value = Math.round(v*100); _updateVolSliderFill(v); }
         break;
       case 'ArrowDown':
         e.preventDefault();
@@ -28161,7 +28182,7 @@ def main():
                     _log_server.error('failed to start server'); sys.exit(1)
                 webview.settings['OPEN_DEVTOOLS_IN_DEBUG'] = False
                 webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
-                webview.start(debug=False)
+                webview.start(debug=True)
                 return
             except ImportError:
                 pass
