@@ -24915,7 +24915,7 @@ function _applyDesignImpl(design) {
   body.design-glassy #mobile-nav{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border)}
   body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:54px;bottom:0;margin:0;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
-  body.design-glassy #app.mobile #player{bottom:60px;margin:0;border-width:1px;border-radius:34px}
+  body.design-glassy #app.mobile #player{bottom:57px;margin:0 2px;border-width:1px;border-radius:34px}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
   body.design-glassy #global-prog{background:rgba(255,255,255,.07)!important}
   body.design-glassy .pl-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important;box-shadow:var(--glass-spec-panel)}
