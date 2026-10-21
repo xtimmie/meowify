@@ -3909,8 +3909,12 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                      src_name, now, album_id, track_num, _yt_featuring or '', sid, sid))
             # store the video id we actually downloaded, overrides whatever enrichment guessed
             _dl_vid = info.get('id') or ''
-            if src_name == 'youtube' and re.fullmatch(r'[A-Za-z0-9_-]{11}', _dl_vid):
+            if src_name in ('youtube', 'youtube_video') and re.fullmatch(r'[A-Za-z0-9_-]{11}', _dl_vid):
                 c.execute("UPDATE songs SET source_id=? WHERE id=?", (_dl_vid, sid))
+                if is_video:
+                    # the downloaded video is the music video, link it so the mv feature has it from the start
+                    c.execute("UPDATE songs SET mv_video_id=?, mv_url=? WHERE id=?",
+                              (_dl_vid, f'https://www.youtube.com/watch?v={_dl_vid}', sid))
             _final = c.execute("SELECT title,artist,album,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
         if _final:
             write_meta(str(dest), _final[0], _final[1] or '', _final[2] or '', track_num, _final[3] or '')
