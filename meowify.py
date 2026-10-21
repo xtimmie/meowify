@@ -1070,7 +1070,7 @@ def _stats_match_score(ct, ca, cand_ct, cand_ca):
     be _canonical()-normalized. returns 0.0 if below the title floor, else a
     0-1 score combining title+artist similarity."""
     t_score = _SequenceMatcher(None, ct, cand_ct).ratio()
-    if t_score < 0.70:
+    if t_score < 0.80:
         return 0.0
     a_score = _SequenceMatcher(None, ca, cand_ca).ratio() if (ca or cand_ca) else 1.0
     return t_score * 0.65 + a_score * 0.35
@@ -1259,7 +1259,7 @@ def _find_local_spotify_file(artist, title, duration_secs, search_dir):
             best_path  = f
 
     _log_spotify.debug(f'spotify local: scanned {found_files} files, best={best_path} score={best_score:.3f}')
-    return (str(best_path) if best_score > 0.50 else None), best_score
+    return (str(best_path) if best_score > 0.65 else None), best_score
 
 def _import_local_file(file_path):
     """Import a local audio file into the DB, same as api_import but returns song_id."""
@@ -2510,6 +2510,9 @@ def _fuzzy_tokens(a, b):
     _tok = lambda s: ' '.join(sorted(set(re.sub(r"[^a-z0-9 ]", '', (s or '').lower()).split())))
     return _fuzzy(_tok(a), _tok(b))
 
+_DUP_TITLE_MIN  = 0.88   # title similarity needed to call two songs duplicates
+_DUP_ARTIST_MIN = 0.80   # primary artist similarity needed on top of that
+
 def _norm_artist(s):
     """normalize artist name for fuzzy comparison - strips features, punct, extra spaces"""
     if not s: return ''
@@ -2603,7 +2606,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
             _log_genius.debug(f'genius api: confidence={api_confidence:.2f} t={t_sc:.2f} a={a_sc:.2f} for {_st!r} -> {best.get("title","")!r}')
             # accept if title matches well; loosen artist gate when title is very strong
             # (handles alias mismatch e.g. stored "countdragons" vs genius "slayr")
-            if t_sc >= 0.60 and (not _sa or a_sc >= 0.55) and _same_markers(best.get('title', ''), _st):
+            if t_sc >= 0.70 and (not _sa or a_sc >= 0.65) and _same_markers(best.get('title', ''), _st):
                 api_best = best
 
         # 3. DDG fallback - only when API match is weak or missing
@@ -2645,7 +2648,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
                             # accept if the genius "artist title" combined fuzzy-matches _st.
                             combined_sc = _fuzzy_tokens(f'{g_a} {g_t}', _st)
                             _log_genius.debug(f'ddg genius: id={scraped_id} title={g_t!r} t={t_sc:.2f} a={a_sc:.2f} sc={sc:.2f} combined={combined_sc:.2f}')
-                            if _same_markers(g_t, _st) and ((t_sc >= 0.60 and (not _sa or a_sc >= 0.55)) or (not _sa and combined_sc >= 0.80)):
+                            if _same_markers(g_t, _st) and ((t_sc >= 0.70 and (not _sa or a_sc >= 0.65)) or (not _sa and combined_sc >= 0.85)):
                                 ddg_id = scraped_id
                                 confidence = sc
                                 _ddg_song_data = sd
@@ -3003,7 +3006,7 @@ def _prefetch_genius(title, artist, token):
     # lower threshold here since download worker handles low-confidence popup separately
     if not result.get('song_data'): return None
     t_sc = _fuzzy(result['song_data'].get('title', ''), _strip_brackets(title))
-    if t_sc < 0.45: return None
+    if t_sc < 0.60: return None
     return result
 
 def _ytm_write_album_tracks(yt, album_id, sid, video_id, title, artist, browse_id=None):
@@ -3046,7 +3049,7 @@ def _ytm_write_album_tracks(yt, album_id, sid, video_id, title, artist, browse_i
                 if t_vid:
                     _sr = c.execute("SELECT id FROM songs WHERE source_id=?", (t_vid,)).fetchone()
                     if _sr: t_song_id = _sr[0]
-                if not t_song_id and _fuzzy(t_title, title) > 0.85:
+                if not t_song_id and _fuzzy(t_title, title) > 0.90 and _same_markers(t_title, title):
                     t_song_id = sid
                 ex = c.execute("SELECT id FROM album_tracks WHERE album_id=? AND track_num=?",
                                (album_id, t_num)).fetchone()
@@ -3603,7 +3606,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             for _cd in list(_db_cands) + _inflight_cands:
                 _ts = _fuzzy(pre_title, _cd[1] or '') if _same_markers(pre_title, _cd[1]) else 0.0
                 _as = _fuzzy(pre_artist or '', _cd[2] or '') if (pre_artist or _cd[2]) else 1.0
-                if _ts > 0.82 and _as > 0.72:
+                if _ts > _DUP_TITLE_MIN and _as > _DUP_ARTIST_MIN:
                     _dup_sid = _cd[0]; break
 
         # insert placeholder - song appears in library immediately
@@ -3840,8 +3843,8 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 if not _ex_alb:
                     _cands = c.execute("SELECT id, title, artist FROM albums WHERE LOWER(SUBSTR(title,1,4))=LOWER(SUBSTR(?,1,4))", (album,)).fetchall()
                     for _ca in _cands:
-                        if _fuzzy(_album_canonical(_ca[1]), _album_canonical(album)) >= 0.88 and (
-                                not _ca[2] or not artist or _fuzzy((_ca[2] or '').lower(), artist.lower()) >= 0.80):
+                        if _fuzzy(_album_canonical(_ca[1]), _album_canonical(album)) >= 0.92 and (
+                                not _ca[2] or not artist or _fuzzy((_ca[2] or '').lower(), artist.lower()) >= 0.85):
                             _ex_alb = _ca
                             break
                 if _ex_alb:
@@ -3878,7 +3881,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                         if _t_vid:
                             _sr2 = c.execute("SELECT id FROM songs WHERE source_id=?", (_t_vid,)).fetchone()
                             if _sr2: _t_song = _sr2[0]
-                        _is_this = (_t_num == ytm_track_num) or (ytm_track_title and _fuzzy(_t_title, ytm_track_title) > 0.85)
+                        _is_this = (_t_num == ytm_track_num) or (ytm_track_title and _fuzzy(_t_title, ytm_track_title) > 0.90 and _same_markers(_t_title, ytm_track_title))
                         if _is_this: _t_song = _t_song or sid
                         _ex_t = c.execute("SELECT id FROM album_tracks WHERE album_id=? AND track_num=?", (album_id, _t_num)).fetchone()
                         if _ex_t:
@@ -4008,7 +4011,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                             if t_vid:
                                 _sr = c.execute("SELECT id FROM songs WHERE source_id=?", (t_vid,)).fetchone()
                                 if _sr: t_song_id = _sr[0]
-                            if not t_song_id and _fuzzy(t_title, _title) > 0.85:
+                            if not t_song_id and _fuzzy(t_title, _title) > 0.90 and _same_markers(t_title, _title):
                                 t_song_id = _sid
                             ex = c.execute("SELECT id FROM album_tracks WHERE album_id=? AND track_num=?",
                                            (_aid, t_num)).fetchone()
@@ -4070,7 +4073,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                         for _cd in _post_cands:
                             _ts = _fuzzy(_cur_title, _cd[1] or '') if _same_markers(_cur_title, _cd[1]) else 0.0
                             _as = _fuzzy(_cur_artist or '', _cd[2] or '') if (_cur_artist or _cd[2]) else 1.0
-                            if _ts > 0.82 and _as > 0.72:
+                            if _ts > _DUP_TITLE_MIN and _as > _DUP_ARTIST_MIN:
                                 _dup_sid = _cd[0]
                                 _dl(did, duplicate_sid=_dup_sid, song_id=sid)
                                 break
@@ -4128,7 +4131,7 @@ def _safe_remove_cover(cover_path, exclude_song_id=None):
 # ── orphan cleanup ─────────────────────────────────────────────────────────────
 def merge_duplicate_songs(throttle=False):
     """find songs in the library that are fuzzy-duplicates of each other
-    (same thresholds as download-time dedup: title>0.82, artist>0.72),
+    (same thresholds as download-time dedup: _DUP_TITLE_MIN / _DUP_ARTIST_MIN),
     merge their stats/play_events/playlist memberships into the better row,
     delete the worse one. 'better' = has file_path > higher play_count > newer added_at."""
     merged_count = 0
@@ -4156,10 +4159,10 @@ def merge_duplicate_songs(throttle=False):
                 # it can never cause a missed match, unlike a prefix/token
                 # blocking scheme would.
                 _la, _lb = len(a[1] or ''), len(b[1] or '')
-                if _la and _lb and (2 * min(_la, _lb) / (_la + _lb)) < 0.82:
+                (2 * min(_la, _lb) / (_la + _lb)) < _DUP_TITLE_MIN
                     continue
                 ts = _fuzzy(a[1] or '', b[1] or '') if _same_markers(a[1], b[1]) else 0.0
-                if ts <= 0.82:
+                if ts <= _DUP_TITLE_MIN:
                     continue
                 # compare primary artist only (first comma-segment) so that
                 # featuring artist differences don't block merging legitimate
@@ -4167,7 +4170,7 @@ def merge_duplicate_songs(throttle=False):
                 a_primary = (a[2] or '').split(',')[0].strip()
                 b_primary = (b[2] or '').split(',')[0].strip()
                 as_ = _fuzzy(a_primary, b_primary) if (a_primary or b_primary) else 1.0
-                if as_ <= 0.72:
+                if as_ <= _DUP_ARTIST_MIN:
                     continue
                 pairs.append((a, b))
                 handled.add(a[0])
@@ -4806,7 +4809,7 @@ def api_import_spotify_history():
                     if score > best_score:
                         best_score = score
                         best_sid = lib_id
-                if best_sid and best_score >= 0.80:
+                if best_sid and best_score >= 0.88:
                     c.execute(
                         "UPDATE songs SET play_count=?, last_played=MAX(COALESCE(last_played,0),?) WHERE id=?",
                         (new_pc, new_lp, best_sid)
@@ -5027,7 +5030,7 @@ def api_stats():
                 if item[0] in seen:
                     continue
                 seen.add(item[0])
-                if _stats_match_score(ct, ca, item[2], item[1]) >= 0.80:
+                if _stats_match_score(ct, ca, item[2], item[1]) >= 0.88:
                     return True
         return False
 
@@ -5652,7 +5655,7 @@ def api_artist_genius_discography(aid):
         if song_with_genius:
             song_data = _genius_get(f'/songs/{song_with_genius[0]}', tok).get('song', {})
             pa = (song_data.get('primary_artist') or {})
-            if pa.get('id') and _fuzzy(pa.get('name', ''), name) >= 0.40:
+            if pa.get('id') and _fuzzy(pa.get('name', ''), name) >= 0.60:
                 genius_artist_id = str(pa['id'])
                 with db() as c:
                     c.execute("UPDATE artists SET genius_artist_id=? WHERE id=?", (genius_artist_id, aid))
@@ -5668,7 +5671,7 @@ def api_artist_genius_discography(aid):
                 if sc > best_score:
                     best_score = sc
                     best_id = pa.get('id')
-            if not best_id or best_score < 0.40:
+            if not best_id or best_score < 0.60:
                 return jsonify({'albums': [], 'songs': [], 'error': 'artist not found on genius'})
             genius_artist_id = str(best_id)
             with db() as c:
@@ -5825,7 +5828,7 @@ def api_artist_by_name():
                 if sc > best_score:
                     best_score = sc
                     best = r
-            if best and best_score > 0.7:
+            if best and best_score > 0.82:
                 row = best
     if not row: return jsonify({'error': 'not found'}), 404
     return jsonify(dict(row))
@@ -9026,7 +9029,7 @@ def api_ytm_album(browse_id):
             for h in hits:
                 alb = h.get('album')
                 if not alb: continue
-                if _fuzzy(alb.get('name', ''), album_title) > 0.7:
+                if _fuzzy(alb.get('name', ''), album_title) > 0.82:
                     best_album_data = alb
                     break
             if best_album_data:
@@ -9045,7 +9048,7 @@ def api_ytm_album(browse_id):
                 if g_tracks:
                     for gt in g_tracks:
                         for yt_t in ytm_tracks:
-                            if _fuzzy(gt['title'], yt_t.get('title', '')) > 0.75:
+                            if _fuzzy(gt['title'], yt_t.get('title', '')) > 0.85 and _same_markers(gt['title'], yt_t.get('title', '')):
                                 gt['video_id'] = yt_t.get('videoId', '')
                                 gt['duration'] = yt_t.get('duration_seconds')
                                 break
@@ -9258,7 +9261,7 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                     result['status'] = 'resolved'
                 else:
                     result['status'] = 'no_match'
-                    result['confidence'] = 0.0
+                    result['confidence'] < 0.70
 
                 results[i] = result
         except Exception as e:
@@ -9407,7 +9410,7 @@ def api_check_duplicate(sid):
     for cand in candidates:
         t_sc = _fuzzy(title or '', cand[1] or '') if _same_markers(title, cand[1]) else 0.0
         a_sc = _fuzzy(artist or '', cand[2] or '') if (artist or cand[2]) else 1.0
-        if t_sc > 0.82 and a_sc > 0.72:
+        if t_sc > _DUP_TITLE_MIN and a_sc > _DUP_ARTIST_MIN:
             dupes.append({'id': cand[0], 'title': cand[1], 'artist': cand[2] or '',
                           'cover_path': cand[3], 'added_at': cand[4],
                           'score': round((t_sc + a_sc) / 2, 2)})
