@@ -10093,11 +10093,11 @@ svg {overflow: visible}
 .topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#content-area *::-webkit-scrollbar-track{margin:var(--frame-r) 0 var(--bar-track-margin)}
+#content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
 #app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
 #app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
-#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start;margin-left:calc((100% - var(--sb-w)) * var(--sb-par,.4))}
 body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
 body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
 body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
@@ -10131,9 +10131,11 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 @media (hover: hover) {.lyrics-sidebar:not(.hidden) #lyrics-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent);}}
 .lyrics-hdr{
   display:flex;align-items:center;justify-content:space-between;
-  padding:12px 16px;
+  padding:8px;
+  margin: 0 8px;
   font:var(--type-label-large);font-variation-settings:var(--fv-label);
   color:var(--color-on-surface);flex-shrink:0;
+  text-wrap:nowrap;
 }
 /* now playing sidebar */
 .nowplaying-sidebar{
