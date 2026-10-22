@@ -20625,7 +20625,11 @@ function _sharedAnimTick(now) {
   // function, so motion stays smooth - only the actual paint cadence drops
   // to ~30fps for these effects specifically, not the audio/UI thread overall.
   _animFrameSkip = (_animFrameSkip + 1) % 3;
-  const _skipPaint = _animFrameSkip !== 0;
+  let _skipPaint = _animFrameSkip !== 0;
+  if (!_skipPaint) {
+    if (window._muPalT === now) { _animFrameSkip = 2; _skipPaint = true; }
+    else window._muPaintFrame = now;
+  }
 
   let barsActive;
   if (!_skipPaint) _spikyRotTickInner(); else _spikyRotAdvanceOnly();
