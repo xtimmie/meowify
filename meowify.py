@@ -10093,7 +10093,11 @@ svg {overflow: visible}
 .topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
+#content-area *::-webkit-scrollbar-track{margin:var(--frame-r) 0 var(--bar-track-margin)}
+#app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){padding:8px 16px;position:relative}
+#app:not(.mobile) :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,color-mix(in oklch,var(--color-on-surface) 12%,transparent));pointer-events:none}
+body.design-glassy #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
+body.design-paper #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){box-shadow:none!important;--hdr-line:color-mix(in oklch,var(--paper-accent) 12%,transparent)}
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
 #app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
 #app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
