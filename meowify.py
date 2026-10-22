@@ -10094,7 +10094,7 @@ svg {overflow: visible}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
-body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 4)}
+body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){padding:8px 16px;position:relative}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,color-mix(in oklch,var(--color-on-surface) 12%,transparent));pointer-events:none}
 body.design-glassy #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
