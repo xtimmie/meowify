@@ -10126,7 +10126,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -24px!important}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
-body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset}
+body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),/*box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset*/}
 body.design-glassy #app:not(.mobile) #vc-wrap:has(.list-header.pinned)::before{opacity:1}
 body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset}
 #vc{--pin-bg:var(--color-surface)}
@@ -27416,6 +27416,9 @@ function openSettingsPopup() {
     appRoot.appendChild(ov);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && window._settingsPopupOpen) closeSettingsPopup(); });
   }
+  clearTimeout(ov._hideT);
+  ov.style.display = '';
+  void ov.offsetWidth;
   renderSettingsPopupShell();
   requestAnimationFrame(() => ov.classList.add('open'));
 }
@@ -27425,7 +27428,11 @@ function closeSettingsPopup() {
   if (window._settingsSection === '_search') window._settingsSection = 'playback';
   S.globalSearch = '';
   const ov = document.getElementById('set-pc-overlay');
-  if (ov) ov.classList.remove('open');
+  if (ov) {
+    ov.classList.remove('open');
+    clearTimeout(ov._hideT);
+    ov._hideT = setTimeout(() => { if (!window._settingsPopupOpen) ov.style.display = 'none'; }, 450);
+  }
   _stopDbxTabPoll();
 }
 
