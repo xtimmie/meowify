@@ -10097,7 +10097,7 @@ svg {overflow: visible}
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
 #app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
 #app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
-#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-end}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start}
 body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
 body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
 body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
