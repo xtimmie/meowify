@@ -10111,6 +10111,13 @@ body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
+body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -24px!important}
+body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
+body.design-glassy #app:not(.mobile) #vc-wrap::after{display:none!important}
+body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
+body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);border-radius:inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset}
+body.design-glassy #app:not(.mobile) #vc-wrap:has(.list-header.pinned)::before{opacity:1}
+body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap::after{opacity:0!important}
 #vc{--pin-bg:var(--color-surface)}
@@ -20156,6 +20163,7 @@ function _initListHeaderPin() {
       const hdr = e.target.nextElementSibling;
       if (hdr && hdr.classList.contains('list-header')) {
         hdr.classList.toggle('pinned', !e.isIntersecting);
+        vc.parentElement.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--sbw', (vc.offsetWidth - vc.clientWidth) + 'px');
       }
