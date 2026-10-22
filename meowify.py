@@ -24882,7 +24882,13 @@ function _applyDesignImpl(design) {
   body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
-  body.design-glassy #app.mobile .topbar{border-radius:22px;corner-shape:superellipse(2.5)}
+  body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
+  body.design-glassy #app:not(.mobile){--frame-r:26px}
+  body.design-glassy #app:not(.mobile) #sidebar{border-right:none!important;background:var(--glass-bg)!important;box-shadow:inset 1px 0 0 var(--glass-border-hi),inset 0 1px 0 var(--glass-border-hi)!important}
+  body.design-glassy #app:not(.mobile) .topbar{order:-2;border-bottom:none!important;background:var(--glass-bg)!important;box-shadow:inset 0 1px 0 var(--glass-border-hi)!important}
+  body.design-glassy #app:not(.mobile) #main{background:transparent!important}
+  body.design-glassy #app:not(.mobile) #content-area{background:rgba(0,0,0,.08);border-top-left-radius:var(--frame-r);box-shadow:inset 1px 1px 0 var(--glass-border-hi)}
+  body.design-glassy #app:not(.mobile) #main::before{content:'';order:-1;align-self:flex-start;flex:0 0 auto;position:relative;z-index:10;pointer-events:none;width:var(--frame-r);height:var(--frame-r);margin-bottom:calc(-1 * var(--frame-r));background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);-webkit-mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r));mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r))}
   body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(30% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .45), var(--glass-spec-panel);}
   @media (hover: hover) {body.design-glassy .song-row:hover,body.design-glassy .song-row-mobile:hover{background:var(--glass-bg-hi)!important}}
@@ -24915,7 +24921,7 @@ function _applyDesignImpl(design) {
   body.design-glassy #mobile-nav{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border)}
   body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:54px;bottom:0;margin:0;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
-  body.design-glassy #app.mobile #player{bottom:57px;margin:0 2px;border-width:1px;border-radius:34px}
+  body.design-glassy #app.mobile #player{bottom:58px;margin:0 2px;border-width:1px;border-radius:34px}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
   body.design-glassy #global-prog{background:rgba(255,255,255,.07)!important}
   body.design-glassy .pl-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important;box-shadow:var(--glass-spec-panel)}
