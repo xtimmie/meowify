@@ -13173,6 +13173,21 @@ function showNowPlayingCtx(e) {
   ]);
 }
 
+function toggleRsFull(v){
+  CFG.rs_full_height = (v === undefined) ? !CFG.rs_full_height : !!v;
+  applyGlass();
+  saveSetting('rs_full_height', CFG.rs_full_height);
+}
+document.addEventListener('contextmenu', e => {
+  if (e.defaultPrevented || isMobile() || !document.body.classList.contains('design-glassy')) return;
+  if (!e.target.closest || !e.target.closest('.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar')) return;
+  e.preventDefault();
+  showCtx(e, [
+    { _header: true, label: 'right sidebar' },
+    { icon: CFG.rs_full_height ? '☑' : '☐', label: 'full height', fn: () => toggleRsFull() },
+  ]);
+});
+
 function showColCtx(e,view){
   e.preventDefault();e.stopPropagation();
   const all=VIEW_COLS[view]||VIEW_COLS.library;
@@ -24860,6 +24875,7 @@ function applyFontOverride(val) {
 
 function applyGlass(c = CFG) {
   MU.setGlass({ alpha: c.glass_alpha ?? 1, blur: c.glass_blur ?? 1 });
+  document.body.classList.toggle('rs-full', !!c.rs_full_height);
 }
 function applyDesign(design) {
   _applyDesignImpl(design);
@@ -24883,6 +24899,14 @@ function _applyDesignImpl(design) {
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
+  body.design-glassy.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr);background:var(--glass-bg)!important}
+  body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1;background:transparent!important}
+  body.design-glassy.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
+  body.design-glassy.rs-full #app:not(.mobile) #main>#global-prog-status{grid-column:1;grid-row:3}
+  body.design-glassy.rs-full #app:not(.mobile) #content-area{display:contents}
+  body.design-glassy.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
+  body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
+  body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0;background:transparent!important;backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important;border-top:none!important}
   body.design-glassy #app:not(.mobile){--frame-r:26px}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
   body.design-glassy #app:not(.mobile) #content-area{background:var(--glass-bg)}
@@ -27019,6 +27043,12 @@ function renderSettings() {
               <span id="glass-b-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px">${Math.round((CFG.glass_blur ?? 1)*100)}%</span>
             </div>
           </div>
+        `) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
         `) : ''}
         ${row('track source', 'how sources appear in the library', `
           <div class="select-wrap" style="width:160px">
