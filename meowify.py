@@ -1701,17 +1701,19 @@ def _merge_duplicate_albums_impl(throttle=False):
         def _artist_tokens(s):
             return [t.strip() for t in re.split(r'[,;]', s) if t.strip()]
 
+        _canon = [_album_canonical(a['title']) for a in albums]
         for i in range(n):
             if throttle:
                 time.sleep(0.005)
-            ci = _album_canonical(albums[i]['title'])
+            ci = _canon[i]
             ai = (albums[i]['artist'] or '').lower().strip()
             ai_toks = _artist_tokens(ai)
             for j in range(i+1, n):
                 if find(i) == find(j): continue
-                cj = _album_canonical(albums[j]['title'])
+                cj = _canon[j]
+                _la, _lb = len(ci), len(cj)
+                if _la and _lb and (2 * min(_la, _lb) / (_la + _lb)) < 0.92: continue
                 aj = (albums[j]['artist'] or '').lower().strip()
-                # titles must be near-identical
                 if _fuzzy(ci, cj) < 0.92: continue
                 # artists must both be known and match - if either is blank we
                 # require the canonical titles to be very close (>=0.97) before
@@ -5214,7 +5216,7 @@ def api_lib():
     for r in rows:
         if r['id'] in _active_song_ids:
             r['dl_state'] = 'downloading'
-        elif not r.get('file_path') or not Path(r['file_path']).exists():
+        elif not r.get('file_path') or not os.path.exists(r['file_path']):
             r['dl_state'] = 'unavailable'
         else:
             r['dl_state'] = 'ready'
@@ -8793,13 +8795,20 @@ def api_import_backup():
                     except Exception as _sce:
                         _log_backup.warning('backup import: skipped invalid settings.json in archive: %s', _sce)
                 elif posix_name in ('library.db', 'session.json'):
-                    (ddir() / posix_name).write_bytes(zf.read(name))
+                    if posix_name == 'library.db':
+                        for _sfx in ('-wal', '-shm'):
+                            try: (ddir() / ('library.db' + _sfx)).unlink()
+                            except FileNotFoundError: pass
+                    with zf.open(name) as _src, open(ddir() / posix_name, 'wb') as _dst:
+                        shutil.copyfileobj(_src, _dst)
                 elif 'music/' in posix_name and not posix_name.endswith('/'):
                     fname = Path(posix_name).name
-                    (mdir() / fname).write_bytes(zf.read(name))
+                    with zf.open(name) as _src, open(mdir() / fname, 'wb') as _dst:
+                        shutil.copyfileobj(_src, _dst)
                 elif 'covers/' in posix_name and not posix_name.endswith('/'):
                     fname = Path(posix_name).name
-                    (cdir() / fname).write_bytes(zf.read(name))
+                    with zf.open(name) as _src, open(cdir() / fname, 'wb') as _dst:
+                        shutil.copyfileobj(_src, _dst)
 
             # if we have a library.db, remap all stored absolute paths to the
             # current machine's data dir - handles windows→linux and any relocation
@@ -10098,7 +10107,7 @@ body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar-thumb{
 body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
 body.design-glassy #app:not(.mobile) #content-area #vc:has(.list-header.pinned)::-webkit-scrollbar-track{margin-top:var(--pin-h,34px)!important}
-#app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){padding:8px 16px;position:relative}
+#app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){margin-bottom:10px;padding:8px 16px;position:relative}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,color-mix(in oklch,var(--color-on-surface) 12%,transparent));pointer-events:none}
 body.design-glassy #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
 body.design-paper #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){box-shadow:none!important;--hdr-line:color-mix(in oklch,var(--paper-accent) 12%,transparent)}
@@ -10343,7 +10352,7 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
   border-radius:inherit;
   corner-shape:inherit;
 }
-body.design-glassy.rs-full #app:not(.mobile) #main::before{content:'';grid-column:1/-1;grid-row:1/-1;pointer-events:none;background:radial-gradient(55% 62% at 100% 0%,var(--cov-bleed-rgba,transparent) 0%,transparent 100%);opacity:0;transition:opacity 400ms var(--ease-out)}
+body.design-glassy.rs-full #app:not(.mobile) #main::before{content:'';grid-column:1/-1;grid-row:1/-1;pointer-events:none;background:radial-gradient(55% 62% at 100% 0%,var(--cov-bleed-rgba,transparent) 0%,transparent 100%);opacity:0;transition:opacity 500ms var(--ease-out)}
 body.design-glassy.rs-full #app:not(.mobile) #main:has(>#content-area>.nowplaying-sidebar:not(.hidden))::before{opacity:1}
 body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar::before{display:none}
 .np-cover-wrap{
@@ -13544,7 +13553,7 @@ class AudioEngine {
         this.cur?.songId, this.nxt?.songId, this._pausedId, this._stream?.songId
       ].filter(Boolean));
       const keys = Object.keys(this._cache);
-      if (keys.length >= 6) {
+      if (keys.length >= 4) {
         for (const k of keys) {
           if (!protected_.has(k)) { delete this._cache[k]; break; }
         }
@@ -15362,8 +15371,8 @@ function _prefetchMvForSongImpl(song) {
     if (S.isPlaying) startSpikyRot(); // restart anim loop after engine is live
     if (S.cur) updatePlayerUI(S.cur);
     if (S.lyricsOpen) renderLyricsForSong(S.cur);
-    _npLrcLastSongId = null; // force now playing lrc re-render on next tick
-    if (S.nowPlayingOpen) renderNowPlaying();
+    _npLrcLastSongId = null;
+    if (S.nowPlayingOpen) { renderNowPlaying(); _npLrcLastSongId = S.cur ? S.cur.id : null; }
     // kick off MV load for new song (non-blocking)
     if (S.cur && CFG.music_video) {
       // reset MV state for new song - keep fullscreen overlay open if it was open
@@ -16272,7 +16281,7 @@ let _coverHueCanvas = null;
 function _extractCoverColor(imgEl) {
   if (!_coverHueCanvas) _coverHueCanvas = document.createElement('canvas');
   const c = _coverHueCanvas; c.width = 32; c.height = 32;
-  const ctx2 = c.getContext('2d');
+  const ctx2 = c.getContext('2d', { willReadFrequently: true });
   ctx2.drawImage(imgEl, 0, 0, 32, 32);
   const d = ctx2.getImageData(0, 0, 32, 32).data;
   // weight pixels by saturation so vivid colors dominate over muddy midtones
@@ -16337,6 +16346,8 @@ function _animateBleed(el, tR, tG, tB, dur = 950) {
   const sL=state.L, sa=state.a, sb=state.b;
   function step(now) {
     const t = Math.min(1,(now-start)/DUR);
+    if (t < 1 && now - (state.lw || 0) < 33) { state.raf = requestAnimationFrame(step); return; }
+    state.lw = now;
     // ease-in-out cubic for a more organic feel
     const e = t<0.5?4*t*t*t:(t-1)*(2*t-2)*(2*t-2)+1;
     const cL=sL+(tL-sL)*e, ca=sa+(ta-sa)*e, cb=sb+(tb-sb)*e;
@@ -16811,7 +16822,7 @@ function updateHighlights() {
 
   // fast path: nothing changed
   if (curId === _lastHighlightId && playing === _lastHighlightPlaying) {
-    if (S.queueOpen) renderQueueSidebar();
+    _queueRenderSoon();
     return;
   }
 
@@ -16852,7 +16863,16 @@ function updateHighlights() {
   _lastHighlightId = curId;
   _lastHighlightPlaying = playing;
 
-  if (S.queueOpen) renderQueueSidebar();
+  _queueRenderSoon();
+}
+
+let _queueRenderRaf = 0;
+function _queueRenderSoon() {
+  if (!S.queueOpen || _queueRenderRaf) return;
+  _queueRenderRaf = requestAnimationFrame(() => {
+    _queueRenderRaf = 0;
+    if (S.queueOpen) renderQueueSidebar();
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -25440,9 +25460,15 @@ function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
 
 // mu:themechange fires on every applyTokens call, including each rAF frame
 // of the animated hue transition — so wavy stroke colors track it live
-document.addEventListener('mu:themechange', () => {
+document.addEventListener('mu:themechange', (ev) => {
   const _faviconEl = document.getElementById('favicon-link');
-  if (_faviconEl) {
+  const _favNow = performance.now();
+  if (!(ev.detail && ev.detail.tail)) {
+    clearTimeout(window._favTail);
+    window._favTail = setTimeout(() => document.dispatchEvent(new CustomEvent('mu:themechange', {detail: {tail: true}})), 250);
+  }
+  if (_faviconEl && ((ev.detail && ev.detail.tail) || _favNow - (window._favT || 0) > 250)) {
+    window._favT = _favNow;
     const _faviconColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#ffffff';
     const _faviconEncoded = encodeURIComponent(_faviconColor);
     const _faviconSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 164 179'><g transform='translate(-46.33,-37.16)'><path d='M57.902,86.169C55.85,38.753 55.394,37.158 55.394,37.158C55.394,37.158 104.917,52.431 105.004,52.887C87.993,54.483 65.425,72.947 57.902,86.169Z' fill='${_faviconColor}'/><g transform='matrix(-1,0,0,1,256.502302,0)'><path d='M57.902,86.169C55.85,38.753 55.394,37.158 55.394,37.158C55.394,37.158 104.917,52.431 105.004,52.887C87.993,54.483 65.425,72.947 57.902,86.169Z' fill='${_faviconColor}'/></g><path d='M64.969,143.387C64.969,143.387 69.528,73.175 128,73.175C186.472,73.175 190.803,142.703 190.803,142.703C190.803,142.703 204.937,149.086 209.268,157.749C212.687,146.579 210.408,53.799 128,53.799C45.592,53.799 43.996,143.159 47.188,157.749C52.887,148.858 64.969,143.387 64.969,143.387Z' fill='${_faviconColor}'/><g transform='translate(0.256,0)'><path d='M89.817,146.123C46.96,138.6 46.065,178.949 46.331,180.317C44.318,186.928 53.571,228.189 96.883,211.776C97.339,211.092 96.883,211.776 89.817,146.123Z' fill='${_faviconColor}'/><path d='M94.604,146.123L103.038,211.776L114.892,204.481L107.142,147.947L94.604,146.123Z' fill='${_faviconColor}'/></g><g transform='matrix(-1,0,0,1,256.246774,0)'><path d='M89.817,146.123C46.96,138.6 46.065,178.949 46.331,180.317C44.318,186.928 53.571,228.189 96.883,211.776C97.339,211.092 96.883,211.776 89.817,146.123Z' fill='${_faviconColor}'/><path d='M94.604,146.123L103.038,211.776L114.892,204.481L107.142,147.947L94.604,146.123Z' fill='${_faviconColor}'/></g></g></svg>`;
