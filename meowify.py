@@ -10104,7 +10104,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
 #app.mobile #vc{padding-left:8px;padding-right:8px}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
-.queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(110%);}
+.queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
 @media (hover: hover) {.queue-sidebar:not(.hidden) #queue-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent);}}
 .qs-hdr{
@@ -10122,7 +10122,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
   position:relative;min-width:0;
   box-shadow:-2px 0 8px rgba(0,0,0,.10);
 }
-.lyrics-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(110%);}
+.lyrics-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .lyrics-sidebar:not(.hidden){transform:translateX(0);}
 @media (hover: hover) {.lyrics-sidebar:not(.hidden) #lyrics-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent);}}
 .lyrics-hdr{
@@ -10144,7 +10144,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
   align-self:stretch;
   text-wrap: nowrap;
 }
-.nowplaying-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(110%);}
+.nowplaying-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .nowplaying-sidebar:not(.hidden){transform:translateX(0);}
 @media (hover: hover) {.nowplaying-sidebar:not(.hidden) #nowplaying-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent);}}
 .nowplaying-hdr{
