@@ -24952,9 +24952,9 @@ function _applyDesignImpl(design) {
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
   body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
-  body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important}
+  body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
-  body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{background:transparent!important;backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important;border-top:none!important}
+  body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-top:none!important}
   body.design-glassy #app:not(.mobile){--frame-r:26px}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
   body.design-glassy #app:not(.mobile) #content-area{background:var(--glass-bg)}
