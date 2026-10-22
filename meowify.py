@@ -10094,7 +10094,7 @@ svg {overflow: visible}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
-body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
+body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 4)}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){padding:8px 16px;position:relative}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,color-mix(in oklch,var(--color-on-surface) 12%,transparent));pointer-events:none}
 body.design-glassy #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
@@ -10111,6 +10111,12 @@ body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
+#vc{--pin-bg:var(--color-surface)}
+body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
+body.design-paper #vc{--pin-bg:var(--paper-surface)}
+body.design-terminal #vc{--pin-bg:var(--trm-bg)}
+#app:not(.mobile) #vc:has(.list-header.pinned){background:linear-gradient(var(--pin-bg),var(--pin-bg)) right 0 top 0/var(--sbw,0px) var(--pin-h,34px) no-repeat}
+body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:linear-gradient(var(--glass-border),var(--glass-border)) right 0 top calc(var(--pin-h,34px) - 1px)/var(--sbw,0px) 1px no-repeat,linear-gradient(var(--pin-bg),var(--pin-bg)) right 0 top 0/var(--sbw,0px) var(--pin-h,34px) no-repeat}
 #app.mobile #vc{padding-left:8px;padding-right:8px}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
@@ -20142,6 +20148,8 @@ function _initListHeaderPin() {
       const hdr = e.target.nextElementSibling;
       if (hdr && hdr.classList.contains('list-header')) {
         hdr.classList.toggle('pinned', !e.isIntersecting);
+        vc.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
+        vc.style.setProperty('--sbw', (vc.offsetWidth - vc.clientWidth) + 'px');
       }
     }
   }, { root: vc, threshold: 0, rootMargin: '0px 0px 0px 0px' });
@@ -24938,12 +24946,12 @@ function _applyDesignImpl(design) {
   body.design-glassy #app:not(.mobile){--frame-r:26px}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
   body.design-glassy #app:not(.mobile) #content-area{background:var(--glass-bg)}
-  body.design-glassy #app:not(.mobile) #vc-wrap{background:rgba(0,0,0,.30);border-top-left-radius:var(--frame-r);transition:box-shadow var(--dur-8) var(--ease-spring-soft),border-top-right-radius var(--dur-8) var(--ease-spring-soft)}
+  body.design-glassy #app:not(.mobile) #vc-wrap{background:rgba(0,0,0,.30);border-top-left-radius:var(--frame-r);position:relative;transition:border-top-right-radius var(--dur-8) var(--ease-spring-soft)}
           body.design-glassy #app:not(.mobile) #sidebar{border-right:none!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) .topbar{background:var(--glass-bg)!important;border-bottom:none!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) .queue-sidebar,body.design-glassy #app:not(.mobile) .lyrics-sidebar,body.design-glassy #app:not(.mobile) .nowplaying-sidebar{background:rgba(0,0,0,.18)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-left:none!important;border-top:1px solid #fff2!important;box-shadow:none!important}
-    body.design-glassy #app:not(.mobile) #vc-wrap{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,inset 0 8px 12px -6px rgba(0,0,0,.15),inset 8px 0 12px -6px rgba(0,0,0,.15),inset -8px 0 12px -6px transparent}
-  body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,inset 0 8px 12px -6px rgba(0,0,0,.15),inset 8px 0 12px -6px rgba(0,0,0,.15),inset -8px 0 12px -6px rgba(0,0,0,.15)}
+    body.design-glassy #app:not(.mobile) #vc-wrap::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:20;transition:box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,inset 0 8px 12px -6px rgba(0,0,0,.15),inset 8px 0 12px -6px rgba(0,0,0,.15),inset -8px 0 12px -6px transparent}
+  body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::after{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,inset 0 8px 12px -6px rgba(0,0,0,.15),inset 8px 0 12px -6px rgba(0,0,0,.15),inset -8px 0 12px -6px rgba(0,0,0,.15)}
   body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(30% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .45), var(--glass-spec-panel);}
   @media (hover: hover) {body.design-glassy .song-row:hover,body.design-glassy .song-row-mobile:hover{background:var(--glass-bg-hi)!important}}
