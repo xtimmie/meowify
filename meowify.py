@@ -10360,7 +10360,7 @@ svg {overflow: visible}
   transition:background 280ms var(--ease-out), backdrop-filter 280ms var(--ease-out), -webkit-backdrop-filter 280ms var(--ease-out);
 }
 #cover-lightbox.open #cover-lightbox-bg{
-  background:rgba(0,0,0,.58);
+  #vc-wrap{background:rgba(0,0,0,.30);
   backdrop-filter:blur(20px);
   -webkit-backdrop-filter:blur(20px);
 }
