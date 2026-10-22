@@ -10336,15 +10336,14 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 .nowplaying-body::after{
   content:'';display:block;height:var(--bar-h);flex-shrink:0;
 }
-@media(max-width:767px){
-  .nowplaying-sidebar::before{
-    content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;
-    background:linear-gradient(to bottom,var(--cov-bleed-rgba,transparent) 0%,transparent 62%);
-    transition:background 1.1s cubic-bezier(0.4,0,0.2,1);
-    border-radius:inherit;
-    corner-shape:inherit;
-  }
+.nowplaying-sidebar::before{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;
+  background:linear-gradient(to bottom,var(--cov-bleed-rgba,transparent) 0%,transparent 62%);
+  transition:background 1.1s cubic-bezier(0.4,0,0.2,1);
+  border-radius:inherit;
+  corner-shape:inherit;
 }
+body.design-glassy.rs-full #app:not(.mobile) #main:has(>#content-area>.nowplaying-sidebar:not(.hidden))>.topbar::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;background:linear-gradient(to left,var(--cov-bleed-rgba,transparent) 0%,transparent 40%);transition:background 1.1s cubic-bezier(0.4,0,0.2,1)}
 .np-cover-wrap{
   padding:7px 16px 0;
   display:flex;justify-content:center;
@@ -16351,7 +16350,7 @@ function _animateBleed(el, tR, tG, tB, dur = 950) {
 // apply cover color bleed to a container element
 function applyBleed(containerEl, imgEl) {
   if (containerEl && containerEl.id === 'player') {
-    const _npSb = document.getElementById('nowplaying-sidebar');
+    const _npSb = document.getElementById('main');
     if (_npSb) applyBleed(_npSb, imgEl);
   }
   // accepts either an img element or a src string (legacy call from refreshBleed)
@@ -16428,7 +16427,7 @@ function _coverColorForSong(song) {
 function _applyBleedColor(containerEl, col, fadeMs) {
   if (!containerEl || !col) return;
   if (containerEl.id === 'player') {
-    const sb = document.getElementById('nowplaying-sidebar');
+    const sb = document.getElementById('main');
     if (sb) _applyBleedColor(sb, col, fadeMs);
   }
   _animateBleed(containerEl, col.r, col.g, col.b, fadeMs);
@@ -16450,7 +16449,7 @@ function _applyCoverColor(col, fadeMs) {
       if (col) _applyBleedColor(pl, col, fadeMs);
       else {
         pl.style.removeProperty('--cov-bleed-rgba');
-        document.getElementById('nowplaying-sidebar')?.style.removeProperty('--cov-bleed-rgba');
+        document.getElementById('main')?.style.removeProperty('--cov-bleed-rgba');
       }
     }
   }
@@ -16585,7 +16584,7 @@ function updatePlayerUI(song) {
     cov.innerHTML = '♪'; title.textContent = '-'; artist.textContent = '';
     const _playerEl = document.getElementById('player');
     if (_playerEl) _playerEl.style.removeProperty('--cov-bleed-rgba');
-    const _npSbClr = document.getElementById('nowplaying-sidebar');
+    const _npSbClr = document.getElementById('main');
     if (_npSbClr) _npSbClr.style.removeProperty('--cov-bleed-rgba');
     document.getElementById('progfill').style.width = '0%';
     document.getElementById('progthumb').style.right = '100%';
