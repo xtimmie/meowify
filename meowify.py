@@ -10131,8 +10131,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 @media (hover: hover) {.lyrics-sidebar:not(.hidden) #lyrics-resize-handle:hover{background:color-mix(in oklch,var(--color-primary) 30%,transparent);}}
 .lyrics-hdr{
   display:flex;align-items:center;justify-content:space-between;
-  padding:8px;
-  margin: 0 8px;
+  padding:12px 16px;
   font:var(--type-label-large);font-variation-settings:var(--fv-label);
   color:var(--color-on-surface);flex-shrink:0;
   text-wrap:nowrap;
