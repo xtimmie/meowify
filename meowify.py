@@ -10343,7 +10343,9 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
   border-radius:inherit;
   corner-shape:inherit;
 }
-body.design-glassy.rs-full #app:not(.mobile) #main:has(>#content-area>.nowplaying-sidebar:not(.hidden))::before{content:'';grid-column:1;grid-row:1/-1;pointer-events:none;background:radial-gradient(70% 62% at 100% 0%,var(--cov-bleed-rgba,transparent) 0%,transparent 100%);transition:background 1.1s cubic-bezier(0.4,0,0.2,1)}
+body.design-glassy.rs-full #app:not(.mobile) #main::before{content:'';grid-column:1;grid-row:1/-1;pointer-events:none;background:radial-gradient(70% 62% at 100% 0%,var(--cov-bleed-rgba,transparent) 0%,transparent 100%);opacity:0;transition:opacity 400ms var(--ease-out)}
+body.design-glassy.rs-full #app:not(.mobile) #main:has(>#content-area>.nowplaying-sidebar:not(.hidden))::before{opacity:1}
+body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar::before{display:none}
 .np-cover-wrap{
   padding:7px 16px 0;
   display:flex;justify-content:center;
