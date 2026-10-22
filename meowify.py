@@ -13547,7 +13547,7 @@ class AudioEngine {
       const ab = await r.arrayBuffer();
       const buf = await new Promise((res, rej) =>
         this.ctx.decodeAudioData(ab, res, rej));
-      // LRU evict: keep at most 6 decoded buffers (~500MB worst case)
+      // LRU evict: keep at most 4 decoded buffers
       // always keep cur and nxt song regardless of age
       const protected_ = new Set([
         this.cur?.songId, this.nxt?.songId, this._pausedId, this._stream?.songId
@@ -25475,6 +25475,11 @@ document.addEventListener('mu:themechange', (ev) => {
     _faviconEl.href = 'data:image/svg+xml,' + encodeURIComponent(_faviconSvg);
   }
   if (!CFG?.wavy_seekbar) return;
+  if (!(ev.detail && ev.detail.tail)) {
+    const _wvNow = performance.now();
+    if (_wvNow - (window._wvT || 0) < 50) return;
+    window._wvT = _wvNow;
+  }
   _wavyColorCache = null;
   _mnwLastPrimary = '';
   _mnwLastTrack = '';
