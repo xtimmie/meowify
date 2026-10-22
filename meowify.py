@@ -24888,7 +24888,7 @@ function _applyDesignImpl(design) {
   body.design-glassy #app:not(.mobile) #sidebar{border-right:none!important;background:var(--glass-bg)!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) .topbar{order:-2;border-bottom:none!important;background:var(--glass-bg)!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
-  body.design-glassy #app:not(.mobile) #content-area{background:rgba(0,0,0,.08);border-top-left-radius:var(--frame-r);box-shadow:inset 1px 1px 0 var(--glass-border-hi),inset 10px 10px 28px -14px rgba(255,255,255,.07)}
+  body.design-glassy #app:not(.mobile) #content-area{background:rgba(0,0,0,.08);border-top-left-radius:var(--frame-r);box-shadow:inset 1px 1px 0 rgba(255,255,255,.14),inset 3px 3px 8px -2px rgba(0,0,0,.5),inset 16px 16px 32px -20px rgba(0,0,0,.4)}
   body.design-glassy #app:not(.mobile) #main::before{content:'';order:-1;align-self:flex-start;flex:0 0 auto;position:relative;z-index:10;pointer-events:none;width:var(--frame-r);height:var(--frame-r);margin-bottom:calc(-1 * var(--frame-r));background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);-webkit-mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r));mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r))}
   body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(30% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .45), var(--glass-spec-panel);}
@@ -26825,7 +26825,7 @@ function renderSettings() {
             </label>
           `);
         })()}
-        ${row('gapless playback', 'preloads next track for seamless transitions', `
+        ${row('gapless playback', 'i like seamless transitions :3', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${S.gapless?'checked':''} onchange="toggleGapless()" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
@@ -26853,7 +26853,7 @@ function renderSettings() {
               <input type="checkbox" ${val?'checked':''} onchange="saveSetting('${key}',this.checked)" onclick="event.stopPropagation()">
               <div class="switch-track"><div class="switch-thumb"></div></div>
             </label>`;
-          return row('transition albums', 'mark albums as transition - enables per-feature filters below', `
+          return row('transition albums', 'be able to mark which albums have transitions between tracks', `
             <label class="switch" style="flex-shrink:0">
               <input type="checkbox" ${ta?'checked':''} onchange="saveSetting('transition_albums',this.checked).then(()=>renderSettings())" onclick="event.stopPropagation()">
               <div class="switch-track"><div class="switch-thumb"></div></div>
@@ -26877,8 +26877,8 @@ function renderSettings() {
       `) : ''}
 
       ${_sectionMatch('audio') ? section('audio', `
-        ${row('volume boost', 'volume slider goes up to 200%, anything past 100% is marked red', toggle('volume_boost', CFG.volume_boost, 'applyVolBoost()'))}
-        ${row('volume normalization', 'loudness matching across tracks', toggle('volume_norm', CFG.volume_norm, 'applyNormToCurrentSong()'))}
+        ${row('volume boost', 'increase volume up to 200%, if you want it extra loud', toggle('volume_boost', CFG.volume_boost, 'applyVolBoost()'))}
+        ${row('volume normalization', 'so tracks loudness is consistent', toggle('volume_norm', CFG.volume_norm, 'applyNormToCurrentSong()'))}
         ${row('target loudness', 'LUFS target for normalization', `
           <input class="input" type="number" step="0.5" value="${CFG.target_lufs ?? -14}" style="width:90px;text-align:right;padding:8px 6px"
             onchange="saveSetting('target_lufs',parseFloat(this.value))">
@@ -26888,7 +26888,7 @@ function renderSettings() {
           const note = !D.yt_dlp ? 'requires yt-dlp' : !D.ytmusicapi ? 'requires ytmusicapi' : '';
           return (!hasMv
             ? rowDisabled('music video', note, toggle('music_video', false))
-            : row('music video', 'stream synced music videos in now playing', `
+            : row('music video', 'stream synced music videos in the now playing sidebar', `
                 <div style="display:flex;gap:8px;align-items:center">
                   ${toggle('music_video', CFG.music_video||false, '_mvOnSettingChange()')}
                 </div>
@@ -26978,20 +26978,20 @@ function renderSettings() {
             </div>
           </div>
         `)}
-        ${row('cover art bleed', 'bleed dominant cover color as a gradient in player view', toggle('cover_art_bleed', CFG.cover_art_bleed, 'refreshBleed()'))}
-        ${row('sync hue to cover', 'auto-extract dominant color hue from cover art', `
+        ${row('cover art bleed', 'nice colors around the currently playing song cover art :3', toggle('cover_art_bleed', CFG.cover_art_bleed, 'refreshBleed()'))}
+        ${row('sync hue to cover', 'make interface colors match the song cover art', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.cover_art_hue_sync ? 'checked' : ''} onchange="_onHueSyncToggle(this.checked)" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>`)}
-        ${row('font override', 'override font family — any valid css font-family value (leave blank to reset)', `
+        ${row('font override', 'set your own font (css syntax)', `
           <input class="inp" type="text" placeholder="e.g. Inter, Arial, monospace"
             style="width:220px"
             value="${CFG.font_override ?? ''}"
             onchange="saveSetting('font_override',this.value).then(()=>applyFontOverride(this.value))"
           >
         `)}
-        ${row('ui design', 'visual style', `
+        ${row('ui design', 'pick the one that looks cool :v', `
           <div class="select-wrap" style="width:160px">
             <select class="input" style="width:160px" onchange="saveSetting('ui_design',this.value).then(()=>{applyDesign(this.value);renderSettings();})">
               ${MU.designs()
@@ -27000,7 +27000,7 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
-        ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength', `
+        ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength (opacity doesnt work well lol)', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:40px;text-align:right">opacity</span>
@@ -27028,19 +27028,19 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
-        ${row('wavy seekbar', 'animated wave instead of a flat progress bar', `
+        ${row('wavy seekbar', 'yayy thats a cool wave', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.wavy_seekbar?'checked':''} onchange="saveSetting('wavy_seekbar',this.checked).then(()=>initWavySeekbar())" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
-        ${row('audio scrubbing', 'seek audio while dragging the seekbar (off = seek on release only)', `
+        ${row('audio scrubbing', 'seek audio while dragging the seekbar, when off it seeks on release only', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.audio_scrub?'checked':''} onchange="saveSetting('audio_scrub',this.checked).then(()=>{CFG.audio_scrub=this.checked;})" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
-        ${row('spiky play button', 'frequency-reactive ring around the play button (desktop)', `
+        ${row('spiky play button', 'fancy play button with audio reactive wave around', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.spiky_play_btn!==false?'checked':''} onchange="saveSetting('spiky_play_btn',this.checked).then(()=>updateSpikyBtn())" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
@@ -27051,18 +27051,18 @@ function renderSettings() {
             ${['normal','optimized'].map(v=>`<button class="btn ${(CFG.spiky_play_btn_type||'normal')===v?'btn-filled':'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="saveSetting('spiky_play_btn_type','${v}').then(()=>{CFG.spiky_play_btn_type='${v}';updateSpikyBtn();renderSettings();})">${v}</button>`).join('')}
           </div>
         `) : ''}
-        ${row('spiky volume icon', 'frequency-reactive ring on the volume knob', `
+        ${row('spiky volume icon', 'volume icon has cool spikes when playing', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.spiky_vol_icon!==false?'checked':''} onchange="saveSetting('spiky_vol_icon',this.checked).then(()=>updateVolIcon())" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
-        ${CFG._platform === 'win32' ? row('window mode', 'webview = built-in chromium window; system browser = uses your existing brave/chrome as a lightweight app window (lower cpu)', `
+        ${CFG._platform === 'win32' ? row('window mode', 'webview - built-in chromium window,<br>system browser - uses your existing browser as a lightweight app window', `
           <div style="display:flex;gap:6px">
             ${[['webview','webview'],['system browser','system browser']].map(([v,label])=>`<button class="btn ${(CFG.win_use_webview!==false?'webview':'system browser')===v?'btn-filled':'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="_setWinMode('${v}')">${label}</button>`).join('')}
           </div>
         `) : ''}
-        ${row('ui zoom', 'overrides browser zoom (ctrl+scroll also works)', `
+        ${row('ui zoom', 'ctrl +/- or ctrl scroll also work to tweak the zoom', `
           <div style="display:flex;align-items:center;gap:5px">
             <input type="range" id="zoom-slider" min="50" max="200" step="10" value="${Math.round((_zoomTo||1)*100)}"
               class="slider" style="width:120px;"
@@ -27105,13 +27105,13 @@ function renderSettings() {
           const info = SI[cur] || SI.fast;
           return row('single download speed', '', `
             <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:220px">
+              <div style="display:flex;justify-content:space-between;width:200px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-outline);margin-bottom: -16px">
+                <span>safe</span><span>turbo</span>
+              </div>
               <input type="range" min="0" max="3" step="1" value="${idx}"
                 class="slider" style="width:200px;"
                 oninput="onSingleSpeedSlider(parseInt(this.value))"
                 onpointerup="onSingleSpeedSlider(parseInt(this.value),true)">
-              <div style="display:flex;justify-content:space-between;width:200px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-outline)">
-                <span>safe</span><span>turbo</span>
-              </div>
               <div id="single-speed-info" style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-align:right">
                 <span style="color:var(--color-on-surface)">${info.name}</span> · ${info.desc} · ~${info.est}s/song
                 ${info.warn ? `<br><span style="color:var(--color-error)">⚠ ${info.warn}</span>` : ''}
@@ -27133,13 +27133,13 @@ function renderSettings() {
           const info = BI[cur] || BI.balanced;
           return row('batch download speed', '', `
             <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:220px">
+              <div style="display:flex;justify-content:space-between;width:200px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-outline);margin-bottom: -16px">
+                <span>paranoid</span><span>turbo</span>
+              </div>
               <input type="range" min="0" max="4" step="1" value="${idx}"
                 class="slider" style="width:200px;"
                 oninput="onBatchSpeedSlider(parseInt(this.value))"
                 onpointerup="onBatchSpeedSlider(parseInt(this.value),true)">
-              <div style="display:flex;justify-content:space-between;width:200px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-outline)">
-                <span>paranoid</span><span>turbo</span>
-              </div>
               <div id="batch-speed-info" style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-align:right">
                 <span style="color:var(--color-on-surface)">${info.name}</span> · ${info.desc}<br>50 songs: ${info.est50}
                 ${info.warn ? `<br><span style="color:${cur==='turbo'?'var(--color-error)':'color-mix(in oklch,var(--color-error) 70%,var(--color-on-surface-variant))'}">⚠ ${info.warn}</span>` : ''}
@@ -27147,18 +27147,18 @@ function renderSettings() {
             </div>
           `);
         })()}
-        ${row('storage folder', 'where music and data files are kept', `
+        ${row('storage folder', 'where music and data files are kept (you should probably leave that alone)', `
           <input class="input" value="${esc(CFG.data_dir||'')}" style="width:240px;text-align:right;padding:10px 14px" onchange="saveSetting('data_dir',this.value)">
         `)}
       `) : ''}
 
       ${_sectionMatch('metadata') ? section('metadata', `
-        ${row('genius token', 'free at genius.com/api-clients', `
+        ${row('genius token', 'free at <a href="https://genius.com/api-clients" target="_blank" data-ripple-disabled="true">genius.com/api-clients</a>', `
           <input class="input" type="password" autocomplete="off" value="${esc(CFG.genius_token||'')}" placeholder="paste token..." style="width:220px;text-align:right;padding:10px 14px"
             onchange="saveSetting('genius_token',this.value)">
         `)}
         ${row('auto genius', 'enrich metadata automatically after each download', toggle('auto_genius', CFG.auto_genius !== false))}
-        ${row('ddg pre-search', 'use DuckDuckGo to find the correct Genius URL before fetching', toggle('ddg_genius', CFG.ddg_genius!==false))}
+        ${row('ddg pre-search', 'improves search accuracy (uses DuckDuckGo to find the correct Genius URL before fetching)', toggle('ddg_genius', CFG.ddg_genius!==false))}
       `) : ''}
 
       ${_sectionMatch('dropbox sync') ? section('dropbox sync', `
@@ -27266,7 +27266,7 @@ function renderSettings() {
       `) : ''}
 
       ${_sectionMatch('library') ? section('library', `
-        ${row('cleanup', 'remove orphaned files and deduplicate covers', `<button class="btn btn-out mu-ripple" onclick="runCleanup(event)">run</button>`)}
+        ${row('cleanup', 'cleans up the database (run if anything looks off, like a not working track or stuck download)', `<button class="btn btn-out mu-ripple" onclick="runCleanup(event)">run</button>`)}
         ${row('export backup', 'download songs, covers, settings and library as a .zip', `<button class="btn btn-out mu-ripple" onclick="doExportBackup(this)">export</button>`)}
         ${row('import backup', 'restore from a .meowify.zip - overwrites current library', `<div style="display:flex;gap:8px"><button class="btn btn-err mu-ripple" onclick="document.getElementById('backup-import-in').click()">import</button><input type="file" id="backup-import-in" accept=".zip" style="display:none" onchange="doImportBackup(this)"></div>`)}
       `) : ''}
