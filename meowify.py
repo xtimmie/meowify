@@ -10111,6 +10111,8 @@ body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
+body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
+body.design-glassy #app:not(.mobile) #vc-wrap::after{opacity:0!important}
 #vc{--pin-bg:var(--color-surface)}
 body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
 body.design-paper #vc{--pin-bg:var(--paper-surface)}
@@ -11634,11 +11636,13 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   box-shadow:0 1px 6px rgba(0,0,0,.12);
 }
 body.design-glassy .list-header.pinned::before{
-  background:rgba(0,0,0,.18);
-  backdrop-filter:blur(12px);
-  -webkit-backdrop-filter:blur(12px);
-  border-bottom:1px solid var(--glass-border);
+  background:rgba(0,0,0,.06);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  border-bottom:none;
   box-shadow:none;
+  top:2px;
+  margin:0 calc(var(--frame-r,0px) - 24px);
 }
 .list-hcol{
   font:var(--type-label-small);font-variation-settings:var(--fv-label);
