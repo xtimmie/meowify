@@ -24883,13 +24883,6 @@ function _applyDesignImpl(design) {
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
-  body.design-glassy #app:not(.mobile){--frame-r:26px}
-  body.design-glassy #app:not(.mobile)::after{content:none}
-  body.design-glassy #app:not(.mobile) #sidebar{border-right:none!important;background:var(--glass-bg)!important;box-shadow:none!important}
-  body.design-glassy #app:not(.mobile) .topbar{order:-2;border-bottom:none!important;background:var(--glass-bg)!important;box-shadow:none!important}
-  body.design-glassy #app:not(.mobile) #main{background:transparent!important}
-  body.design-glassy #app:not(.mobile) #content-area{background:rgba(0,0,0,.08);border-top-left-radius:var(--frame-r);box-shadow:inset 1px 1px 0 rgba(255,255,255,.14),inset 3px 3px 8px -2px rgba(0,0,0,.5),inset 16px 16px 32px -20px rgba(0,0,0,.4)}
-  body.design-glassy #app:not(.mobile) #main::before{content:'';order:-1;align-self:flex-start;flex:0 0 auto;position:relative;z-index:10;pointer-events:none;width:var(--frame-r);height:var(--frame-r);margin-bottom:calc(-1 * var(--frame-r));background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);-webkit-mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r));mask:radial-gradient(circle at 100% 100%,transparent calc(var(--frame-r) - .5px),#000 var(--frame-r))}
   body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(30% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
   body.design-glassy #app.mobile #player{background:var(--glass-bg-mid)!important;padding-bottom: 5px;bottom: 54px;height: 68px; border-radius: 50px; border:1px solid var(--glass-border); box-shadow: 0 30px 40px 40px rgba(20, 20, 20, .45), var(--glass-spec-panel);}
   @media (hover: hover) {body.design-glassy .song-row:hover,body.design-glassy .song-row-mobile:hover{background:var(--glass-bg-hi)!important}}
