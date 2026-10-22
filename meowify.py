@@ -10360,7 +10360,7 @@ svg {overflow: visible}
   transition:background 280ms var(--ease-out), backdrop-filter 280ms var(--ease-out), -webkit-backdrop-filter 280ms var(--ease-out);
 }
 #cover-lightbox.open #cover-lightbox-bg{
-  #vc-wrap{background:rgba(0,0,0,.30);
+  background:rgba(0,0,0,.58);
   backdrop-filter:blur(20px);
   -webkit-backdrop-filter:blur(20px);
 }
@@ -24886,11 +24886,11 @@ function _applyDesignImpl(design) {
   body.design-glassy #app:not(.mobile){--frame-r:26px}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
   body.design-glassy #app:not(.mobile) #content-area{background:var(--glass-bg)}
-  body.design-glassy #app:not(.mobile) #vc-wrap{background:rgba(0,0,0,.08);border-top-left-radius:var(--frame-r)}
+  body.design-glassy #app:not(.mobile) #vc-wrap{background:rgba(0,0,0,.30);border-top-left-radius:var(--frame-r)}
       body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
     body.design-glassy #app:not(.mobile) #sidebar{border-right:none!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) .topbar{background:var(--glass-bg)!important;border-bottom:none!important;box-shadow:none!important}
-  body.design-glassy #app:not(.mobile) .queue-sidebar,body.design-glassy #app:not(.mobile) .lyrics-sidebar,body.design-glassy #app:not(.mobile) .nowplaying-sidebar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-left:none!important;box-shadow:none!important}
+  body.design-glassy #app:not(.mobile) .queue-sidebar,body.design-glassy #app:not(.mobile) .lyrics-sidebar,body.design-glassy #app:not(.mobile) .nowplaying-sidebar{background:linear-gradient(90deg,transparent,var(--glass-border) 18%,var(--glass-border) 82%,transparent) top/100% 1px no-repeat!important;backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important;border-left:none!important;box-shadow:none!important}
   body.design-glassy #app:not(.mobile) #vc-wrap{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset}
   body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset}
   body.design-glassy #player{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(30% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),rgb(0 0 0 / calc(.27 * var(--glass-a,1))))!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);margin: 0 5px;border-radius: 50px 50px 0 0;position: fixed}
