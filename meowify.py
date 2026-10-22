@@ -10097,14 +10097,19 @@ svg {overflow: visible}
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
 #app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
 #app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
-#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start;margin-left:calc((100% - var(--sb-w)) * var(--sb-par,.4))}
-body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){transition:opacity var(--dur-5) var(--ease-out) 40ms}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar).hidden>:not([id$="-resize-handle"]){opacity:0;transition-delay:0ms}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start;margin-left:calc((100% - var(--sb-w)) * var(--sb-par,0.4))}
+body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto auto auto;grid-template-rows:auto auto auto minmax(0,1fr)}
 body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
 body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
 body.rs-full #app:not(.mobile) #main>#global-prog-status{grid-column:1;grid-row:3}
 body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
-body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
+body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-row:1/-1;min-height:0}
+body.rs-full #app:not(.mobile) .lyrics-sidebar{grid-column:2}
+body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:3}
+body.rs-full #app:not(.mobile) .queue-sidebar{grid-column:4}
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
 #app.mobile #vc{padding-left:8px;padding-right:8px}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
@@ -10327,7 +10332,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
   }
 }
 .np-cover-wrap{
-  padding:6px 16px 0;
+  padding:7px 16px 0;
   display:flex;justify-content:center;
 }
 .np-cover-inner{
