@@ -10093,6 +10093,8 @@ svg {overflow: visible}
 .topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar{width:8px}
+body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:9999px}
 body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
 body.design-glassy #app:not(.mobile) #content-area #vc:has(.list-header.pinned)::-webkit-scrollbar-track{margin-top:var(--pin-h,34px)}
