@@ -10093,7 +10093,11 @@ svg {overflow: visible}
 .topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
+#content-area *::-webkit-scrollbar-track{margin:var(--frame-r) 0 var(--bar-track-margin)}
+#app:not(.mobile) .queue-sidebar{--sb-w:280px}
+#app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
+#app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-end}
 body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
 body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
 body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
@@ -13194,6 +13198,21 @@ document.addEventListener('contextmenu', e => {
     { icon: CFG.rs_full_height ? '☑' : '☐', label: 'full height', fn: () => toggleRsFull() },
   ]);
 });
+
+function _syncSbW(el){
+  const w = el.style.width;
+  if (!w) { el.style.removeProperty('--sb-w'); return; }
+  if (el.style.getPropertyValue('--sb-w') !== w) el.style.setProperty('--sb-w', w);
+}
+function _initSbW(){
+  ['queue-sidebar','lyrics-sidebar','nowplaying-sidebar'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    _syncSbW(el);
+    new MutationObserver(() => _syncSbW(el)).observe(el, { attributes: true, attributeFilter: ['style'] });
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initSbW); else _initSbW();
 
 function showColCtx(e,view){
   e.preventDefault();e.stopPropagation();
