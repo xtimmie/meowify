@@ -10093,7 +10093,14 @@ svg {overflow: visible}
 .topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
+#content-area *::-webkit-scrollbar-track{margin:var(--frame-r) 0 var(--bar-track-margin)}
+body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
+body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
+body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
+body.rs-full #app:not(.mobile) #main>#global-prog-status{grid-column:1;grid-row:3}
+body.rs-full #app:not(.mobile) #content-area{display:contents}
+body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
+body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
 #app.mobile #vc{padding-left:8px;padding-right:8px}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-5) var(--ease-out),transform var(--dur-6) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
@@ -13179,7 +13186,7 @@ function toggleRsFull(v){
   saveSetting('rs_full_height', CFG.rs_full_height);
 }
 document.addEventListener('contextmenu', e => {
-  if (e.defaultPrevented || isMobile() || !document.body.classList.contains('design-glassy')) return;
+  if (e.defaultPrevented || isMobile()) return;
   if (!e.target.closest || !e.target.closest('.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar')) return;
   e.preventDefault();
   showCtx(e, [
@@ -24899,14 +24906,10 @@ function _applyDesignImpl(design) {
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
-  body.design-glassy.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr);background:var(--glass-bg)!important}
-  body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1;background:transparent!important}
-  body.design-glassy.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
-  body.design-glassy.rs-full #app:not(.mobile) #main>#global-prog-status{grid-column:1;grid-row:3}
-  body.design-glassy.rs-full #app:not(.mobile) #content-area{display:contents}
-  body.design-glassy.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
+  body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
+  body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important}
   body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
-  body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0;background:transparent!important;backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important;border-top:none!important}
+  body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{background:transparent!important;backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important;border-top:none!important}
   body.design-glassy #app:not(.mobile){--frame-r:26px}
   body.design-glassy #app:not(.mobile) #main{background:transparent!important}
   body.design-glassy #app:not(.mobile) #content-area{background:var(--glass-bg)}
@@ -27044,12 +27047,12 @@ function renderSettings() {
             </div>
           </div>
         `) : ''}
-        ${(CFG.ui_design||'material')==='glassy' ? row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
+        ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
-        `) : ''}
+        `)}
         ${row('track source', 'how sources appear in the library', `
           <div class="select-wrap" style="width:160px">
             <select class="input" style="width:160px" onchange="saveSetting('source_display',this.value).then(()=>{renderSettings();rerenderCurrentView();})">
