@@ -10126,9 +10126,9 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -24px!important}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
-body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),/*box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset*/}
+body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);width:calc(100% + 1px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
 body.design-glassy #app:not(.mobile) #vc-wrap:has(.list-header.pinned)::before{opacity:1}
-body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 var(--glass-border) inset}
+body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
 #vc{--pin-bg:var(--color-surface)}
 body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
 body.design-paper #vc{--pin-bg:var(--paper-surface)}
@@ -16307,7 +16307,10 @@ function _extractCoverColor(imgEl) {
   const mx2=Math.max(rn,gn,bn),mn2=Math.min(rn,gn,bn),d2=mx2-mn2;
   let h=0; const l=(mx2+mn2)/2, s=d2===0?0:(l>0.5?d2/(2-mx2-mn2):d2/(mx2+mn2));
   if (d2>0){if(mx2===rn)h=((gn-bn)/d2+( gn<bn?6:0))/6;else if(mx2===gn)h=((bn-rn)/d2+2)/6;else h=((rn-gn)/d2+4)/6;}
-  return {h:h*360, s:s*100, l:l*100, r, g, b};
+  const _ok = _rgb2oklab(r, g, b);
+  let oh = Math.atan2(_ok[2], _ok[1]) * 180 / Math.PI;
+  if (oh < 0) oh += 360;
+  return {h:h*360, oh, s:s*100, l:l*100, r, g, b};
 }
 
 // ── oklab helpers for perceptually uniform color interpolation ────────────────
@@ -16448,7 +16451,7 @@ function _applyBleedColor(containerEl, col, fadeMs) {
 
 function _applyCoverColor(col, fadeMs) {
   if (CFG.cover_art_hue_sync && col) {
-    const h = Math.round(col.h);
+    const h = Math.round(col.oh);
     CFG.theme_hue = h;
     applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0, false, fadeMs);
     const slider = document.getElementById('hue-slider');
@@ -16523,7 +16526,7 @@ function _extractAndApplyHue(img) {
   try {
     const col = _extractCoverColor(img);
     if (col) {
-      const h = Math.round(col.h);
+      const h = Math.round(col.oh);
       // write into CFG.theme_hue so sat/bri sliders read the correct synced hue
       // when they call applyTheme(CFG.theme_hue??145, ...) — without this they
       // pass the stale pre-sync hue while sync is active
@@ -20625,11 +20628,7 @@ function _sharedAnimTick(now) {
   // function, so motion stays smooth - only the actual paint cadence drops
   // to ~30fps for these effects specifically, not the audio/UI thread overall.
   _animFrameSkip = (_animFrameSkip + 1) % 3;
-  let _skipPaint = _animFrameSkip !== 0;
-  if (!_skipPaint) {
-    if (window._muPalT === now) { _animFrameSkip = 2; _skipPaint = true; }
-    else window._muPaintFrame = now;
-  }
+  const _skipPaint = _animFrameSkip !== 0;
 
   let barsActive;
   if (!_skipPaint) _spikyRotTickInner(); else _spikyRotAdvanceOnly();
@@ -27420,9 +27419,6 @@ function openSettingsPopup() {
     appRoot.appendChild(ov);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && window._settingsPopupOpen) closeSettingsPopup(); });
   }
-  clearTimeout(ov._hideT);
-  ov.style.display = '';
-  void ov.offsetWidth;
   renderSettingsPopupShell();
   requestAnimationFrame(() => ov.classList.add('open'));
 }
@@ -27432,11 +27428,7 @@ function closeSettingsPopup() {
   if (window._settingsSection === '_search') window._settingsSection = 'playback';
   S.globalSearch = '';
   const ov = document.getElementById('set-pc-overlay');
-  if (ov) {
-    ov.classList.remove('open');
-    clearTimeout(ov._hideT);
-    ov._hideT = setTimeout(() => { if (!window._settingsPopupOpen) ov.style.display = 'none'; }, 450);
-  }
+  if (ov) ov.classList.remove('open');
   _stopDbxTabPoll();
 }
 
