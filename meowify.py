@@ -12991,7 +12991,6 @@ function renderTable(viewName,songs,pid,listId,rowsOverride){
     });
     return`<div class="song-table" style="${tStyle}">${headerHtml}<div id="${cid}" style="display:flex;flex-direction:column"></div></div>`;
   }
-  _rebuildViewIdx();
   const rows=rowsOverride??songs.map((s,i)=>songRow(s,i+1,pid,{view:viewName,cols,template},i)).join('');
   const listAttr=listId?` id="${listId}"`:'';
   requestAnimationFrame(()=>{_initListHeaderPin();_initColResizeObserver();_mountStaticRows();});
@@ -15313,7 +15312,13 @@ function _prefetchMvForSongImpl(song) {
     }
 
     S.cur = song; S.isPlaying = _intentPlay;
-    if (_intentPlay) delete engine._restoredPosition; // a real song is playing now, session-restore state is stale
+    if (_intentPlay) {
+      // a real song is playing now, so all session-restore state is stale
+      // (the saved position/duration fallbacks would otherwise leak into the new song's session)
+      delete engine._restoredPosition;
+      delete S._restoredPosition;
+      delete S._restoredDuration;
+    }
     const _thisGen = ++_playGen;
     _mlog(`playSong gen=${_thisGen} song=${song.id} "${song.title}"`);
 
