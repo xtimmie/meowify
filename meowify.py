@@ -16982,7 +16982,7 @@ function setView(v, pid, aid) {
     S.globalSearchOpen = false;
     S.globalSearch = '';
     S.libSearch = '';
-    _tsearchClose();
+    // dom gets synced by renderTopbarSearch(v) at the end of setView
   }
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   _updateMobileTab(v);
@@ -17080,7 +17080,7 @@ function _searchPlaceholder(v) {
 }
 
 function toggleGlobalSearch(forceClose) {
-  const wasOpen = S.globalSearchOpen;
+  const wasOpen = S.globalSearchOpen || !!document.getElementById('topbar-title-area')?.classList.contains('search-open');
   if (forceClose || wasOpen) {
     S.globalSearchOpen = false;
     S.globalSearch = '';
