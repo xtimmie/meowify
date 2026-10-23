@@ -16957,6 +16957,7 @@ function _queueRenderSoon() {
 // ═══════════════════════════════════════════════
 
 function setView(v, pid, aid) {
+  window._viewGen = (window._viewGen || 0) + 1; // lets late async navigation detect that the user moved on
   // kill any in-flight ripple waves in #vc before replacing content
   document.getElementById('vc').querySelectorAll('.mu-ripple-wave').forEach(w => {
     w.style.animation = 'none';
@@ -17222,7 +17223,7 @@ function renderLibrary(){
 
   if (songs.length > 60) {
     // vlist path
-    if (S._vlist && _sameOrder) {
+    if (S._vlist && _sameOrder && _existingVlist) {
       const _cols = getViewCols('library');
       S._vlist.opts = {...S._vlist.opts, cols: _cols, template: buildGridTemplate(_cols)};
       S._vlist.updateData(songs, {cols: _cols, template: buildGridTemplate(_cols), view: 'library'});
@@ -20219,7 +20220,9 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
     setView('artist', null, nameOrId);
     return;
   }
+  const _gen = window._viewGen || 0;
   const res = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(nameOrId));
+  if ((window._viewGen || 0) !== _gen) return; // user navigated elsewhere while this resolved
   if (res && !res.error) {
     setView('artist', null, res.id);
   } else if (fallbackName && fallbackName !== nameOrId) {
@@ -20227,6 +20230,7 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
     // part of a single artist's stylized name rather than a separator, so
     // retry once against the full, unsplit artist string before giving up
     const res2 = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(fallbackName));
+    if ((window._viewGen || 0) !== _gen) return;
     if (res2 && !res2.error) setView('artist', null, res2.id);
   }
 }
@@ -21866,6 +21870,7 @@ async function renderArtistPage(aid) {
     api('GET', '/api/artists/' + aid + '/albums'),
   ]);
 
+  if (S.view !== 'artist' || S.activeArtid !== aid) return; // left the artist page while it was loading
   if (!artist || artist.error) {
     vc.innerHTML = '<div class="empty"><div class="ei">🎤</div><p>artist not found</p></div>';
     return;
