@@ -15313,6 +15313,7 @@ function _prefetchMvForSongImpl(song) {
     }
 
     S.cur = song; S.isPlaying = _intentPlay;
+    if (_intentPlay) delete engine._restoredPosition; // a real song is playing now, session-restore state is stale
     const _thisGen = ++_playGen;
     _mlog(`playSong gen=${_thisGen} song=${song.id} "${song.title}"`);
 
