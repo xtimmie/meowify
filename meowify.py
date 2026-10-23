@@ -15513,18 +15513,21 @@ async function _doOnSongEnd(scheduledNid) {
   if (S.lyricsOpen) renderLyricsForSong(S.cur);
 }
 
+// source of a new queue, inferred from the view the songs were picked in
+function _inferSource() {
+  if (S.view === 'playlist' && S.activePid) return {type:'playlist', id:S.activePid};
+  if (S.view === 'album' && S.activeAid) return {type:'album', id:S.activeAid};
+  if (S.view === 'library' || S.view === 'stats') return {type:'library', id:null};
+  return {type:'single', id:null};
+}
+
 // "play from here next": same as playFromList but deferred until the current song ends
 function continueFromList(songs, idx, source) {
   const start = songs[idx];
   if (!start) return;
   // nothing playing (or restored session that never started) -> just play right away
   if (!S.cur || engine._restoredPosition !== undefined) { playFromList(songs, idx, source); return; }
-  if (!source) {
-    if (S.view === 'playlist' && S.activePid) source = {type:'playlist', id:S.activePid};
-    else if (S.view === 'album' && S.activeAid) source = {type:'album', id:S.activeAid};
-    else if (S.view === 'library' || S.view === 'stats') source = {type:'library', id:null};
-    else source = {type:'single', id:null};
-  }
+  if (!source) source = _inferSource();
   S._continueFrom = { songs: [...songs], startId: start.id, start, source };
   if (!engine._normGainMap) engine._normGainMap = {};
   engine._normGainMap[start.id] = computeNormGain(S.library.find(l => l.id === start.id) || start);
@@ -15556,14 +15559,7 @@ function _applyContinueFrom() {
 }
 
 function playFromList(songs, idx, source) {
-  // infer source from current view if not explicitly provided
-  if (!source) {
-    if (S.view === 'playlist' && S.activePid) source = {type:'playlist', id:S.activePid};
-    else if (S.view === 'album' && S.activeAid) source = {type:'album', id:S.activeAid};
-    else if (S.view === 'library') source = {type:'library', id:null};
-    else if (S.view === 'stats') source = {type:'library', id:null};
-    else source = {type:'single', id:null};
-  }
+  if (!source) source = _inferSource(); // from the current view
   buildQueue(songs, idx, source);
   playSong(S.queue[S.qi]);
 }
@@ -16450,16 +16446,20 @@ function _applyBleedColor(containerEl, col, fadeMs) {
   _animateBleed(containerEl, col.r, col.g, col.b, fadeMs);
 }
 
+// push a cover color's hue into the theme (and the hue slider when settings is open)
+function _applyCoverHue(col, fadeMs) {
+  const h = Math.round(col.oh);
+  // sat/bri sliders call applyTheme(CFG.theme_hue, ...), so keep it on the synced hue
+  CFG.theme_hue = h;
+  applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0, false, fadeMs);
+  const slider = document.getElementById('hue-slider');
+  const lbl = document.getElementById('hue-lbl');
+  if (slider) slider.value = h;
+  if (lbl) lbl.textContent = h + 'deg';
+}
+
 function _applyCoverColor(col, fadeMs) {
-  if (CFG.cover_art_hue_sync && col) {
-    const h = Math.round(col.oh);
-    CFG.theme_hue = h;
-    applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0, false, fadeMs);
-    const slider = document.getElementById('hue-slider');
-    const lbl = document.getElementById('hue-lbl');
-    if (slider) slider.value = h;
-    if (lbl) lbl.textContent = h + 'deg';
-  }
+  if (CFG.cover_art_hue_sync && col) _applyCoverHue(col, fadeMs);
   if (CFG.cover_art_bleed) {
     const pl = document.getElementById('player');
     if (pl) {
@@ -16526,19 +16526,7 @@ function _colorPredictTick(t, d) {
 function _extractAndApplyHue(img) {
   try {
     const col = _extractCoverColor(img);
-    if (col) {
-      const h = Math.round(col.oh);
-      // write into CFG.theme_hue so sat/bri sliders read the correct synced hue
-      // when they call applyTheme(CFG.theme_hue??145, ...) — without this they
-      // pass the stale pre-sync hue while sync is active
-      CFG.theme_hue = h;
-      applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0);
-      // update slider and label in settings if open so they reflect the synced hue
-      const slider = document.getElementById('hue-slider');
-      const lbl = document.getElementById('hue-lbl');
-      if (slider) slider.value = h;
-      if (lbl) lbl.textContent = h + 'deg';
-    }
+    if (col) _applyCoverHue(col);
   } catch(e) { /* tainted canvas in some envs */ }
 }
 
@@ -17280,12 +17268,16 @@ function renderLibrary(){
   updateHighlights();
   applyDownloadWipes();
 }
+// true when the user already left the view an async render was started for
+const _VIEW_ID_KEY = {playlist:'activePid', album:'activeAid', artist:'activeArtid'};
+function _viewStale(view, id) { return S.view !== view || S[_VIEW_ID_KEY[view]] !== id; }
+
 async function renderPlaylist(pid){
   const vc=document.getElementById('vc');
   if(!S.plSongs[pid]){
     vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
     const res=await api('GET','/api/playlists/'+pid+'/songs');S.plSongs[pid]=res||[];
-    if(S.view!=='playlist'||S.activePid!==pid)return; // left while loading
+    if(_viewStale('playlist',pid))return; // left while loading
   }
   let songs=S.plSongs[pid];
   const q=(S.globalSearch||'').trim().toLowerCase();
@@ -17308,14 +17300,14 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   const vc=document.getElementById('vc');
   if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
-  if(S.view!=='album'||S.activeAid!==aid)return; // left while loading
+  if(_viewStale('album',aid))return; // left while loading
   if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
-  if(S.view!=='album'||S.activeAid!==aid)return;
+  if(_viewStale('album',aid))return;
   const q=(S.globalSearch||'').trim().toLowerCase();
   if(!allTracks||!allTracks.length){
     const songs=(await api('GET','/api/albums/'+aid+'/songs')||[]);
-    if(S.view!=='album'||S.activeAid!==aid)return;
+    if(_viewStale('album',aid))return;
     const filtered=q?songs.filter(s=>((s.title||'')+(s.artist||'')).toLowerCase().includes(q)):songs;
     S.viewSongs=songs;
     _rebuildViewIdx();
@@ -21874,7 +21866,7 @@ async function renderArtistPage(aid) {
     api('GET', '/api/artists/' + aid + '/albums'),
   ]);
 
-  if (S.view !== 'artist' || S.activeArtid !== aid) return; // left the artist page while it was loading
+  if (_viewStale('artist', aid)) return; // left the artist page while it was loading
   if (!artist || artist.error) {
     vc.innerHTML = '<div class="empty"><div class="ei">🎤</div><p>artist not found</p></div>';
     return;
@@ -25508,6 +25500,17 @@ document.addEventListener('mu:themechange', (ev) => {
   if (S.nowPlayingOpen) _updateMobNpWavy(prog);
 });
 
+// re-read the playing song's loudness from the library and ease the gain to the new value
+function _refreshCurNormGain() {
+  if (!CFG.volume_norm || !S.cur || !engine.cur || !engine.cur.normGain) return;
+  const fresh = S.library.find(s => s.id === S.cur.id);
+  if (!fresh || fresh.loudness_lufs == null) return;
+  const gain = computeNormGain(fresh);
+  if (Math.abs((engine._normGainMap[S.cur.id] || 1) - gain) <= 0.01) return;
+  engine._normGainMap[S.cur.id] = gain;
+  engine.cur.normGain.gain.linearRampToValueAtTime(gain, engine.ctx.currentTime + 1.0);
+}
+
 async function loadData() {
   _statsDataCache = null; // invalidate on any library change
   // restore shuffle mode prefs
@@ -25569,17 +25572,7 @@ async function loadData() {
     applyVolSliderOrientation();
   }
   renderPlNav();
-  if (CFG.volume_norm && S.cur && engine.cur && engine.cur.normGain) {
-    const fresh = S.library.find(s => s.id === S.cur.id);
-    if (fresh && fresh.loudness_lufs != null) {
-      const gain = computeNormGain(fresh);
-      if (Math.abs((engine._normGainMap[S.cur.id] || 1) - gain) > 0.01) {
-        engine._normGainMap[S.cur.id] = gain;
-        const now = engine.ctx.currentTime;
-        engine.cur.normGain.gain.linearRampToValueAtTime(gain, now + 1.0);
-      }
-    }
-  }
+  _refreshCurNormGain();
   if (S.cur && validIds.has(S.cur.id)) {
     updatePlayerUI(S.cur);
     updateHighlights();
@@ -25616,9 +25609,7 @@ async function delSong(sid) {
     }
   });
   await loadData();
-  if (S.view === 'library') renderLibrary();
-  else if (S.view === 'playlist' && S.activePid) renderPlaylist(S.activePid);
-  else if (S.view === 'album' && S.activeAid) renderAlbumDetail(S.activeAid);
+  rerenderCurrentView();
 }
 
 function onSingleSpeedSlider(idx, save) {
@@ -27653,17 +27644,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (cfg.ui_design !== undefined) applyDesign(cfg.ui_design);
   }
   renderPlNav();
-  if (CFG.volume_norm && S.cur && engine.cur && engine.cur.normGain) {
-    const fresh = S.library.find(s => s.id === S.cur.id);
-    if (fresh && fresh.loudness_lufs != null) {
-      const gain = computeNormGain(fresh);
-      if (Math.abs((engine._normGainMap[S.cur.id] || 1) - gain) > 0.01) {
-        engine._normGainMap[S.cur.id] = gain;
-        const now = engine.ctx.currentTime;
-        engine.cur.normGain.gain.linearRampToValueAtTime(gain, now + 1.0);
-      }
-    }
-  }
+  _refreshCurNormGain();
   if (CFG.volume !== undefined) engine.setVolume(Math.min(volMax(), CFG.volume));
   applyVolBoost();
   if (CFG.zoom !== undefined) { _zoom = _zoomTo = CFG.zoom; document.getElementById('app').style.zoom = _zoom; document.documentElement.style.setProperty('--zoom', _zoom); document.documentElement.style.setProperty('--ui-zoom', _zoom); }
