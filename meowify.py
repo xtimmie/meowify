@@ -25535,11 +25535,17 @@ async function loadData() {
     if (S.qi >= S.queue.length) S.qi = Math.max(0, S.queue.length - 1);
   }
   const cfg = await api('GET', '/api/settings');
+  const _prevCfg = CFG; // compare against this so unchanged settings arent reapplied
   // api() returns a truthy {error:...} object on network/HTTP failure - guard
   // against that so a transient fetch error can't wipe the in-memory CFG and
   // make every setting in the UI look "reset" until the next full reload.
   if (cfg && !cfg.error) {
     CFG = cfg;
+    // keep the live cover-synced hue and the pre-sync hue, the server only knows the manual one
+    if (_prevCfg._hue_before_sync !== undefined) cfg._hue_before_sync = _prevCfg._hue_before_sync;
+    if (cfg.cover_art_hue_sync && _prevCfg.theme_hue != null) cfg.theme_hue = _prevCfg.theme_hue;
+    const _chg = k => _prevCfg[k] !== cfg[k];
+    _coverColorCache.clear(); // enrich/sync can replace covers, dont keep stale colors
     if(cfg.colWidths){if(!S.colWidths)S.colWidths={};Object.assign(S.colWidths,cfg.colWidths);}
     if(cfg.hiddenCols){S.hiddenCols={};for(const[v,arr]of Object.entries(cfg.hiddenCols))S.hiddenCols[v]=new Set(arr);}
     S.gapless = !!cfg.gapless;
@@ -25552,13 +25558,13 @@ async function loadData() {
       S.eq = cfg.eq;
       S.eq.forEach((g,i) => engine.setEQBand(i, g));
     }
-    if (cfg.theme_hue !== undefined) {
+    if (cfg.theme_hue !== undefined && (_chg('theme_hue') || _chg('theme_sat') || _chg('theme_bri'))) {
       MU.setPalette({ hue: cfg.theme_hue, sat: cfg.theme_sat ?? 50, bri: cfg.theme_bri ?? 1.0 });
       _repaintWavyColors(); updateSpikyBtn(); _updateMobNpSpiky();
     }
-    applyGlass(cfg);
-    if (cfg.ui_design !== undefined) applyDesign(cfg.ui_design);
-    if (cfg.font_override !== undefined) applyFontOverride(cfg.font_override);
+    if (_chg('glass_alpha') || _chg('glass_blur') || _chg('rs_full_height')) applyGlass(cfg);
+    if (cfg.ui_design !== undefined && _chg('ui_design')) applyDesign(cfg.ui_design);
+    if (cfg.font_override !== undefined && _chg('font_override')) applyFontOverride(cfg.font_override);
     applyPlayerBtnVisibility();
     applyVolSliderOrientation();
   }
