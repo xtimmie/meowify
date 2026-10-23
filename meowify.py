@@ -17285,6 +17285,7 @@ async function renderPlaylist(pid){
   if(!S.plSongs[pid]){
     vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
     const res=await api('GET','/api/playlists/'+pid+'/songs');S.plSongs[pid]=res||[];
+    if(S.view!=='playlist'||S.activePid!==pid)return; // left while loading
   }
   let songs=S.plSongs[pid];
   const q=(S.globalSearch||'').trim().toLowerCase();
@@ -17307,11 +17308,14 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   const vc=document.getElementById('vc');
   if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
+  if(S.view!=='album'||S.activeAid!==aid)return; // left while loading
   if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
+  if(S.view!=='album'||S.activeAid!==aid)return;
   const q=(S.globalSearch||'').trim().toLowerCase();
   if(!allTracks||!allTracks.length){
     const songs=(await api('GET','/api/albums/'+aid+'/songs')||[]);
+    if(S.view!=='album'||S.activeAid!==aid)return;
     const filtered=q?songs.filter(s=>((s.title||'')+(s.artist||'')).toLowerCase().includes(q)):songs;
     S.viewSongs=songs;
     _rebuildViewIdx();
