@@ -17360,8 +17360,15 @@ function removeFromQueue(i) {
   }
   if (S.queueOpen) {
     // destroy vlist before rebuild so it doesn't reference stale indices
+    const _qInner = document.getElementById('queue-inner');
+    const _qScroll = _qInner ? _qInner.scrollTop : 0;
     if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
     renderQueueSidebar();
+    // rebuild can clamp scrollTop to 0 on some webviews, put it back
+    if (_qInner && _qScroll) {
+      _qInner.scrollTop = _qScroll;
+      requestAnimationFrame(() => { _qInner.scrollTop = _qScroll; });
+    }
   }
 }
 
