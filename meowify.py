@@ -24153,6 +24153,7 @@ function fitIcon(html) {
   if (width && height) {
     const s = Math.max(width, height) + (parseFloat(svg.getAttribute('stroke-width')) || 0);
     svg.setAttribute('viewBox', `${x + width / 2 - s / 2} ${y + height / 2 - s / 2} ${s} ${s}`);
+    ['width', 'height', 'translate'].forEach(p => svg.style.removeProperty(p));
     svg.style.overflow = 'visible';
   }
   out = svg.outerHTML;
