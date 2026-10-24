@@ -11490,7 +11490,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .cx-item.err{color:var(--color-error)}
 .cx-item.err .cx-icon{color:color-mix(in oklch,var(--color-error) 70%,var(--color-on-surface-variant))}
 .cx-icon{font-size:14px;width:20px;text-align:center;color:var(--color-on-surface-variant);flex-shrink:0;}
-#ctx .cx-icon{--ico:18px;display:grid;place-items:center;height:20px}
+#ctx .cx-icon{--ico:16px;display:grid;place-items:center;height:20px}
 #ctx .cx-icon>svg{display:block;width:var(--ico);height:var(--ico)}
 .cx-sep{height:1px;background:var(--color-surface-container);margin:3px 0}
 .cx-header{padding:6px 14px 2px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.08em;pointer-events:none;user-select:none}
@@ -24139,6 +24139,28 @@ function plCtx(e, pid) {
 
 let _ctxGeneration = 0;
 
+// crops an svg string's viewBox to its drawn content (square, centered) so icons of any source size line up
+const _icoCache = new Map();
+function fitIcon(html) {
+  if (!html.trimStart().startsWith('<svg')) return html;
+  let out = _icoCache.get(html);
+  if (out) return out;
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+  probe.innerHTML = html;
+  document.body.appendChild(probe);
+  const svg = probe.firstElementChild, { x, y, width, height } = svg.getBBox();
+  if (width && height) {
+    const s = Math.max(width, height) + (parseFloat(svg.getAttribute('stroke-width')) || 0);
+    svg.setAttribute('viewBox', `${x + width / 2 - s / 2} ${y + height / 2 - s / 2} ${s} ${s}`);
+    svg.style.overflow = 'visible';
+  }
+  out = svg.outerHTML;
+  probe.remove();
+  _icoCache.set(html, out);
+  return out;
+}
+
 function showCtx(e, items) {
   const ctx = document.getElementById('ctx');
   const mobile = isMobile();
@@ -24173,7 +24195,7 @@ function showCtx(e, items) {
     const div = document.createElement('div');
     div.className = 'cx-item' + (it.err ? ' err' : '');
     if (mobile) div.classList.add('mu-ripple');
-    div.innerHTML = `<span class="cx-icon">${it.icon || ''}</span>${esc(it.label)}`;
+    div.innerHTML = `<span class="cx-icon">${fitIcon(it.icon || '')}</span>${esc(it.label)}`;
     div.onclick = () => { hideCtx(); it.fn(); };
     ctx.appendChild(div);
   });
