@@ -11490,6 +11490,8 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .cx-item.err{color:var(--color-error)}
 .cx-item.err .cx-icon{color:color-mix(in oklch,var(--color-error) 70%,var(--color-on-surface-variant))}
 .cx-icon{font-size:14px;width:20px;text-align:center;color:var(--color-on-surface-variant);flex-shrink:0;}
+#ctx .cx-icon{--ico:18px;display:grid;place-items:center;height:20px}
+#ctx .cx-icon>svg{display:block;width:var(--ico);height:var(--ico)}
 .cx-sep{height:1px;background:var(--color-surface-container);margin:3px 0}
 .cx-header{padding:6px 14px 2px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.08em;pointer-events:none;user-select:none}
 /* modal */
@@ -17030,7 +17032,7 @@ function setView(v, pid, aid) {
 
 // ── topbar title switch animation ──
 // scaleX pivoting at center-left, from (oldW/newW-1)*strength+1 down to 1
-const TITLE_ANIM = { strength: 1, duration: 350, easing: [.2, 1.8, .2, 1] }; // cubic-bezier, y1 is damped as the width change grows
+const TITLE_ANIM = { strength: .1, duration: 350, easing: [.2, 3, .2, 1] }; // cubic-bezier, y1 is damped as the width change grows
 (() => {
   const el = document.getElementById('vtitle');
   el.style.transformOrigin = 'left center';
