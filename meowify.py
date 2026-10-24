@@ -17030,15 +17030,15 @@ function setView(v, pid, aid) {
 
 // ── topbar title switch animation ──
 // scaleX pivoting at center-left, from (oldW/newW-1)*strength+1 down to 1
-const TITLE_ANIM = { strength: 1, duration: 350, easing: 'cubic-bezier(.2,.8,.2,1)' };
+const TITLE_ANIM = { strength: 1, duration: 350, easing: [.2, 1.8, .2, 1] }; // cubic-bezier, y1 is damped as the width change grows
 (() => {
   const el = document.getElementById('vtitle');
   el.style.transformOrigin = 'left center';
   let w0 = el.offsetWidth;
   new MutationObserver(() => {
-    const w1 = el.offsetWidth, { strength, duration, easing } = TITLE_ANIM;
+    const w1 = el.offsetWidth, r = w0 / w1, damp = Math.min(r, 1 / r), { strength, duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
     if (w0 && w1 && w0 !== w1)
-      el.animate({ scale: [`${Math.max(0, (w0 / w1 - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing });
+      el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})` });
     w0 = w1;
   }).observe(el, { childList: true, characterData: true, subtree: true });
 })();
