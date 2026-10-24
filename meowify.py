@@ -17038,7 +17038,7 @@ const TITLE_ANIM = { strength: 1, duration: 350, easing: 'cubic-bezier(.2,.8,.2,
   new MutationObserver(() => {
     const w1 = el.offsetWidth, { strength, duration, easing } = TITLE_ANIM;
     if (w0 && w1 && w0 !== w1)
-      el.animate({ scale: [`${Math.max(0, (w0 / w1 - 1) * strength + 1)}`, '1'] }, { duration, easing });
+      el.animate({ scale: [`${Math.max(0, (w0 / w1 - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing });
     w0 = w1;
   }).observe(el, { childList: true, characterData: true, subtree: true });
 })();
