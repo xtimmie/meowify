@@ -10791,13 +10791,16 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 @media (hover: hover) {.lyrics-resync button:hover{background:var(--color-surface-container-high)}}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
+.song-table>.song-list,#queue-inner .song-list{gap:0}
 .reordering{user-select:none;-webkit-user-select:none}
+.vl-drag{user-select:none;-webkit-user-select:none}
+.vl-drag>:is(.song-row,.song-row-mobile):not(.drag-lifted):not(.drag-drop){transition:top .16s var(--ease-out)!important}
 .reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted):not(.drag-drop){transition:translate .16s var(--ease-out),border-radius .2s var(--ease-out)!important}
-:is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out)!important}
+:is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),border-radius .2s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted.selected .snum-num{color:inherit}
-:is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 1px 3px rgba(0,0,0,.3);transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .18s!important}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 1px 3px rgba(0,0,0,.3);transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-far{opacity:0;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-:is(.song-row,.song-row-mobile).drag-drop{position:relative;z-index:5;scale:1;box-shadow:none;backdrop-filter:blur(0px) saturate(1);-webkit-backdrop-filter:blur(0px) saturate(1);transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .16s!important}
+:is(.song-row,.song-row-mobile).drag-drop{position:relative;z-index:5;scale:1;box-shadow:none;backdrop-filter:blur(0px) saturate(1);-webkit-backdrop-filter:blur(0px) saturate(1);transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .16s,border-radius .2s var(--ease-out)!important}
 body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted{background:color-mix(in oklch,var(--color-surface-container-highest) calc(42% * var(--glass-a,1)),transparent)!important;backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);box-shadow:0 8px 32px rgba(0,0,0,.28),0 0 0 1px var(--glass-border-hi) inset}
 body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 0 0 1px var(--glass-border-hi) inset}
 .song-row{
@@ -19177,7 +19180,7 @@ document.addEventListener('pointermove', e => {
     if (document.querySelector('#queue-inner .drag-lifted')) { _qSwipe = null; return; } // reorder drag active
     s.on = true;
     // kill the pending reorder-drag hold on the list (its pointercancel handler does that)
-    const list = document.querySelector('#queue-inner .song-list');
+    const list = document.querySelector('#queue-inner .song-list') || (_qvlist && _qvlist._inner);
     if (list) {
       _qSwipeSynth = true;
       list.dispatchEvent(new PointerEvent('pointercancel', {pointerId: s.id}));
@@ -19385,6 +19388,7 @@ function renderQueueSidebar() {
     wrap.style.cssText = 'width:100%;height:100%';
     inner.appendChild(wrap);
     _qvlist = new VirtualList(wrap, S.queue, '', {}, 'queue-inner', _makeQueueRow);
+    initVlistReorder(_qvlist);
     _queueAfterFullRender(inner, _hadSig, _prevScroll);
     return;
   }
@@ -21724,6 +21728,18 @@ class VirtualList {
     }
   }
 
+  _top(i) {
+    const d = this._drag;
+    if (!d) return i * this.ROW_H;
+    if (i === d.from) return -100000;
+    const v = i < d.from ? i : i - 1;
+    return (v < d.slot ? v : v + 1) * this.ROW_H;
+  }
+
+  _relayout() {
+    for (const [i, el] of this._nodes) el.style.top = this._top(i) + 'px';
+  }
+
   _reprobe() {
     if (this._dead || !this._inner || !this._inner.isConnected || !this._scroller || !this._scroller.clientHeight) return;
     const probeEl = this._makeRow(0);
@@ -21911,7 +21927,7 @@ class VirtualList {
     const row = this._makeRow(i);
     if (!row) return;
     const _rowW = row.style.width;
-    row.style.cssText += ';position:absolute;top:' + (i * this.ROW_H) + 'px;left:0;right:0;width:' + (_rowW || '100%');
+    row.style.cssText += ';position:absolute;top:' + this._top(i) + 'px;left:0;right:0;width:' + (_rowW || '100%');
     _regDel(old.dataset.id, old);
     old.replaceWith(row);
     this._nodes.set(i, row);
@@ -21945,7 +21961,7 @@ class VirtualList {
     const row = this._makeRow(i);
     if (!row) return false;
     const _rowW = row.style.width;
-    row.style.cssText += ';position:absolute;top:' + (i * this.ROW_H) + 'px;left:0;right:0;width:' + (_rowW || '100%');
+    row.style.cssText += ';position:absolute;top:' + this._top(i) + 'px;left:0;right:0;width:' + (_rowW || '100%');
 
     // library-specific post-processing (only when no custom renderer)
     if (!this.rowRenderer) {
@@ -24938,6 +24954,175 @@ function initReorderDrag(listEl, opts) {
   }, { passive: false });
 
   listEl.addEventListener('click', e => {
+    if (!suppressClick) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+}
+
+function initVlistReorder(vl) {
+  const inner = vl && vl._inner;
+  if (!inner || inner._vReorder) return;
+  inner._vReorder = true;
+  const HOLD_MS = 120;
+  const MOVE_THRESH = 8;
+  const SCROLL_ZONE = 60;
+  const SCROLL_MAX = 18;
+  const ANIM_MS = 160;
+  const sc = vl._scroller;
+  let pid = null, downY = 0, lastY = 0, raf = 0;
+  let armed = null, holdTimer = null;
+  let active = false, dropping = false, suppressClick = false;
+  let from = -1, ghost = null, grab = 0, z = 1;
+
+  function cancelHold() {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    armed = null;
+  }
+
+  function place() {
+    const n = vl.songs.length;
+    const y = Math.max(0, Math.min((lastY - inner.getBoundingClientRect().top) / z - grab, (n - 1) * vl.ROW_H));
+    ghost.style.translate = '0 ' + y + 'px';
+    const k = Math.max(0, Math.min(n - 1, Math.round(y / vl.ROW_H)));
+    if (k !== vl._drag.slot) {
+      vl._drag.slot = k;
+      vl._relayout();
+    }
+  }
+
+  function tick() {
+    if (!active) return;
+    if (!inner.isConnected || vl._dead) { abort(); return; }
+    const c = sc.getBoundingClientRect();
+    const toTop = (lastY - c.top) / z;
+    const toBot = (c.bottom - lastY) / z;
+    let v = 0;
+    if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
+    else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
+    if (v) sc.scrollTop += v;
+    place();
+    raf = requestAnimationFrame(tick);
+  }
+
+  function abort() {
+    cancelAnimationFrame(raf);
+    active = false;
+    dropping = false;
+    if (ghost) { ghost.remove(); ghost = null; }
+    inner.classList.remove('vl-drag');
+    vl._drag = null;
+    if (!vl._dead) vl._relayout();
+  }
+
+  function lift(target) {
+    cancelHold();
+    from = parseInt(target.dataset.qi);
+    if (isNaN(from) || from < 0 || from >= vl.songs.length || vl.songs.length < 2 || !target.isConnected) return;
+    z = _zoom || 1;
+    grab = (lastY - target.getBoundingClientRect().top) / z;
+    ghost = target.cloneNode(true);
+    ghost.classList.add('drag-lifted', 'drag-anchor');
+    ghost.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:6';
+    vl._drag = {from, slot: from};
+    vl._relayout();
+    void inner.offsetHeight;
+    inner.classList.add('vl-drag');
+    inner.appendChild(ghost);
+    getSelection()?.removeAllRanges();
+    document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid }));
+    try { inner.setPointerCapture(pid); } catch (_) {}
+    active = true;
+    place();
+    tick();
+  }
+
+  function settle(commit) {
+    cancelAnimationFrame(raf);
+    active = false;
+    dropping = true;
+    if (commit) suppressClick = true;
+    const slot = commit ? vl._drag.slot : from;
+    if (vl._drag.slot !== slot) {
+      vl._drag.slot = slot;
+      vl._relayout();
+    }
+    ghost.classList.remove('drag-lifted', 'drag-anchor');
+    ghost.classList.add('drag-drop');
+    ghost.style.translate = '0 ' + (slot * vl.ROW_H) + 'px';
+    setTimeout(() => {
+      inner.classList.remove('vl-drag');
+      vl._drag = null;
+      if (ghost) { ghost.remove(); ghost = null; }
+      if (vl._dead) { dropping = false; return; }
+      let changed = false;
+      if (commit && slot !== from && vl.songs === S.queue && from < S.queue.length) {
+        const arr = S.queue.slice();
+        const item = arr.splice(from, 1)[0];
+        arr.splice(slot, 0, item);
+        const qi = S.qi;
+        S.qi = qi === from ? slot : (from < qi && slot >= qi) ? qi - 1 : (from > qi && slot <= qi) ? qi + 1 : qi;
+        S.queue = arr;
+        vl.songs = arr;
+        _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',');
+        _qLastQi = S.qi;
+        changed = true;
+      }
+      if (changed) {
+        vl._rendered = {start: -1, end: -1};
+        for (const [i, el] of vl._nodes) _regDel(el.dataset.id, el);
+        vl._nodes.forEach(el => el.remove());
+        vl._nodes.clear();
+        vl._render();
+      } else {
+        vl._relayout();
+      }
+      dropping = false;
+      setTimeout(() => { suppressClick = false; }, 0);
+    }, ANIM_MS + 30);
+  }
+
+  inner.addEventListener('pointerdown', e => {
+    if (active || dropping || (e.button && e.button !== 0)) return;
+    if (e.target.closest('button,a,[role=button]')) return;
+    const target = e.target.closest('.song-row');
+    if (!target || target.parentElement !== inner || target.dataset.qi == null) return;
+    pid = e.pointerId;
+    downY = lastY = e.clientY;
+    armed = target;
+    if (e.pointerType !== 'mouse') {
+      holdTimer = setTimeout(() => { if (armed) lift(armed); }, HOLD_MS);
+    }
+  });
+
+  inner.addEventListener('pointermove', e => {
+    if (e.pointerId !== pid) return;
+    lastY = e.clientY;
+    if (active) { e.preventDefault(); return; }
+    if (!armed || Math.abs(e.clientY - downY) <= MOVE_THRESH) return;
+    if (e.pointerType === 'mouse') lift(armed);
+    else cancelHold();
+  }, { passive: false });
+
+  inner.addEventListener('pointerup', e => {
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (!active) return;
+    settle(Math.abs(lastY - downY) > MOVE_THRESH);
+  });
+
+  inner.addEventListener('pointercancel', e => {
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (active) settle(false);
+  });
+
+  inner.addEventListener('touchmove', e => {
+    if (active) e.preventDefault();
+  }, { passive: false });
+
+  inner.addEventListener('click', e => {
     if (!suppressClick) return;
     e.stopPropagation();
     e.preventDefault();
