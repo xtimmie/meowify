@@ -10792,7 +10792,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
 .reordering{user-select:none;-webkit-user-select:none}
-.reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted):not(.drag-drop){transition:translate .16s var(--ease-out)!important}
+.reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted):not(.drag-drop){transition:translate .16s var(--ease-out),border-radius .2s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted.selected .snum-num{color:inherit}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 1px 3px rgba(0,0,0,.3);transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .18s!important}
@@ -10889,6 +10889,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #vc :is(.song-row,.song-row-mobile){transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out)}
 .song-row.selected.sel-up,.song-row-mobile.selected.sel-up{border-top-left-radius:0;border-top-right-radius:0}
 .song-row.selected.sel-dn,.song-row-mobile.selected.sel-dn{border-bottom-left-radius:0;border-bottom-right-radius:0}
+:is(.song-row,.song-row-mobile).selected.drag-lifted,:is(.song-row,.song-row-mobile).selected.drag-drop{border-radius:var(--radius-md)}
 .sthumb{
   width:44px;height:44px;border-radius:var(--radius-md);
   object-fit:cover;background:var(--color-surface-container-high);flex-shrink:0;
@@ -24759,7 +24760,17 @@ function initReorderDrag(listEl, opts) {
     rest = [];
   }
 
+  function joins() {
+    const sel = i => !!(opts.isSelected && opts.isSelected(rows[i].dataset.id));
+    rest.forEach((i, j) => {
+      const s = sel(i);
+      rows[i].classList.toggle('sel-up', s && j > 0 && j !== slot && sel(rest[j - 1]));
+      rows[i].classList.toggle('sel-dn', s && j < rest.length - 1 && j + 1 !== slot && sel(rest[j + 1]));
+    });
+  }
+
   function layout() {
+    joins();
     rest.forEach((i, j) => {
       const t = (j < slot ? packed[j] : packed[j] + slotH + gap) - tops[i];
       rows[i].style.translate = Math.abs(t) < 0.5 ? '' : '0 ' + t + 'px';
@@ -24883,6 +24894,7 @@ function initReorderDrag(listEl, opts) {
       dropping = false;
       setTimeout(() => { suppressClick = false; }, 0);
       if (changed) await opts.onCommit(ids, prevIds);
+      refreshSelectionUI();
     }, ANIM_MS + 30);
   }
 
