@@ -10387,11 +10387,12 @@ body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar::before{display
 }
 /* ── cover lightbox ─────────────────────────────────────── */
 #cover-lightbox{
+  visibility:hidden;transition:visibility 0s 280ms; /* closed = not rendered, so its backdrop-filters cost nothing */
   position:fixed;inset:0;z-index:9999;
   display:flex;align-items:center;justify-content:center;
   pointer-events:none;
 }
-#cover-lightbox.open{pointer-events:all;}
+#cover-lightbox.open{pointer-events:all;visibility:visible;transition-delay:0s;}
 #cover-lightbox-bg{
   position:absolute;inset:0;
   background:rgba(0,0,0,0);
@@ -10582,7 +10583,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 }
 .np-cover-col-sep{
   width:calc(100% - 28px);
-  margin:18px 14px 0;
+  margin:18px 14px;
   border:none;
   border-top:1px solid rgba(128,128,128,.13);
   flex-shrink:0;
