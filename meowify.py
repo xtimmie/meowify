@@ -10177,7 +10177,8 @@ body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
 body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);width:calc(100% + 1px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
 body.design-glassy #app:not(.mobile) #vc-wrap:has(.list-header.pinned)::before{opacity:1}
 body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
-#vc{--pin-bg:var(--color-surface)}
+#vc{--pin-bg:var(--color-surface);--view-top:20px}
+#vc > :first-child{margin-top:var(--view-top)}
 body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
 body.design-paper #vc{--pin-bg:var(--paper-surface)}
 body.design-terminal #vc{--pin-bg:var(--trm-bg)}
@@ -11351,7 +11352,7 @@ input[type=range].vol{
 .inp:focus{border-color:var(--color-primary)}
 textarea.inp{resize:none;min-height:40px;overflow:hidden}
 /* add view */
-.add-panel{max-width:620px;margin:0 auto;width:100%;padding-top:24px}
+.add-panel{max-width:620px;margin:0 auto;width:100%}
 .url-preview-card{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-surface-container);border:1px solid var(--color-outline-variant)}
 .url-preview-thumb{width:52px;height:52px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0;background:var(--color-surface-container-high)}
 .url-preview-info{flex:1;overflow:hidden;min-width:0}
@@ -11717,7 +11718,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   .lib-album-title{margin-top:0;}
 }
 /* subnav */
-.subnav{display:flex;gap:8px;margin-top:20px;margin-bottom:16px;align-items:center;}
+.subnav{display:flex;gap:8px;margin-bottom:16px;align-items:center;}
 .subnav-btn{
   padding:6px 14px;border-radius:var(--radius-full);
   font:var(--type-label-large);font-variation-settings:var(--fv-label);
@@ -11960,7 +11961,7 @@ body.design-glassy .list-header.pinned::before{
 }
 .salbum.link{cursor:pointer}
 /* album detail header */
-.album-header{display:flex;gap:20px;align-items:flex-end;padding:20px 0 24px}
+.album-header{display:flex;gap:20px;align-items:flex-end;padding:0 0 24px}
 .album-cover-big{
   width:160px;height:160px;border-radius:var(--radius-lg);
   background:var(--color-surface-container-high);flex-shrink:0;overflow:hidden;
@@ -22277,7 +22278,7 @@ async function renderArtistPage(aid) {
     </div>`;
 
   let html = `
-    <div style="display:flex;gap:24px;align-items:flex-end;padding:20px 0 28px;flex-wrap:wrap">
+    <div style="display:flex;gap:24px;align-items:flex-end;padding:0 0 28px;flex-wrap:wrap">
       <div data-artist-img-wrap style="flex-shrink:0">${imgHtml}</div>
       <div style="padding-bottom:8px;min-width:0;flex:1">
         <div style="font:var(--type-headline-small);font-variation-settings:var(--fv-headline);font-size:32px;color:var(--color-on-surface);line-height:1.1">${esc(artist.name)}</div>
@@ -27398,7 +27399,7 @@ async function renderStats() {
   const tabBtn = (id, label, icon) =>
     `<button class="stats-tab-btn subnav-btn ui-tab-btn${_statsTab===id?' on':''}" data-tab="${id}" onclick="setStatsTab('${id}')" style="display:flex;align-items:center;gap:6px">${icon} ${label}</button>`;
   vc.innerHTML = `
-    <div style="padding-top:12px">
+    <div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;pointer-events:none" id="stats-cards-row">
         ${skeletonCards}
       </div>
@@ -27552,7 +27553,7 @@ function renderSettings() {
       </div>`).join('');
     const vc = document.getElementById('vc');
     vc.innerHTML = `
-      <div class="set-panel" style="max-width:640px;padding-top:8px">
+      <div class="set-panel" style="max-width:640px">
         <div class="set-section ui-panel" style="margin-bottom:0;overflow:hidden">${listItems}</div>
       </div>`;
     if (window.MU) MU.init(vc);
@@ -27587,7 +27588,7 @@ function renderSettings() {
   const _existingSearchBar = _pcSearchMode ? _settingsTarget.querySelector('.set-pc-search-bar') : null;
 
   _settingsTarget.innerHTML = `
-    <div class="set-panel" style="max-width:640px;padding-top:8px">
+    <div class="set-panel" style="max-width:640px">
       ${_backBtn}
       ${_pcCloseBtn}
       ${_existingSearchBar ? '' : _pcSearchBar}
