@@ -10791,7 +10791,10 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 @media (hover: hover) {.lyrics-resync button:hover{background:var(--color-surface-container-high)}}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
-.drag-spacer{flex-shrink:0;pointer-events:none;}
+.reordering{user-select:none;-webkit-user-select:none}
+.reordering>.song-row:not(.drag-lifted){transition:translate .16s var(--ease-out)!important}
+.song-row.drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s!important}
+.song-row.drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s!important}
 .song-row{
   display:grid;
   grid-template-columns:var(--song-table-tpl);
@@ -19161,7 +19164,7 @@ document.addEventListener('pointermove', e => {
   if (!s.on) {
     if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { _qSwipe = null; return; } // vertical = scroll
     if (!(dx > 10 && dx > Math.abs(dy) * 1.5)) return;
-    if (document.querySelector('#queue-inner .drag-spacer')) { _qSwipe = null; return; } // reorder drag active
+    if (document.querySelector('#queue-inner .drag-lifted')) { _qSwipe = null; return; } // reorder drag active
     s.on = true;
     // kill the pending reorder-drag hold on the list (its pointercancel handler does that)
     const list = document.querySelector('#queue-inner .song-list');
@@ -24645,217 +24648,158 @@ async function rmFromPl(pid, sid) {
 // }
 function initReorderDrag(listEl, opts) {
   if (!listEl) return;
-  const LIFT_SCALE   = 1.02;
-  const LIFT_SHADOW  = '0 8px 32px rgba(0,0,0,.28)';
-  const ANIM_MS      = 160;
-  const HOLD_MS      = 120;   // pointer must be held this long before drag activates
-  const MOVE_THRESH  = 6;     // px movement to confirm drag intent
-  const SCROLL_ZONE  = 60;    // px from edge to trigger auto-scroll
-  const SCROLL_MAX   = 18;    // px/frame max auto-scroll speed
+  const HOLD_MS = 120;
+  const MOVE_THRESH = 6;
+  const SCROLL_ZONE = 60;
+  const SCROLL_MAX = 18;
+  const ANIM_MS = 160;
+  const sc = opts.scrollEl;
 
-  let _row = null;       // the actual DOM row being lifted
-  let _spacer = null;    // invisible placeholder keeping the gap
-  let _rowH = 0;
-  let _holdTimer = null;
-  let _armed = false;    // pointerdown happened, waiting for hold/move
-  let _active = false;   // drag is actually in progress
-  let _pointerId = null;
-  let _startY = 0;       // pointer Y at lift moment
-  let _startPageY = 0;
-  let _rowOrigTop = 0;   // row's getBCR().top at lift moment
-  let _fixedTop = 0;     // current top of lifted row (fixed px)
-  let _prevInsertBefore = null; // last insertBefore target for spacer
-  let _scrollRaf = null;
-  let _prevList = null;
+  let rows = [], tops = [], heights = [];
+  let row = null, from = -1, to = -1, shift = 0;
+  let pid = null, downY = 0, lastY = 0, startScroll = 0, raf = 0;
+  let armedRow = null, holdTimer = null, prevIds = [];
+  let active = false, dropping = false, suppressClick = false;
 
-  function _rows() {
-    return [...listEl.querySelectorAll('.song-row:not(.drag-spacer)')];
+  const offset = () => lastY - downY + (sc ? sc.scrollTop - startScroll : 0);
+
+  function cancelHold() {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    armedRow = null;
   }
 
-  function _cancelHold() {
-    clearTimeout(_holdTimer); _holdTimer = null; _armed = false;
+  function clear() {
+    cancelAnimationFrame(raf);
+    active = false;
+    rows.forEach(r => { r.style.translate = ''; });
+    if (row) row.classList.remove('drag-lifted', 'drag-drop');
+    listEl.classList.remove('reordering');
+    row = null;
+    rows = [];
   }
 
-  function _lift(row, pointerY) {
-    _active = true;
-    _row = row;
-    _prevList = opts.getList().slice();
-
-    const rect = row.getBoundingClientRect();
-    _rowH = rect.height;
-    _rowOrigTop = rect.top;
-    _fixedTop = rect.top;
-
-    // spacer — same height, invisible, stays in the list flow
-    _spacer = document.createElement('div');
-    _spacer.className = 'drag-spacer';
-    _spacer.style.cssText = `height:${_rowH}px;flex-shrink:0;pointer-events:none;`;
-    row.after(_spacer);
-
-    // lift the row out of flow: position fixed, same visual position
-    row.style.cssText += `;position:fixed;top:${_fixedTop}px;left:${rect.left}px;width:${rect.width}px;` +
-      `z-index:9990;margin:0;contain:none;` +
-      `transform:scale(${LIFT_SCALE});box-shadow:${LIFT_SHADOW};` +
-      `transition:box-shadow ${ANIM_MS}ms,transform ${ANIM_MS}ms;` +
-      `border-radius:var(--radius-md);`;
-
-    // neighbors: enable smooth translateY transitions
-    _rows().forEach(r => {
-      r.style.transition = `transform ${ANIM_MS}ms var(--ease-out)`;
-    });
-
-    _startY = pointerY;
-    listEl.setPointerCapture(_pointerId);
-    _scheduleScroll();
+  function lift(target) {
+    cancelHold();
+    rows = [...listEl.querySelectorAll(':scope > .song-row')];
+    from = rows.indexOf(target);
+    if (from < 0) { rows = []; return; }
+    const base = listEl.getBoundingClientRect().top;
+    tops = rows.map(r => r.getBoundingClientRect().top - base);
+    heights = rows.map(r => r.offsetHeight);
+    shift = heights[from] + (parseFloat(getComputedStyle(listEl).rowGap) || 0);
+    startScroll = sc ? sc.scrollTop : 0;
+    prevIds = opts.getList().map(opts.getId);
+    row = target;
+    to = from;
+    active = true;
+    listEl.classList.add('reordering');
+    row.classList.add('drag-lifted');
+    getSelection()?.removeAllRanges();
+    try { listEl.setPointerCapture(pid); } catch (_) {}
+    tick();
   }
 
-  function _move(pointerY) {
-    if (!_active) return;
-    const dy = pointerY - _startY;
-    _fixedTop = _rowOrigTop + dy;
-    _row.style.top = _fixedTop + 'px';
-
-    // find insertion point by comparing spacer midpoint with other rows
-    const midY = _fixedTop + _rowH / 2;
-    const allRows = _rows();
-    let insertBefore = null;
-    for (const r of allRows) {
-      const rb = r.getBoundingClientRect();
-      if (midY < rb.top + rb.height / 2) { insertBefore = r; break; }
+  function update() {
+    const last = rows.length - 1;
+    const maxDy = tops[last] + heights[last] - tops[from] - heights[from];
+    const dy = Math.max(-tops[from], Math.min(offset(), maxDy));
+    row.style.translate = '0 ' + dy + 'px';
+    const center = tops[from] + dy + heights[from] / 2;
+    let n = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (i !== from && tops[i] + heights[i] / 2 < center) n++;
     }
-
-    if (insertBefore !== _prevInsertBefore) {
-      _prevInsertBefore = insertBefore;
-      if (insertBefore) listEl.insertBefore(_spacer, insertBefore);
-      else listEl.appendChild(_spacer);
-    }
-  }
-
-  function _scheduleScroll() {
-    if (!_active) return;
-    _scrollRaf = requestAnimationFrame(() => {
-      if (!_active) return;
-      const sc = opts.scrollEl;
-      if (sc) {
-        const scRect = sc.getBoundingClientRect();
-        const relTop = _fixedTop - scRect.top;
-        const relBot = _fixedTop + _rowH - scRect.top;
-        const visH = scRect.height;
-        let speed = 0;
-        if (relTop < SCROLL_ZONE)       speed = -SCROLL_MAX * (1 - relTop / SCROLL_ZONE);
-        else if (relBot > visH - SCROLL_ZONE) speed = SCROLL_MAX * (1 - (visH - relBot) / SCROLL_ZONE);
-        if (speed) {
-          sc.scrollTop += speed;
-          // recompute row positions after scroll — shift _rowOrigTop so row follows
-          _rowOrigTop -= speed;
-        }
-      }
-      _scheduleScroll();
+    if (n === to) return;
+    to = n;
+    rows.forEach((r, i) => {
+      if (i === from) return;
+      const s = i > from && i <= to ? -shift : i < from && i >= to ? shift : 0;
+      r.style.translate = s ? '0 ' + s + 'px' : '';
     });
   }
 
-  async function _drop() {
-    if (!_active) return;
-    _active = false;
-    cancelAnimationFrame(_scrollRaf);
-
-    // read new order from DOM (spacer position = dropped position)
-    const spacerIdx = [...listEl.children].indexOf(_spacer);
-    const newIds = [...listEl.querySelectorAll('.song-row:not(.drag-spacer)')].map(r => r.dataset.id);
-    newIds.splice(spacerIdx, 0, _row.dataset.id);
-
-    // snap row into final position (where spacer is) before restoring flow
-    const spacerRect = _spacer.getBoundingClientRect();
-    _row.style.transition = `top ${ANIM_MS}ms var(--ease-out),transform ${ANIM_MS}ms,box-shadow ${ANIM_MS}ms`;
-    _row.style.top = spacerRect.top + 'px';
-    _row.style.transform = 'scale(1)';
-    _row.style.boxShadow = 'none';
-
-    await new Promise(r => setTimeout(r, ANIM_MS));
-
-    // restore row to normal flow
-    _spacer.replaceWith(_row);
-    _row.style.cssText = _row.style.cssText
-      .replace(/position:[^;]+;/g, '')
-      .replace(/top:[^;]+;/g, '')
-      .replace(/left:[^;]+;/g, '')
-      .replace(/width:[^;]+;/g, '')
-      .replace(/z-index:[^;]+;/g, '')
-      .replace(/margin:[^;]+;/g, '')
-      .replace(/contain:[^;]+;/g, '')
-      .replace(/transform:[^;]+;/g, '')
-      .replace(/box-shadow:[^;]+;/g, '')
-      .replace(/transition:[^;]+;/g, '');
-    _rows().forEach(r => { r.style.transition = ''; });
-
-    _spacer = null; _row = null; _prevInsertBefore = null;
-
-    await opts.onCommit(newIds, _prevList ? _prevList.map(opts.getId) : []);
-    _prevList = null;
-  }
-
-  function _cancel() {
-    if (!_active) return;
-    _active = false;
-    cancelAnimationFrame(_scrollRaf);
-    if (_spacer) { _spacer.replaceWith(_row); _spacer = null; }
-    if (_row) {
-      _row.style.cssText = _row.style.cssText
-        .replace(/position:[^;]+;/g, '')
-        .replace(/top:[^;]+;/g, '')
-        .replace(/left:[^;]+;/g, '')
-        .replace(/width:[^;]+;/g, '')
-        .replace(/z-index:[^;]+;/g, '')
-        .replace(/margin:[^;]+;/g, '')
-        .replace(/contain:[^;]+;/g, '')
-        .replace(/transform:[^;]+;/g, '')
-        .replace(/box-shadow:[^;]+;/g, '')
-        .replace(/transition:[^;]+;/g, '');
-      _row = null;
+  function tick() {
+    if (!active) return;
+    if (sc) {
+      const c = sc.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      const toTop = r.top - c.top;
+      const toBot = c.bottom - r.bottom;
+      let v = 0;
+      if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
+      else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
+      if (v) sc.scrollTop += v;
     }
-    _rows().forEach(r => { r.style.transition = ''; });
-    _prevList = null; _prevInsertBefore = null;
+    update();
+    raf = requestAnimationFrame(tick);
   }
 
-  // ── event listeners on listEl ─────────────────────────────────────────────
+  function drop() {
+    cancelAnimationFrame(raf);
+    active = false;
+    dropping = true;
+    suppressClick = true;
+    const finalTop = to > from ? tops[to] + heights[to] - heights[from] : tops[to];
+    row.classList.add('drag-drop');
+    row.style.translate = '0 ' + (finalTop - tops[from]) + 'px';
+    const ids = rows.map(r => r.dataset.id);
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    setTimeout(async () => {
+      const changed = to !== from;
+      if (changed) (to > from ? rows[to].after(row) : rows[to].before(row));
+      clear();
+      dropping = false;
+      setTimeout(() => { suppressClick = false; }, 0);
+      if (changed) await opts.onCommit(ids, prevIds);
+    }, ANIM_MS);
+  }
+
   listEl.addEventListener('pointerdown', e => {
-    // only primary button / single touch; ignore if inside a button/link
-    if (e.button && e.button !== 0) return;
+    if (active || dropping || (e.button && e.button !== 0)) return;
     if (e.target.closest('button,a,[role=button]')) return;
-    const row = e.target.closest('.song-row');
-    if (!row || row.classList.contains('drag-spacer')) return;
-    _pointerId = e.pointerId;
-    _armed = true;
-    _startPageY = e.clientY;
-    // don't prevent default yet — allow scroll on touch
-    _holdTimer = setTimeout(() => {
-      if (!_armed) return;
-      _armed = false;
-      _lift(row, _startPageY);
-    }, HOLD_MS);
+    const target = e.target.closest('.song-row');
+    if (!target || target.parentElement !== listEl) return;
+    pid = e.pointerId;
+    downY = lastY = e.clientY;
+    armedRow = target;
+    if (e.pointerType !== 'mouse') {
+      holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
+    }
   });
 
   listEl.addEventListener('pointermove', e => {
-    if (e.pointerId !== _pointerId) return;
-    if (_active) { e.preventDefault(); _move(e.clientY); return; }
-    if (!_armed) return;
-    // if finger moved enough before hold timer, treat as scroll — cancel
-    if (Math.abs(e.clientY - _startPageY) > MOVE_THRESH && !_active) {
-      _cancelHold();
-    }
+    if (e.pointerId !== pid) return;
+    lastY = e.clientY;
+    if (active) { e.preventDefault(); return; }
+    if (!armedRow || Math.abs(e.clientY - downY) <= MOVE_THRESH) return;
+    if (e.pointerType === 'mouse') lift(armedRow);
+    else cancelHold();
   }, { passive: false });
 
   listEl.addEventListener('pointerup', e => {
-    if (e.pointerId !== _pointerId) return;
-    _cancelHold();
-    if (_active) _drop();
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (!active) return;
+    if (Math.abs(offset()) > MOVE_THRESH) drop();
+    else clear();
   });
 
   listEl.addEventListener('pointercancel', e => {
-    if (e.pointerId !== _pointerId) return;
-    _cancelHold();
-    _cancel();
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (active) clear();
   });
+
+  listEl.addEventListener('touchmove', e => {
+    if (active) e.preventDefault();
+  }, { passive: false });
+
+  listEl.addEventListener('click', e => {
+    if (!suppressClick) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 function initDrag(pid) {
