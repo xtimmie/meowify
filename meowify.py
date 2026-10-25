@@ -10001,13 +10001,13 @@ svg {overflow: visible}
 #nb-stats .ni svg{translate:-1px 0}
 /* ── divider lines: color of the bg they sit on, lightness x --line-up (dark bgs, brighter) or / --line-down (light bgs, dimmer) ── */
 :root{
-  --line-up:2;--line-down:1.5;
-  --line-lowest:oklch(from var(--color-surface-container-lowest) calc(l * var(--line-up)) c h);
-  --line-low:oklch(from var(--color-surface-container-low) calc(l * var(--line-up)) c h);
-  --line-surface:oklch(from var(--color-surface) calc(l * var(--line-up)) c h);
-  --line-container:oklch(from var(--color-surface-container) calc(l * var(--line-up)) c h);
-  --line-high:oklch(from var(--color-surface-container-high) calc(l / var(--line-down)) c h);
-  --line-highest:oklch(from var(--color-surface-container-highest) calc(l / var(--line-down)) c h);
+  --line-up:0.12;--line-down:0.08;
+  --line-lowest:oklch(from var(--color-surface-container-lowest) calc(l + var(--line-up)) c h);
+  --line-low:oklch(from var(--color-surface-container-low) calc(l + var(--line-up)) c h);
+  --line-surface:oklch(from var(--color-surface) calc(l + var(--line-up)) c h);
+  --line-container:oklch(from var(--color-surface-container) calc(l + var(--line-up)) c h);
+  --line-high:oklch(from var(--color-surface-container-high) calc(l - var(--line-down)) c h);
+  --line-highest:oklch(from var(--color-surface-container-highest) calc(l - var(--line-down)) c h);
 }
 .sdiv{height:1px;background:var(--line-lowest);margin:8px 16px}
 .pl-sec{flex:1;overflow-y:auto;padding:0 8px var(--bar-h)}
