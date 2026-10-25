@@ -25174,6 +25174,16 @@ function _applyDesignImpl(design) {
   body.design-glassy #ctx,body.design-glassy #dl-panel-float{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(50% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);border-color:var(--glass-border-hi)!important;box-shadow:var(--glass-spec-panel)!important}
   @media(max-width:767px){body.design-glassy #ctx,body.design-glassy #dl-panel-float{border:none!important;border-top:1px solid var(--glass-border-hi)!important;box-shadow:none!important}}
   body.design-glassy #ctx{border:none!important}
+  /* glassy: dividers are translucent so they blend with the blurred backdrop instead of sitting on it as solid lines */
+  body.design-glassy{
+    --line-a:13%;
+    --line-lowest:color-mix(in oklch,var(--color-on-surface) var(--line-a),transparent);
+    --line-low:var(--line-lowest);
+    --line-surface:var(--line-lowest);
+    --line-container:var(--line-lowest);
+    --line-high:var(--line-lowest);
+    --line-highest:var(--line-lowest);
+  }
   body.design-glassy .subnav-btn{background:var(--glass-bg)!important}
   @media (hover: hover) {body.design-glassy .subnav-btn:hover{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .subnav-btn.on{background:color-mix(in oklch,var(--color-primary) 22%,rgba(255,255,255,.06))!important;box-shadow:var(--glass-spec-panel)}
