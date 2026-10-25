@@ -10649,7 +10649,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   background:var(--color-surface-container);
   border-radius:var(--radius-md);
   overflow:hidden;
-  border:1px solid var(--line-container);
+  border:none;
   margin:0 14px 0;
 }
 .np-meta-row{
