@@ -10867,7 +10867,8 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .song-row.playing:not(.paused):not(:hover) .snum-num{opacity:0}
 .song-row.playing:not(.paused):not(:hover) .snum-play{opacity:0}
 @media (hover: hover) {
-#queue-inner{touch-action:pan-y}
+#queue-inner{touch-action:pan-y;overflow-x:hidden}
+#queue-inner .song-list,#queue-inner>div>div{overflow:clip}
 #queue-inner img{-webkit-user-drag:none}
 #queue-inner .song-row:hover .snum-num{opacity:1}
 #queue-inner .song-row:hover .snum-play{opacity:0}
@@ -19243,6 +19244,22 @@ function _queueAnimateAdd(idx, count) {
   }
 }
 
+// the vlist probes its row height once on mount, if that read is off the rows overlap.
+// compare against a really rendered row and fix it up
+function _queueFixRowH(v) {
+  if (!v || v !== _qvlist || !v._probed) return;
+  const el = v._nodes.values().next().value;
+  if (!el || !el.isConnected) return;
+  const h = el.getBoundingClientRect().height / (_zoom || 1);
+  if (!(h > 0) || Math.abs(h - v.ROW_H) <= 2) return;
+  v.ROW_H = h;
+  v._inner.style.height = (v.songs.length * h + v._extraBottom) + 'px';
+  for (const [, n] of v._nodes) { _regDel(n.dataset.id, n); n.remove(); }
+  v._nodes.clear();
+  v._rendered = {start: -1, end: -1};
+  v._render();
+}
+
 function _queueRefreshRow(i) {
   if (i < 0 || i >= S.queue.length) return;
   if (_qvlist) { _qvlist.refreshRow(i); return; }
@@ -19255,6 +19272,8 @@ function _queueAfterFullRender(inner, hadSig, prevScroll) {
   _qLastQi = S.qi;
   const _anim = _qAddAnim; _qAddAnim = null;
   const _rem = _qRemAnim; _qRemAnim = null;
+  const _fv = _qvlist;
+  if (_fv) { setTimeout(() => _queueFixRowH(_fv), 80); setTimeout(() => _queueFixRowH(_fv), 450); } // 450 = after the mobile 350ms re-probe
   if (_rem) requestAnimationFrame(() => _queueAnimateRemove(_rem));
   // rAF so the virtual list has mounted its rows first (its own mount rAF was queued before this one)
   if (_anim) requestAnimationFrame(() => _queueAnimateAdd(_anim.idx, _anim.count));
