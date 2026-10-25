@@ -10794,7 +10794,13 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .reordering{user-select:none;-webkit-user-select:none}
 .reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted){transition:translate .16s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s!important}
-:is(.song-row,.song-row-mobile).drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s!important}
+:is(.song-row,.song-row-mobile).drag-lifted.selected .snum-num{color:inherit}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-follow{transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s,opacity .18s!important}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-far{opacity:0;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s,opacity .16s!important}
+:is(.song-row,.song-row-mobile).drag-anchor[data-drag-count]::after{content:attr(data-drag-count);position:absolute;top:-7px;right:12px;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--color-primary);color:var(--color-on-primary,#fff);font:var(--type-label-small);pointer-events:none}
+body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted{background:color-mix(in oklch,var(--color-surface-container-highest) calc(42% * var(--glass-a,1)),transparent)!important;backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);box-shadow:0 8px 32px rgba(0,0,0,.28),0 0 0 1px var(--glass-border-hi) inset}
+body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-drop{box-shadow:0 0 0 1px var(--glass-border-hi) inset}
 .song-row{
   display:grid;
   grid-template-columns:var(--song-table-tpl);
@@ -24650,14 +24656,15 @@ function initReorderDrag(listEl, opts) {
   if (!listEl) return;
   const HOLD_MS = 120;
   const MOVE_THRESH = 8;
-  const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
   const SCROLL_ZONE = 60;
   const SCROLL_MAX = 18;
   const ANIM_MS = 160;
+  const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
   const sc = opts.scrollEl;
 
   let rows = [], tops = [], heights = [];
-  let row = null, from = -1, to = -1, shift = 0;
+  let group = [], rest = [], packed = [], slots = [], ranks = new Map();
+  let row = null, from = -1, slot = 0, slotH = 0, gap = 0, listBottom = 0;
   let pid = null, downY = 0, lastY = 0, startScroll = 0, raf = 0, z = 1;
   let armedRow = null, holdTimer = null, prevIds = [];
   let active = false, dropping = false, suppressClick = false;
@@ -24674,10 +24681,25 @@ function initReorderDrag(listEl, opts) {
     cancelAnimationFrame(raf);
     active = false;
     rows.forEach(r => { r.style.translate = ''; });
-    if (row) row.classList.remove('drag-lifted', 'drag-drop');
+    group.forEach(i => {
+      const el = rows[i];
+      el.style.scale = '';
+      el.style.zIndex = '';
+      delete el.dataset.dragCount;
+      el.classList.remove('drag-lifted', 'drag-anchor', 'drag-follow', 'drag-far', 'drag-drop');
+    });
     listEl.classList.remove('reordering');
     row = null;
     rows = [];
+    group = [];
+    rest = [];
+  }
+
+  function layout() {
+    rest.forEach((i, j) => {
+      const t = (j < slot ? packed[j] : packed[j] + slotH + gap) - tops[i];
+      rows[i].style.translate = Math.abs(t) < 0.5 ? '' : '0 ' + t + 'px';
+    });
   }
 
   function lift(target) {
@@ -24687,39 +24709,71 @@ function initReorderDrag(listEl, opts) {
     if (from < 0) { rows = []; return; }
     z = _zoom || 1;
     const base = listEl.getBoundingClientRect().top;
-    tops = rows.map(r => (r.getBoundingClientRect().top - base) / z);
-    heights = rows.map(r => r.offsetHeight);
-    shift = heights[from] + (parseFloat(getComputedStyle(listEl).rowGap) || 0);
+    const rects = rows.map(r => r.getBoundingClientRect());
+    tops = rects.map(r => (r.top - base) / z);
+    heights = rects.map(r => r.height / z);
+    gap = parseFloat(getComputedStyle(listEl).rowGap) || 0;
+    listBottom = tops[rows.length - 1] + heights[rows.length - 1];
+    const picked = !!(opts.isSelected && opts.isSelected(target.dataset.id));
+    const all = rows.map((_, i) => i);
+    group = all.filter(i => i === from || (picked && opts.isSelected(rows[i].dataset.id)));
+    const gset = new Set(group);
+    rest = all.filter(i => !gset.has(i));
+    slotH = group.reduce((s, i) => s + heights[i], 0) + gap * (group.length - 1);
+    let removed = 0;
+    packed = [];
+    all.forEach(i => {
+      if (gset.has(i)) removed += heights[i] + gap;
+      else packed.push(tops[i] - removed);
+    });
+    const last = rest.length - 1;
+    slots = packed.concat(last < 0 ? tops[0] : packed[last] + heights[rest[last]] + gap);
+    slot = rest.filter(i => i < from).length;
     startScroll = sc ? sc.scrollTop : 0;
     prevIds = opts.getList().map(opts.getId);
     row = target;
-    to = from;
     active = true;
+    ranks = new Map();
+    let n = 0;
+    group.forEach(i => {
+      const el = rows[i];
+      el.classList.add('drag-lifted');
+      if (i === from) {
+        el.classList.add('drag-anchor');
+        if (group.length > 1) el.dataset.dragCount = group.length;
+        return;
+      }
+      n++;
+      ranks.set(i, n);
+      el.classList.add('drag-follow');
+      if (n > 3) el.classList.add('drag-far');
+      el.style.zIndex = String(Math.max(1, 5 - n));
+      el.style.scale = String(1.02 - Math.min(n, 3) * 0.02);
+    });
     listEl.classList.add('reordering');
-    row.classList.add('drag-lifted');
     getSelection()?.removeAllRanges();
     document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid }));
     try { listEl.setPointerCapture(pid); } catch (_) {}
+    layout();
     tick();
   }
 
   function update() {
-    const last = rows.length - 1;
-    const maxDy = tops[last] + heights[last] - tops[from] - heights[from];
-    const dy = Math.max(-tops[from], Math.min(offset(), maxDy));
-    row.style.translate = '0 ' + dy + 'px';
-    const center = tops[from] + dy + heights[from] / 2;
-    let n = 0;
-    for (let i = 0; i < rows.length; i++) {
-      if (i !== from && tops[i] + heights[i] / 2 < center) n++;
-    }
-    if (n === to) return;
-    to = n;
-    rows.forEach((r, i) => {
+    const top = Math.max(tops[0], Math.min(tops[from] + offset(), listBottom - heights[from]));
+    row.style.translate = '0 ' + (top - tops[from]) + 'px';
+    group.forEach(i => {
       if (i === from) return;
-      const s = i > from && i <= to ? -shift : i < from && i >= to ? shift : 0;
-      r.style.translate = s ? '0 ' + s + 'px' : '';
+      rows[i].style.translate = '0 ' + (top + Math.min(ranks.get(i), 3) * 5 - tops[i]) + 'px';
     });
+    const center = top + heights[from] / 2;
+    let k = 0, best = Infinity;
+    for (let i = 0; i < slots.length; i++) {
+      const d = Math.abs(slots[i] + slotH / 2 - center);
+      if (d < best) { best = d; k = i; }
+    }
+    if (k === slot) return;
+    slot = k;
+    layout();
   }
 
   function tick() {
@@ -24744,14 +24798,23 @@ function initReorderDrag(listEl, opts) {
     active = false;
     dropping = true;
     suppressClick = true;
-    const finalTop = to > from ? tops[to] + heights[to] - heights[from] : tops[to];
-    row.classList.add('drag-drop');
-    row.style.translate = '0 ' + (finalTop - tops[from]) + 'px';
-    const ids = rows.map(r => r.dataset.id);
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    let y = slots[slot];
+    group.forEach(i => {
+      const el = rows[i];
+      el.classList.remove('drag-far');
+      el.classList.add('drag-drop');
+      el.style.scale = '';
+      el.style.translate = '0 ' + (y - tops[i]) + 'px';
+      y += heights[i] + gap;
+    });
+    const order = rest.slice(0, slot).concat(group, rest.slice(slot));
+    const ids = order.map(i => rows[i].dataset.id);
     setTimeout(async () => {
-      const changed = to !== from;
-      if (changed) (to > from ? rows[to].after(row) : rows[to].before(row));
+      const changed = order.some((v, i) => v !== i);
+      if (changed) {
+        const ref = slot < rest.length ? rows[rest[slot]] : null;
+        group.forEach(i => { if (ref) ref.before(rows[i]); else listEl.append(rows[i]); });
+      }
       clear();
       dropping = false;
       setTimeout(() => { suppressClick = false; }, 0);
@@ -24762,7 +24825,7 @@ function initReorderDrag(listEl, opts) {
   listEl.addEventListener('pointerdown', e => {
     if (active || dropping || (e.button && e.button !== 0)) return;
     if (e.target.closest('button,a,[role=button]')) return;
-    const target = e.target.closest('.song-row');
+    const target = e.target.closest('.song-row,.song-row-mobile');
     if (!target || target.parentElement !== listEl) return;
     pid = e.pointerId;
     downY = lastY = e.clientY;
@@ -24812,6 +24875,7 @@ function initDrag(pid) {
   initReorderDrag(listEl, {
     getList: () => S.plSongs[pid] || [],
     getId: s => s.id,
+    isSelected: id => S.selected.has(id),
     scrollEl: document.getElementById('vc'),
     onCommit: async (newIds, prevIds) => {
       const idMap = new Map((S.plSongs[pid] || []).map(s => [s.id, s]));
