@@ -10385,6 +10385,37 @@ body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar::before{display
   width:100%;height:100%;
   object-fit:cover;display:block;
 }
+/* ── per-device blur controls: html.nb-<part> is toggled by applyBlurPrefs() ── */
+html.nb-all *,html.nb-all *::before,html.nb-all *::after,
+html.nb-player #player,
+html.nb-nav #mobile-nav,
+html.nb-topbar .topbar,
+html.nb-sidebar #sidebar,
+html.nb-rsidebars :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar),
+html.nb-ctx :is(#ctx,#dl-panel-float),
+html.nb-modal :is(.mbox,#modal-overlay),
+html.nb-pinned .list-header.pinned::before,
+html.nb-pinned #vc-wrap::before,
+html.nb-lightbox :is(#cover-lightbox-bg,#cover-lightbox-close,.cover-lightbox-zoom-bar),
+html.nb-popup #set-pc-overlay,
+html.nb-video .mv-ctl-btn,
+html.nb-mu :is(.dialog-backdrop,[data-mu-dialog],[data-mu-sheet]>*){
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
+/* unblurred glass parts get a more solid bg so text stays readable (tweak --nb-solid, 0-1) */
+html{--nb-solid:.45}
+html.nb-player #player,
+html.nb-nav #mobile-nav,
+html.nb-topbar .topbar,
+html.nb-sidebar #sidebar,
+html.nb-rsidebars :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar),
+html.nb-ctx :is(#ctx,#dl-panel-float),
+html.nb-modal .mbox{
+  --glass-s:var(--nb-solid);
+  --glass-bg:color-mix(in oklch,var(--color-surface-container) calc(100% * var(--glass-s)),rgb(255 255 255 / calc(.04 * var(--glass-a,1))));
+  --glass-bg-mid:rgb(50 50 50 / max(calc(.40 * var(--glass-a,1)),var(--glass-s)));
+}
 /* ── cover lightbox ─────────────────────────────────────── */
 #cover-lightbox{
   visibility:hidden;transition:visibility 0s 280ms; /* closed = not rendered, so its backdrop-filters cost nothing */
@@ -25003,6 +25034,54 @@ function applyFontOverride(val) {
   el.textContent = `body, body * { font-family: ${val} !important; }`;
 }
 
+// ── per-device blur controls (localStorage, applied as html.nb-<part> classes) ──
+// [key, label, sub, only-in-design|null, desktop-only]
+const BLUR_PARTS = [
+  ['player',   'player bar',               'bottom player', 'glassy'],
+  ['nav',      'mobile nav',               'bottom navigation on mobile', 'glassy'],
+  ['topbar',   'topbar',                   'title and search bar', 'glassy'],
+  ['sidebar',  'left sidebar',             'navigation sidebar', 'glassy', true],
+  ['rsidebars','queue / lyrics / now playing', 'right sidebars on desktop, bottom sheets on mobile', 'glassy'],
+  ['ctx',      'context menu & downloads', 'song menu drawer and download panel', 'glassy'],
+  ['modal',    'modals',                   'dialogs like confirm, rename, add to playlist', null],
+  ['pinned',   'pinned list header',       'header that sticks while scrolling lists', 'glassy'],
+  ['lightbox', 'cover viewer',             'fullscreen cover zoom', null],
+  ['popup',    'settings popup',           'backdrop behind the desktop settings window', null, true],
+  ['video',    'video buttons',            'buttons over the music video', null],
+  ['mu',       'motionui dialogs & sheets','MU.dialog / MU.sheet popups', null],
+  ['goo',      'spiky button goo filter',  'svg blur on the spiky play button (not a backdrop filter, still gpu heavy)', null],
+];
+const _BLUR_LS = 'meowify_blur';
+function _blurPrefs() { try { return JSON.parse(localStorage.getItem(_BLUR_LS)) || {}; } catch { return {}; } }
+function applyBlurPrefs() {
+  const { all, off = [] } = _blurPrefs(), cl = document.documentElement.classList;
+  cl.toggle('nb-all', !!all);
+  for (const [k] of BLUR_PARTS) cl.toggle('nb-' + k, !!all || off.includes(k));
+}
+function setBlurPref(k, off) { // k = 'all' or a part key, off = true to disable that blur
+  const p = _blurPrefs();
+  p.off = (p.off || []).filter(x => x !== k);
+  if (k === 'all') p.all = off; else if (off) p.off.push(k);
+  try { localStorage.setItem(_BLUR_LS, JSON.stringify(p)); } catch {}
+  applyBlurPrefs();
+}
+function blurSettingsHtml(row) {
+  const { all, off = [] } = _blurPrefs(), design = CFG.ui_design || 'material', mob = isMobile();
+  const sw = (checked, onchange, disabled) => `
+    <label class="switch" style="flex-shrink:0${disabled ? ';opacity:.4;pointer-events:none' : ''}">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()">
+      <div class="switch-track"><div class="switch-thumb"></div></div>
+    </label>`;
+  const parts = BLUR_PARTS
+    .filter(([, , , d, desk]) => (!d || d === design) && !(desk && mob))
+    .map(([k, label, sub]) => row(label, sub, sw(!all && !off.includes(k), `setBlurPref('${k}',!this.checked)`, all)))
+    .join('');
+  return row('disable all blur', 'removes every backdrop-filter (heavy on the gpu), panels get a bit more solid instead', sw(all, "setBlurPref('all',this.checked);renderSettings()"))
+    + row('blur parts', 'pick which parts keep their blur, switch on = blurred', `<button class="btn btn-out mu-ripple" onclick="window._blurPartsOpen=!window._blurPartsOpen;renderSettings()">${window._blurPartsOpen ? 'hide' : 'show'}</button>`)
+    + (window._blurPartsOpen ? parts : '');
+}
+applyBlurPrefs();
+
 function applyGlass(c = CFG) {
   MU.setGlass({ alpha: c.glass_alpha ?? 1, blur: c.glass_blur ?? 1 });
   document.body.classList.toggle('rs-full', !!c.rs_full_height);
@@ -27187,6 +27266,7 @@ function renderSettings() {
             </div>
           </div>
         `) : ''}
+        ${blurSettingsHtml(row)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
