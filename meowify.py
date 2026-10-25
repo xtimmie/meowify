@@ -10888,7 +10888,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 }
 .song-row.selected{background:color-mix(in oklch,var(--color-primary) 8%,transparent)}
 .song-row.selected .snum-num{color:var(--color-primary)}
-.vl-inner>:is(.song-row,.song-row-mobile){height:var(--vrow-h);box-sizing:border-box;will-change:auto}
+.vl-inner>:is(.song-row,.song-row-mobile),.vl-static>:is(.song-row,.song-row-mobile){height:var(--vrow-h);box-sizing:border-box;will-change:auto}
 #vc :is(.song-row,.song-row-mobile){transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out)}
 .song-row.selected.sel-up,.song-row-mobile.selected.sel-up{border-top-left-radius:0;border-top-right-radius:0}
 .song-row.selected.sel-dn,.song-row-mobile.selected.sel-dn{border-bottom-left-radius:0;border-bottom-right-radius:0}
@@ -19394,12 +19394,13 @@ function renderQueueSidebar() {
   }
 
   // small queue: plain DOM (no overhead)
-  inner.innerHTML = '<div class=\"song-list\" style=\"padding:8px 8px var(--bar-h)\">'
+  inner.innerHTML = '<div class=\"song-list\" style=\"padding:0 0 var(--bar-h)\">'
     + S.queue.map((s, i) => {
         const el = _makeQueueRow(s, i);
         return el.outerHTML;
       }).join('')
     + '</div>';
+  _snapStaticRowH();
   // re-attach event listeners for small queue (outerHTML loses them)
   inner.querySelectorAll('.song-row').forEach((row, i) => {
     row.querySelector('.smenu-btn')?.addEventListener('click', e => {
@@ -21602,6 +21603,7 @@ function setZoom(v) {
       _zoomAnimating = false;
       _wavyResized();
       if (S._vlist) { S._vlist.ROW_H = 0; S._vlist.refresh(); }
+      _snapStaticRowH();
     }
   };
   _zoomRaf = requestAnimationFrame(step);
@@ -22174,7 +22176,24 @@ function toggleSelect(sid, event) {
 }
 
 // mount all static (non-vlist) rows into the registry after innerHTML render
+// pin static (non-virtual) row heights to the same device-pixel-snapped value the VirtualList uses,
+// so fractional row heights under zoom/dpr dont leave seams between rows
+function _snapStaticRowH() {
+  const q = (window.devicePixelRatio || 1) * (typeof _zoom === 'number' && _zoom > 0 ? _zoom : 1);
+  document.querySelectorAll('.song-table > .song-list, #queue-inner > .song-list').forEach(list => {
+    list.classList.remove('vl-static');
+    list.style.removeProperty('--vrow-h');
+    const row = list.querySelector(':scope > .song-row, :scope > .song-row-mobile');
+    if (!row) return;
+    const h = row.getBoundingClientRect().height / (_zoom || 1);
+    if (!(h > 0)) return;
+    list.style.setProperty('--vrow-h', (Math.round(h * q) / q) + 'px');
+    list.classList.add('vl-static');
+  });
+}
+
 function _mountStaticRows() {
+  _snapStaticRowH();
   // prune disconnected entries without nuking vlist-managed ones
   for (const [id, els] of _rowRegistry) {
     for (const el of [...els]) {
