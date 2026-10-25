@@ -10867,6 +10867,8 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .song-row.playing:not(.paused):not(:hover) .snum-num{opacity:0}
 .song-row.playing:not(.paused):not(:hover) .snum-play{opacity:0}
 @media (hover: hover) {
+#queue-inner{touch-action:pan-y}
+#queue-inner img{-webkit-user-drag:none}
 #queue-inner .song-row:hover .snum-num{opacity:1}
 #queue-inner .song-row:hover .snum-play{opacity:0}
 #queue-inner .song-row.playing:not(.paused):hover .snum-num{opacity:0}
@@ -17391,6 +17393,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
 
 function removeFromQueue(i) {
   const removedId = S.queue[i]?.id;
+  const _rg = _queueRemoveGhost(i); // must grab the row before the queue changes
   S.queue.splice(i, 1);
   if (i < S.qi) {
     S.qi--;
@@ -17415,7 +17418,9 @@ function removeFromQueue(i) {
     const _qInner = document.getElementById('queue-inner');
     const _qScroll = _qInner ? _qInner.scrollTop : 0;
     if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
+    if (_rg) _qRemAnim = {idx: i, step: _rg.step};
     renderQueueSidebar();
+    _qRemAnim = null; // render consumed it, or bailed early on an empty queue
     // rebuild can clamp scrollTop to 0 on some webviews, put it back
     if (_qInner && _qScroll) {
       _qInner.scrollTop = _qScroll;
@@ -19093,6 +19098,112 @@ let _qSig = null;    // signature of the queue content currently rendered (null 
 let _qLastQi = -1;   // queue index that was marked as playing in the last render
 
 let _qAddAnim = null; // {idx, count} of rows just added, consumed by the next full render
+let _qRemAnim = null; // {idx, step} of a row just removed, consumed by the next full render
+
+// clone the row about to be removed and slide it off to the right. lives in the sidebar
+// (not queue-inner) so the list rebuild can't wipe it. returns the row step for the slide-up
+function _queueRemoveGhost(i) {
+  if (!S.queueOpen || (S.shuffle && S.shuffleMode === 'chaos')) return null;
+  if (typeof Element.prototype.animate !== 'function') return null;
+  const inner = document.getElementById('queue-inner');
+  const sb = document.getElementById('queue-sidebar');
+  if (!inner || !sb) return null;
+  const rows = _qvlist ? null : inner.querySelectorAll('.song-list > .song-row');
+  const row = _qvlist ? _qvlist._nodes.get(i) : rows[i];
+  if (!row) return null;
+  const z = _zoom || 1;
+  const rr = row.getBoundingClientRect();
+  const sr = sb.getBoundingClientRect();
+  let step;
+  if (_qvlist) step = _qvlist.ROW_H;
+  else step = rows[i + 1] ? (rows[i + 1].getBoundingClientRect().top - rr.top) / z : rr.height / z;
+  const op = getComputedStyle(row).opacity;
+  const g = row.cloneNode(true);
+  g.style.cssText += ';position:absolute;top:' + ((rr.top - sr.top) / z) + 'px;left:' + ((rr.left - sr.left) / z) + 'px;width:' + (rr.width / z) + 'px;height:' + (rr.height / z) + 'px;right:auto;bottom:auto;min-width:0;margin:0;align-self:auto;transform:none;opacity:1;transition:none;z-index:50;pointer-events:none';
+  sb.appendChild(g);
+  const a = g.animate(
+    [{transform: 'translateX(0)', opacity: op}, {transform: 'translateX(' + Math.ceil(sr.width / z) + 'px)', opacity: 0}],
+    {duration: 280, easing: 'cubic-bezier(.4,0,.8,.6)'}
+  );
+  a.onfinish = a.oncancel = () => g.remove();
+  setTimeout(() => g.remove(), 700);
+  return {step};
+}
+
+// rows after the removed one start one step lower and slide up into the gap
+function _queueAnimateRemove(r) {
+  const inner = document.getElementById('queue-inner');
+  if (!inner || !S.queueOpen) return;
+  const kf = [{transform: 'translateY(' + r.step + 'px)'}, {transform: 'translateY(0)'}];
+  const o = {duration: 300, delay: 90, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards'};
+  if (_qvlist) { for (const [i, el] of _qvlist._nodes) if (i >= r.idx) el.animate(kf, o); return; }
+  inner.querySelectorAll('.song-list > .song-row').forEach((el, i) => { if (i >= r.idx) el.animate(kf, o); });
+}
+
+// ── swipe right on a queue row to remove it ──────────────────────────────────
+let _qSwipe = null;
+let _qSwipeSynth = false;
+let _qSwipeSuppressClick = false;
+document.addEventListener('pointerdown', e => {
+  if (!S.queueOpen || _qSwipe || e.button) return;
+  if (S.shuffle && S.shuffleMode === 'chaos') return;
+  const t = e.target;
+  if (!t || !t.closest || t.closest('button')) return;
+  const row = t.closest('#queue-inner .song-row');
+  if (!row || row.classList.contains('drag-spacer') || row.dataset.qi == null) return;
+  _qSwipe = {id: e.pointerId, row, x0: e.clientX, y0: e.clientY, t0: performance.now(), on: false, dx: 0, tr: ''};
+}, true);
+document.addEventListener('pointermove', e => {
+  const s = _qSwipe;
+  if (!s || e.pointerId !== s.id) return;
+  const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+  if (!s.on) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { _qSwipe = null; return; } // vertical = scroll
+    if (!(dx > 10 && dx > Math.abs(dy) * 1.5)) return;
+    if (document.querySelector('#queue-inner .drag-spacer')) { _qSwipe = null; return; } // reorder drag active
+    s.on = true;
+    // kill the pending reorder-drag hold on the list (its pointercancel handler does that)
+    const list = document.querySelector('#queue-inner .song-list');
+    if (list) {
+      _qSwipeSynth = true;
+      list.dispatchEvent(new PointerEvent('pointercancel', {pointerId: s.id}));
+      _qSwipeSynth = false;
+    }
+    s.tr = s.row.style.transition;
+    s.row.style.transition = 'none';
+    s.row.style.userSelect = 'none';
+  }
+  s.dx = Math.max(0, dx);
+  const w = s.row.offsetWidth || 1;
+  s.row.style.transform = 'translateX(' + s.dx + 'px)';
+  s.row.style.opacity = String(Math.max(0.25, 1 - s.dx / (w * 1.1)));
+}, true);
+function _qSwipeEnd(e, cancelled) {
+  const s = _qSwipe;
+  if (!s || e.pointerId !== s.id || _qSwipeSynth) return;
+  _qSwipe = null;
+  if (!s.on) return;
+  _qSwipeSuppressClick = true; // the release would otherwise click the row and play it
+  setTimeout(() => { _qSwipeSuppressClick = false; }, 60);
+  const row = s.row;
+  const w = row.offsetWidth || 1;
+  const v = s.dx / Math.max(1, performance.now() - s.t0);
+  const commit = !cancelled && row.isConnected && (s.dx > Math.max(90, w * 0.4) || (s.dx > 40 && v > 0.6));
+  const i = parseInt(row.dataset.qi);
+  if (commit && !isNaN(i)) { removeFromQueue(i); return; }
+  row.style.transition = 'transform .22s var(--ease-out), opacity .22s var(--ease-out)';
+  row.style.transform = '';
+  row.style.opacity = '';
+  setTimeout(() => { row.style.transition = s.tr; row.style.userSelect = ''; }, 260);
+}
+document.addEventListener('pointerup', e => _qSwipeEnd(e, false), true);
+document.addEventListener('pointercancel', e => _qSwipeEnd(e, true), true);
+document.addEventListener('click', e => {
+  if (_qSwipeSuppressClick) { e.stopPropagation(); e.preventDefault(); }
+}, true);
+document.addEventListener('dragstart', e => {
+  if (_qSwipe && _qSwipe.on) e.preventDefault();
+}, true);
 
 // call after S.queue got new songs at idx..idx+count-1
 function _queueAdded(idx, count) {
@@ -19143,6 +19254,8 @@ function _queueRefreshRow(i) {
 function _queueAfterFullRender(inner, hadSig, prevScroll) {
   _qLastQi = S.qi;
   const _anim = _qAddAnim; _qAddAnim = null;
+  const _rem = _qRemAnim; _qRemAnim = null;
+  if (_rem) requestAnimationFrame(() => _queueAnimateRemove(_rem));
   // rAF so the virtual list has mounted its rows first (its own mount rAF was queued before this one)
   if (_anim) requestAnimationFrame(() => _queueAnimateAdd(_anim.idx, _anim.count));
   if (S._queueScrollPending) { S._queueScrollPending = false; _scrollQueueToCurrent(); return; }
