@@ -11942,7 +11942,7 @@ body.design-glassy .list-header.pinned::before{
 .song-list:has(>.song-row-mobile){gap:0}
 .song-list>.song-row-mobile,#vc .song-row-mobile{will-change:auto}
 :where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out)!important}
-.sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:48px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2;opacity:0;translate:30px 0;pointer-events:none;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out)}
+.sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:40px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2;opacity:0;translate:30px 0;pointer-events:none;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out)}
 .sel-reorderable .sel-handle{display:flex}
 body.select-mode .sel-reorderable .sel-handle{opacity:1;translate:0 0;pointer-events:auto}
 body.select-mode .sel-reorderable .smenu-btn{opacity:0!important;pointer-events:none}
