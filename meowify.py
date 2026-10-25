@@ -16788,6 +16788,8 @@ const BAR_OFFSETS    = [0, Math.PI * 0.72, Math.PI * 1.44]; // phase offsets per
 function _tickBarsInner(_skipDom) { return false; } // css-driven
 function _invalidateBarCache() {}
 function _applyBarHeights() {}
+let _barHeightCache = null;
+let _barHeightCacheDirty = true;
 
 // ── shared energy poller ─────────────────────────────────────────────────────
 // single 10fps interval; multiple features subscribe via subscribeEnergy()
