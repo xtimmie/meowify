@@ -11936,17 +11936,24 @@ body.design-glassy .list-header.pinned::before{
   transition: background var(--dur-2);
 }
 .mob-sort-btn svg { flex-shrink: 0; }
-.mob-sel-btn{align-self:stretch;min-width:36px;padding:0 9px;justify-content:center}
-.sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:48px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2}
-body.select-mode :is(#pl-rows,#queue-inner) .sel-handle{display:flex}
-body.select-mode :is(#pl-rows,#queue-inner) :is(.song-row,.song-row-mobile) .smenu-btn{visibility:hidden}
+#app:not(.mobile) #sel-mode-btn{display:none}
+.song-list:has(>.song-row-mobile){gap:0}
+.song-list>.song-row-mobile,#vc .song-row-mobile{will-change:auto}
+:where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out)!important}
+.sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:48px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2;opacity:0;translate:30px 0;pointer-events:none;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out)}
+.sel-reorderable .sel-handle{display:flex}
+body.select-mode .sel-reorderable .sel-handle{opacity:1;translate:0 0;pointer-events:auto}
+body.select-mode .sel-reorderable .smenu-btn{opacity:0!important;pointer-events:none}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row){padding-left:44px!important}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;transition:background var(--dur-2),border-color var(--dur-2)}
+:is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out),scale .34s cubic-bezier(.34,1.7,.5,1),background var(--dur-2),border-color var(--dur-2)}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{background:var(--color-primary);border-color:var(--color-primary)}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg);pointer-events:none}
-.sel-drag-count{position:absolute;right:52px;top:50%;transform:translateY(-50%);min-width:22px;height:22px;padding:0 6px;box-sizing:border-box;border-radius:11px;background:var(--color-primary);color:var(--color-on-primary);font:600 12px/22px sans-serif;text-align:center}
-.mob-sel-btn.on{background:var(--color-primary);color:var(--color-on-primary)}
+:is(.song-row-mobile,#queue-inner .song-row)::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none;transition:transform .3s cubic-bezier(.34,1.7,.5,1),opacity .12s,translate .28s var(--ease-out)}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::after{translate:0 0}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{transform:rotate(45deg) scale(1);opacity:1}
+.sel-reorderable .smenu-btn{transition:opacity .2s var(--ease-out)}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{opacity:1;translate:0 0}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{scale:1}
 #qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
 #app:not(.mobile) #qs-sel-btn{display:none}
 /* sort drawer items */
@@ -12178,6 +12185,9 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{co
       </div>
       <div class="topbar-acts" id="tacts"></div>
       <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:4px">
+        <button id="sel-mode-btn" class="cbtn mu-ripple" title="select" onclick="toggleSelectMode()">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg>
+        </button>
         <div id="topbar-dl-wrap" style="position:relative">
           <button id="dl-panel-btn" class="cbtn mu-ripple" title="downloads" style="position:relative" onclick="toggleDlPanel()">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><line x1="12" y1="3" x2="12" y2="14"/><polyline points="8,10 12,15 16,10"/><path d="M4,17 Q4,21 12,21 Q20,21 20,17" fill="none" id="dl-btn-basin"/></svg>
@@ -17220,7 +17230,7 @@ function renderLibrary(){
   const _curSortLabel = (_sortFields.find(([f])=>f===S.libSort)||_sortFields[0])[1];
   const _curDirSymbol = S.libSortDir==='asc' ? '↑' : '↓';
   const _sortBtn = isMobile() && S.libTab==='songs'
-    ? `<button id="lib-sel-btn" class="mob-sort-btn mob-sel-btn mu-ripple${S.selectMode ? ' on' : ''}" onclick="toggleSelectMode()" style="margin-left:auto" title="select and reorder">${_SEL_ICON}</button>
+    ? `<span style="margin-left:auto"></span>
       <button id="lib-sort-btn" class="mob-sort-btn mu-ripple" onclick="openSortDrawer()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="9" y1="18" x2="15" y2="18"/></svg>
         <span id="lib-sort-label">${esc(_curSortLabel)} ${_curDirSymbol}</span>
@@ -19382,7 +19392,7 @@ function renderQueueSidebar() {
   }
 
   // same songs in the same order: only touch the rows whose playing state changed, no rebuild
-  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
+  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + (S.selectMode && S.queue.length > 20 && S.queue.length <= 400 ? '|p' : '');
   if (_qSig === _sig && S.queue.length && (_qvlist || inner.querySelector('.song-list'))) {
     if (_qvlist) _qvlist.songs = S.queue;
     if (_qLastQi !== S.qi) _queueRefreshRow(_qLastQi);
@@ -19408,7 +19418,7 @@ function renderQueueSidebar() {
 
   // use virtual list for any non-trivial queue
   const QUEUE_VLIST_THRESHOLD = 20;
-  if (S.queue.length > QUEUE_VLIST_THRESHOLD) {
+  if (S.queue.length > QUEUE_VLIST_THRESHOLD && !(S.selectMode && S.queue.length <= 400)) {
     inner.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'width:100%;height:100%';
@@ -22176,8 +22186,17 @@ function _setSelectMode(on) {
   if (!!S.selectMode === on) return;
   S.selectMode = on;
   if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
-  document.body.classList.toggle('select-mode', on);
-  document.querySelectorAll('.mob-sel-btn, #qs-sel-btn').forEach(b => b.classList.toggle('on', on));
+  // in select mode the queue (<=400) renders as the plain songlist so it shares the songlist drag engine
+  const _qRe = () => { if (S.queueOpen && S.queue.length > 20 && S.queue.length <= 400) renderQueueSidebar(); };
+  if (on) {
+    _qRe();
+    // two frames so freshly built rows exist unstyled first and the slide-in actually animates
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (S.selectMode) document.body.classList.add('select-mode'); }));
+  } else {
+    document.body.classList.remove('select-mode');
+    setTimeout(() => { if (!S.selectMode) _qRe(); }, 340); // after the slide-out finished
+  }
+  document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
 }
 
 function toggleSelectMode() { _setSelectMode(!S.selectMode); }
@@ -22239,7 +22258,7 @@ function toggleSelect(sid, event) {
 // so fractional row heights under zoom/dpr dont leave seams between rows
 function _snapStaticRowH() {
   const q = (window.devicePixelRatio || 1) * (typeof _zoom === 'number' && _zoom > 0 ? _zoom : 1);
-  document.querySelectorAll('.song-table > .song-list, #queue-inner > .song-list').forEach(list => {
+  document.querySelectorAll('.song-table > .song-list, #queue-inner > .song-list, .song-list:has(> .song-row-mobile)').forEach(list => {
     list.classList.remove('vl-static');
     list.style.removeProperty('--vrow-h');
     const row = list.querySelector(':scope > .song-row, :scope > .song-row-mobile');
@@ -22269,7 +22288,13 @@ function _mountStaticRows() {
 
 function _applySelJoin(r) {
   const id = r.dataset.id;
-  if (!id || !S.selected.has(id) || r.closest('#queue-inner')) { r.classList.remove('sel-up', 'sel-dn'); return; }
+  if (id && S.selected.has(id) && r.closest('#queue-inner')) {
+    const qi = parseInt(r.dataset.qi);
+    r.classList.toggle('sel-up', qi > 0 && S.selected.has(S.queue[qi - 1]?.id));
+    r.classList.toggle('sel-dn', S.selected.has(S.queue[qi + 1]?.id));
+    return;
+  }
+  if (!id || !S.selected.has(id)) { r.classList.remove('sel-up', 'sel-dn'); return; }
   const i = _viewSongIdx.get(id);
   if (i == null) { r.classList.remove('sel-up', 'sel-dn'); return; }
   r.classList.toggle('sel-up', i > 0 && S.selected.has(S.viewSongs[i - 1]?.id));
@@ -24820,6 +24845,9 @@ function initReorderDrag(listEl, opts) {
   const SCROLL_MAX = 18;
   const ANIM_MS = 160;
   const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
+  listEl.classList.add('sel-reorderable');
+  // tapping a handle must not also toggle the row selection
+  listEl.addEventListener('click', e => { if (e.target.closest && e.target.closest('.sel-handle')) { e.stopPropagation(); e.preventDefault(); } }, true);
   const sc = opts.scrollEl;
 
   let rows = [], tops = [], heights = [];
@@ -25043,6 +25071,8 @@ function initVlistReorder(vl) {
   const inner = vl && vl._inner;
   if (!inner || inner._vReorder) return;
   inner._vReorder = true;
+  inner.classList.add('sel-reorderable');
+  inner.addEventListener('click', e => { if (e.target.closest && e.target.closest('.sel-handle')) { e.stopPropagation(); e.preventDefault(); } }, true);
   const HOLD_MS = 120;
   const MOVE_THRESH = 8;
   const SCROLL_ZONE = 60;
@@ -25052,7 +25082,7 @@ function initVlistReorder(vl) {
   let pid = null, downY = 0, lastY = 0, raf = 0;
   let armed = null, holdTimer = null;
   let active = false, dropping = false, suppressClick = false;
-  let from = -1, ghost = null, grab = 0, z = 1;
+  let from = -1, ghost = null, grab = 0, z = 1, y0 = 0, startScroll = 0;
 
   function cancelHold() {
     clearTimeout(holdTimer);
@@ -25062,7 +25092,7 @@ function initVlistReorder(vl) {
 
   function place() {
     const n = vl.songs.length;
-    const y = Math.max(0, Math.min((lastY - inner.getBoundingClientRect().top) / z - grab, (n - 1) * vl.ROW_H));
+    const y = Math.max(0, Math.min(y0 + (lastY - downY) / z + (sc.scrollTop - startScroll), (n - 1) * vl.ROW_H));
     ghost.style.translate = '0 ' + y + 'px';
     const k = Math.max(0, Math.min(n - 1, Math.round(y / vl.ROW_H)));
     if (k !== vl._drag.slot) {
@@ -25100,10 +25130,12 @@ function initVlistReorder(vl) {
     from = parseInt(target.dataset.qi);
     if (isNaN(from) || from < 0 || from >= vl.songs.length || vl.songs.length < 2 || !target.isConnected) return;
     z = _zoom || 1;
-    grab = (lastY - target.getBoundingClientRect().top) / z;
+    // same snapshot math as the songlist engine: row top at lift (layout px) + pointer/scroll delta / zoom
+    y0 = (target.getBoundingClientRect().top - inner.getBoundingClientRect().top) / z;
+    startScroll = sc.scrollTop;
     ghost = target.cloneNode(true);
     ghost.classList.add('drag-lifted', 'drag-anchor');
-    if (S.selectMode && S.selected.size > 1 && S.selected.has(target.dataset.id)) ghost.insertAdjacentHTML('beforeend', '<span class="sel-drag-count">' + S.selected.size + '</span>');
+    // no count badge, same as the songlist
     ghost.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:6';
     vl._drag = {from, slot: from};
     vl._relayout();
