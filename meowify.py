@@ -15077,6 +15077,7 @@ function buildQueue(songs, startIdx, source) {
   if (source) S.queueSource = source;
   // snapshot source order for unshuffle - always store regardless of shuffle state
   S._continueFrom = null; // any fresh queue build cancels a pending "play from here next"
+  S._queueScrollPending = true; // queue got replaced by a play from outside it - scroll the open queue to the current song
   S._unshuffledQueue = [...songs];
   engine._stopNxt();
   if (S.shuffle) {
@@ -17568,6 +17569,7 @@ function toggleQueue() {
     if (isMobile()) _openMobSheet('queue');
     renderQueueSidebar();
     _scrollQueueToCurrent();
+    S._queueScrollPending = false;
   } else {
     _closeSidebarState('queue');
   }
@@ -19086,6 +19088,26 @@ function _makeQueueRow(s, i) {
   return el;
 }
 
+let _qSig = null;    // signature of the queue content currently rendered (null = must rebuild)
+let _qLastQi = -1;   // queue index that was marked as playing in the last render
+
+function _queueRefreshRow(i) {
+  if (i < 0 || i >= S.queue.length) return;
+  if (_qvlist) { _qvlist.refreshRow(i); return; }
+  const inner = document.getElementById('queue-inner');
+  const old = inner && inner.querySelectorAll('.song-row')[i];
+  if (old) old.replaceWith(_makeQueueRow(S.queue[i], i));
+}
+
+function _queueAfterFullRender(inner, hadSig, prevScroll) {
+  _qLastQi = S.qi;
+  if (S._queueScrollPending) { S._queueScrollPending = false; _scrollQueueToCurrent(); return; }
+  if (hadSig && prevScroll) {
+    inner.scrollTop = prevScroll;
+    requestAnimationFrame(() => { inner.scrollTop = prevScroll; });
+  }
+}
+
 function renderQueueSidebar() {
   _barHeightCacheDirty = true;
   const inner = document.getElementById('queue-inner');
@@ -19094,6 +19116,7 @@ function renderQueueSidebar() {
   // chaos mode: show history + current + pre-picked next
   if (S.shuffle && S.shuffleMode === 'chaos') {
     if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
+    _qSig = null;
     const countEl = document.getElementById('qs-count');
     if (countEl) {
       const total = S._chaosContext.length || 0;
@@ -19139,10 +19162,23 @@ function renderQueueSidebar() {
     return;
   }
 
+  // same songs in the same order: only touch the rows whose playing state changed, no rebuild
+  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
+  if (_qSig === _sig && S.queue.length && (_qvlist || inner.querySelector('.song-list'))) {
+    if (_qvlist) _qvlist.songs = S.queue;
+    if (_qLastQi !== S.qi) _queueRefreshRow(_qLastQi);
+    _queueRefreshRow(S.qi);
+    _qLastQi = S.qi;
+    if (S._queueScrollPending) { S._queueScrollPending = false; _scrollQueueToCurrent(); }
+    return;
+  }
   // update count badge (skip heavy queue renders when nothing changed)
   const countEl = document.getElementById('qs-count');
   if (countEl) countEl.textContent = S.queue.length ? S.queue.length + ' songs' : '';
 
+  const _hadSig = _qSig !== null;
+  const _prevScroll = inner.scrollTop;
+  _qSig = _sig;
   // destroy old vlist
   if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
 
@@ -19159,6 +19195,7 @@ function renderQueueSidebar() {
     wrap.style.cssText = 'width:100%;height:100%';
     inner.appendChild(wrap);
     _qvlist = new VirtualList(wrap, S.queue, '', {}, 'queue-inner', _makeQueueRow);
+    _queueAfterFullRender(inner, _hadSig, _prevScroll);
     return;
   }
 
@@ -19176,6 +19213,7 @@ function renderQueueSidebar() {
     });
     row.addEventListener('click', () => { S.qi = i; S.cur = S.queue[i]; playSong(S.cur); });
   });
+  _queueAfterFullRender(inner, _hadSig, _prevScroll);
   // drag-to-reorder for small queue
   const _qListEl = inner.querySelector('.song-list');
   if (_qListEl) initReorderDrag(_qListEl, {
@@ -21622,6 +21660,20 @@ class VirtualList {
     const tmp = document.createElement('div');
     tmp.innerHTML = songRow(this.songs[i], i + 1, this.pid, this.opts, i);
     return tmp.firstElementChild || null;
+  }
+
+  // swap a single rendered row in place (used for playing-state changes, no full rebuild)
+  refreshRow(i) {
+    const old = this._nodes.get(i);
+    if (!old || !this._inner) return;
+    const row = this._makeRow(i);
+    if (!row) return;
+    const _rowW = row.style.width;
+    row.style.cssText += ';position:absolute;top:' + (i * this.ROW_H) + 'px;left:0;right:0;width:' + (_rowW || '100%');
+    _regDel(old.dataset.id, old);
+    old.replaceWith(row);
+    this._nodes.set(i, row);
+    if (row.dataset.id) _regAdd(row.dataset.id, row);
   }
 
   _remeasure() {
