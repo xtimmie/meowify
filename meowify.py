@@ -19092,6 +19092,46 @@ function _makeQueueRow(s, i) {
 let _qSig = null;    // signature of the queue content currently rendered (null = must rebuild)
 let _qLastQi = -1;   // queue index that was marked as playing in the last render
 
+let _qAddAnim = null; // {idx, count} of rows just added, consumed by the next full render
+
+// call after S.queue got new songs at idx..idx+count-1
+function _queueAdded(idx, count) {
+  if (!S.queueOpen) return;
+  _qAddAnim = {idx, count};
+  renderQueueSidebar();
+}
+
+function _queueAnimateAdd(idx, count) {
+  const inner = document.getElementById('queue-inner');
+  if (!inner || !S.queueOpen || typeof Element.prototype.animate !== 'function') return;
+  const DUR = 300, EASE = 'cubic-bezier(.2,.8,.2,1)';
+  if (_qvlist) {
+    // virtual rows are absolutely positioned: clip the new ones open, slide the ones below down into place
+    const rowH = _qvlist.ROW_H;
+    for (const [i, el] of _qvlist._nodes) {
+      if (i < idx) continue;
+      if (i < idx + count) {
+        el.animate([{opacity: 0, clipPath: 'inset(0 0 100% 0)'}, {opacity: 1, clipPath: 'inset(0 0 0% 0)'}], {duration: DUR, easing: EASE});
+      } else {
+        el.animate([{transform: 'translateY(' + (-rowH * count) + 'px)'}, {transform: 'translateY(0)'}], {duration: DUR, easing: EASE});
+      }
+    }
+    return;
+  }
+  // plain list: rows are in flow, so growing the new row from 0 height pushes the rest down
+  const rows = inner.querySelectorAll('.song-list > .song-row');
+  for (let k = 0; k < count; k++) {
+    const row = rows[idx + k];
+    if (!row) continue;
+    const cs = getComputedStyle(row);
+    const to = {height: cs.height, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1};
+    const from = {height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0};
+    row.style.overflow = 'hidden';
+    const a = row.animate([from, to], {duration: DUR, easing: EASE});
+    a.onfinish = a.oncancel = () => { row.style.overflow = ''; };
+  }
+}
+
 function _queueRefreshRow(i) {
   if (i < 0 || i >= S.queue.length) return;
   if (_qvlist) { _qvlist.refreshRow(i); return; }
@@ -19102,6 +19142,9 @@ function _queueRefreshRow(i) {
 
 function _queueAfterFullRender(inner, hadSig, prevScroll) {
   _qLastQi = S.qi;
+  const _anim = _qAddAnim; _qAddAnim = null;
+  // rAF so the virtual list has mounted its rows first (its own mount rAF was queued before this one)
+  if (_anim) requestAnimationFrame(() => _queueAnimateAdd(_anim.idx, _anim.count));
   if (S._queueScrollPending) { S._queueScrollPending = false; _scrollQueueToCurrent(); return; }
   if (hadSig && prevScroll) {
     inner.scrollTop = prevScroll;
@@ -19118,6 +19161,7 @@ function renderQueueSidebar() {
   if (S.shuffle && S.shuffleMode === 'chaos') {
     if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
     _qSig = null;
+    _qAddAnim = null;
     const countEl = document.getElementById('qs-count');
     if (countEl) {
       const total = S._chaosContext.length || 0;
@@ -24174,12 +24218,12 @@ function songCtx(e, sid, pid) {
 
   if (!multi) {
     items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polygon points="2,2 19,12 2,22"></polygon></svg>', label:'play', fn:()=> playFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
-    items.push({icon: ICON_PLAY_NEXT, label:'play next', fn:()=>{ S.queue.splice(S.qi+1,0,song); if(S.queueOpen)renderQueueSidebar(); }});
+    items.push({icon: ICON_PLAY_NEXT, label:'play next', fn:()=>{ S.queue.splice(S.qi+1,0,song); _queueAdded(S.qi+1, 1); }});
     items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><polygon points="2,4 13,12 2,20"></polygon><circle cx="17.5" cy="12" r="1.4"></circle><circle cx="21.5" cy="12" r="1.4"></circle></svg>', label:'play from here next', fn:()=> continueFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
-    items.push({icon: ICON_ADD_QUEUE, label:'add to queue', fn:()=>{ S.queue.push(song); if(S.queueOpen)renderQueueSidebar(); }});
+    items.push({icon: ICON_ADD_QUEUE, label:'add to queue', fn:()=>{ const _ai = S.queue.length; S.queue.push(song); _queueAdded(_ai, 1); }});
   } else {
-    items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ songs.reverse().forEach(sg=>S.queue.splice(S.qi+1,0,sg)); if(S.queueOpen)renderQueueSidebar(); }});
-    items.push({icon: ICON_ADD_QUEUE, label:`add to queue (${ids.length})`, fn:()=>{ songs.forEach(sg=>S.queue.push(sg)); if(S.queueOpen)renderQueueSidebar(); }});
+    items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ songs.reverse().forEach(sg=>S.queue.splice(S.qi+1,0,sg)); _queueAdded(S.qi+1, songs.length); }});
+    items.push({icon: ICON_ADD_QUEUE, label:`add to queue (${ids.length})`, fn:()=>{ const _ai = S.queue.length; songs.forEach(sg=>S.queue.push(sg)); _queueAdded(_ai, songs.length); }});
   }
   items.push({icon:'<svg width="16" height="14" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg>', label: multi ? `add to playlist (${ids.length})` : 'add to playlist', fn:()=> multi ? bulkAddToPl() : showAddToPl(sid)});
   if (!pid) {
