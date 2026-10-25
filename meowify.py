@@ -11936,7 +11936,16 @@ body.design-glassy .list-header.pinned::before{
   transition: background var(--dur-2);
 }
 .mob-sort-btn svg { flex-shrink: 0; }
-.mob-sel-btn{padding:5px 9px}
+.mob-sel-btn{align-self:stretch;min-width:36px;padding:0 9px;justify-content:center}
+.sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:48px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2}
+body.select-mode :is(#pl-rows,#queue-inner) .sel-handle{display:flex}
+body.select-mode :is(#pl-rows,#queue-inner) :is(.song-row,.song-row-mobile) .smenu-btn{visibility:hidden}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row){padding-left:44px!important}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;transition:background var(--dur-2),border-color var(--dur-2)}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{background:var(--color-primary);border-color:var(--color-primary)}
+body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg);pointer-events:none}
+.sel-drag-count{position:absolute;right:52px;top:50%;transform:translateY(-50%);min-width:22px;height:22px;padding:0 6px;box-sizing:border-box;border-radius:11px;background:var(--color-primary);color:var(--color-on-primary);font:600 12px/22px sans-serif;text-align:center}
 .mob-sel-btn.on{background:var(--color-primary);color:var(--color-on-primary)}
 #qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
 #app:not(.mobile) #qs-sel-btn{display:none}
@@ -12226,7 +12235,7 @@ body.design-glassy .list-header.pinned::before{
         <div class="qs-hdr ui-panel-hdr">
           <div style="display:flex;align-items:center;gap:6px">
             <span>queue</span>
-            <button class="cbtn mu-ripple" id="qs-sel-btn" onclick="toggleSelectMode()" title="select and reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="3" y="4" width="6" height="6" rx="1.6"/><path d="M4.6 7.1l1.1 1.1 1.9-2.2"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1.6"/><path d="M13 17h8"/></svg></button>
+            <button class="cbtn mu-ripple" id="qs-sel-btn" onclick="toggleSelectMode()" title="select and reorder"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg></button>
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span id="qs-count" style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)"></span>
@@ -19114,7 +19123,8 @@ function _makeQueueRow(s, i) {
   + '<div class="sinfo" style="overflow:hidden"><div class="stitle">' + esc(s.title || 'untitled') + '</div>'
   + '<div class="sartist">' + esc(s.artist || '') + '</div></div>'
   + '<div class="sdur">' + dur + '</div>'
-  + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>';
+  + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
+  + _SEL_HANDLE;
   el.querySelector('.smenu-btn').addEventListener('click', e => {
     e.stopPropagation();
     removeFromQueue(parseInt(el.dataset.qi));
@@ -20398,7 +20408,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
     >
       <div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div>
       <div class="sinfo-mob"><div class="stitle-mob" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist-mob" style="${titleStyle}">${isSpecial?esc(s.artist||''):subtitle}</div></div>
-      ${rightCell}
+      ${rightCell}${_SEL_HANDLE}
     </div>`;
   }
 
@@ -22157,13 +22167,16 @@ let _lastSelectedId = null;
 
 // ── select and reorder mode (mobile library + queue) ─────────────────────────
 // tap rows to select/deselect, long press doesnt open the ctx menu, held rows get reordered
-const _SEL_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="3" y="4" width="6" height="6" rx="1.6"/><path d="M4.6 7.1l1.1 1.1 1.9-2.2"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1.6"/><path d="M13 17h8"/></svg>';
+const _SEL_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg>';
+// drag handle shown on the right of rows in select mode (queue + playlists, the only reorderable lists)
+const _SEL_HANDLE = '<div class="sel-handle"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:block"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg></div>';
 
 function _setSelectMode(on) {
   on = !!on;
   if (!!S.selectMode === on) return;
   S.selectMode = on;
   if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
+  document.body.classList.toggle('select-mode', on);
   document.querySelectorAll('.mob-sel-btn, #qs-sel-btn').forEach(b => b.classList.toggle('on', on));
 }
 
@@ -24987,6 +25000,7 @@ function initReorderDrag(listEl, opts) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armedRow = target;
+    if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
     }
@@ -25089,6 +25103,7 @@ function initVlistReorder(vl) {
     grab = (lastY - target.getBoundingClientRect().top) / z;
     ghost = target.cloneNode(true);
     ghost.classList.add('drag-lifted', 'drag-anchor');
+    if (S.selectMode && S.selected.size > 1 && S.selected.has(target.dataset.id)) ghost.insertAdjacentHTML('beforeend', '<span class="sel-drag-count">' + S.selected.size + '</span>');
     ghost.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:6';
     vl._drag = {from, slot: from};
     vl._relayout();
@@ -25126,8 +25141,17 @@ function initVlistReorder(vl) {
         const arr = S.queue.slice();
         const item = arr.splice(from, 1)[0];
         arr.splice(slot, 0, item);
+        const _curItem = S.queue[S.qi];
+        if (S.selectMode && S.selected.has(item.id) && S.selected.size > 1) {
+          // multi select: pull every selected row out and drop them as one block where the dragged row landed
+          const _base = arr.filter(x => !S.selected.has(x.id));
+          const _c = arr.slice(0, slot).filter(x => !S.selected.has(x.id)).length;
+          const _sel = S.queue.filter(x => S.selected.has(x.id));
+          arr.length = 0;
+          arr.push(..._base.slice(0, _c), ..._sel, ..._base.slice(_c));
+        }
         const qi = S.qi;
-        S.qi = qi === from ? slot : (from < qi && slot >= qi) ? qi - 1 : (from > qi && slot <= qi) ? qi + 1 : qi;
+        S.qi = Math.max(0, arr.indexOf(_curItem));
         S.queue = arr;
         vl.songs = arr;
         _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',');
@@ -25156,6 +25180,7 @@ function initVlistReorder(vl) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armed = target;
+    if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armed) lift(armed); }, HOLD_MS);
     }
