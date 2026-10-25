@@ -706,6 +706,7 @@ def init_db():
             genius_data TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_album_tracks_album_id ON album_tracks(album_id);
+        CREATE INDEX IF NOT EXISTS idx_album_tracks_song_id ON album_tracks(song_id);
         """)
         lcols = [r[1] for r in c.execute("PRAGMA table_info(lyrics)").fetchall()]
         if 'source_duration' not in lcols:
@@ -3222,15 +3223,20 @@ _batch_speed_override_lock = threading.Lock()
 _batch_active    = [0]
 _batch_active_cv = threading.Condition(threading.Lock())
 
-def _batch_acquire(batch_id=None):
+def _batch_max_c(batch_id=None):
     with _batch_speed_override_lock:
         entry = _batch_speed_overrides.get(batch_id) if batch_id else None
         pname = entry[0] if entry else CFG.get('dl_speed_batch', 'balanced')
-    max_c = _DL_PROFILES['batch'].get(pname, _DL_PROFILES['batch']['balanced'])['max_concurrent']
-    with _batch_active_cv:
-        while _batch_active[0] >= max_c:
-            _batch_active_cv.wait()
-        _batch_active[0] += 1
+    return _DL_PROFILES['batch'].get(pname, _DL_PROFILES['batch']['balanced'])['max_concurrent']
+
+def _batch_acquire(batch_id=None):
+    while True:
+        max_c = _batch_max_c(batch_id)
+        with _batch_active_cv:
+            if _batch_active[0] < max_c:
+                _batch_active[0] += 1
+                return
+            _batch_active_cv.wait(timeout=2)
 
 def _batch_release():
     with _batch_active_cv:
@@ -3424,11 +3430,16 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
     if is_batch:
         _batch_acquire(batch_id)
         _acquired_batch = True
-        _ps = _prof['pre_sleep']
-        time.sleep(_rnd.uniform(*_ps) if isinstance(_ps, tuple) else float(_ps))
-
-    tmp = Path(tempfile.mkdtemp(prefix='meowify-'))
-    mkdirs()
+    try:
+        if is_batch:
+            _ps = _prof['pre_sleep']
+            time.sleep(_rnd.uniform(*_ps) if isinstance(_ps, tuple) else float(_ps))
+        mkdirs()
+        tmp = Path(tempfile.mkdtemp(prefix='meowify-'))
+    except BaseException:
+        if _acquired_batch:
+            _batch_release()
+        raise
 
     _last_ydl_cmd = []
     _last_ydl_out = ''
@@ -3474,13 +3485,15 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         is_url = q.startswith('http://') or q.startswith('https://')
 
         # for url downloads: fetch dump-json in background immediately so genius can run in parallel
+        _url_info = {}
+        _url_info_ready = threading.Event()
         if is_url and not genius_track_id:
-            _url_info = {}
-            _url_info_ready = threading.Event()
             def _fetch_url_info():
-                _t = f'https://www.youtube.com/watch?v={video_id}' if video_id else q
-                _url_info.update(_get_url_metadata(_t))
-                _url_info_ready.set()
+                try:
+                    _t = f'https://www.youtube.com/watch?v={video_id}' if video_id else q
+                    _url_info.update(_get_url_metadata(_t))
+                finally:
+                    _url_info_ready.set()
             threading.Thread(target=_fetch_url_info, daemon=True).start()
 
         # ── Phase 0: pre-metadata & placeholder ──────────────────────────────
@@ -5876,7 +5889,9 @@ def api_dl():
 
 @app.route('/api/download/batch', methods=['POST'])
 def api_dl_batch():
-    queries = (request.json or {}).get('queries', [])
+    _body = request.json or {}
+    queries = _body.get('queries', [])
+    batch_id = _body.get('batch_id')
     if not queries: return jsonify({'error':'queries required'}), 400
     ids = []
     with _cfg_lock:
@@ -5885,7 +5900,7 @@ def api_dl_batch():
     for q in queries:
         did = str(uuid.uuid4())
         with _dl_lock: _dls[did] = {'status':'pending','progress':0,'error':None,'song_id':None,'query':q}
-        threading.Thread(target=_run_dl, args=(did,q,fmt,quality), kwargs={'is_batch':True}, daemon=True).start()
+        threading.Thread(target=_run_dl, args=(did,q,fmt,quality), kwargs={'is_batch':True, 'batch_id':batch_id}, daemon=True).start()
         ids.append(did)
     return jsonify({'download_ids': ids})
 
@@ -7316,6 +7331,19 @@ def _dbx_push_actions(dbx):
             raise  # unexpected API error, abort rather than risk data loss
     if not download_ok:
         raise RuntimeError('could not download existing action log; aborting push to avoid data loss')
+    _have_ids = set()
+    for _ln in existing.splitlines():
+        try:
+            _have_ids.add(json.loads(_ln).get('id'))
+        except Exception:
+            pass
+    _marker_id = new_rows[-1][0]
+    new_rows = [r for r in new_rows if r[0] not in _have_ids]
+    if not new_rows:
+        with _cfg_lock:
+            CFG[_DBX_ACTION_LOCAL_MARKER] = _marker_id
+            save_cfg(CFG)
+        return False
     lines = [json.dumps(dict(zip(
         ('id','device_id','ts','action','target','target2','payload'), r
     ))).encode() for r in new_rows]
@@ -7323,7 +7351,7 @@ def _dbx_push_actions(dbx):
            + b'\n'.join(lines) + b'\n'
     dbx.files_upload(data, remote_path, mode=_dbxmod.files.WriteMode.overwrite, mute=True)
     with _cfg_lock:
-        CFG[_DBX_ACTION_LOCAL_MARKER] = new_rows[-1][0]
+        CFG[_DBX_ACTION_LOCAL_MARKER] = _marker_id
         save_cfg(CFG)
     return True
 
@@ -8011,7 +8039,7 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
         # corr[k]     → MV starts k/sr seconds before song  (positive offset)
         # corr[n-k]   → MV starts k/sr seconds after song   (negative offset)
         MAX_OFFSET_SECS = 90
-        max_lag = int(MAX_OFFSET_SECS * sr)
+        max_lag = min(int(MAX_OFFSET_SECS * sr), fft_n // 2)
 
         pos_search = corr[:max_lag + 1]
         neg_search = corr[fft_n - max_lag:fft_n]
@@ -8081,7 +8109,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
     def _cancelled():
         with _mv_find_gen_lock:
-            gone = _mv_find_gen != my_gen
+            gone = _mv_find_gens.get(song_id) != my_gen
         if gone:
             # drop our own in-progress marker so the next poll can retry instead of seeing 'searching' forever
             with _mv_cache_lock:
@@ -8240,6 +8268,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
 # ── mv search/xcorr cancellation token: bumped each time a new song takes over ──
 _mv_find_gen      = 0
+_mv_find_gens     = {}   # song_id -> latest gen; only a newer search for the same song cancels an older one
 _mv_find_gen_lock = threading.Lock()
 
 # ── mv stream url precompute pool ─────────────────────────────────────────────
@@ -8259,15 +8288,18 @@ def _mv_prefetch_bytes(video_id, stream_url):
             return  # already downloading or done
         dest = str(ddir() / 'mv_cache' / f'{video_id}.mp4')
         _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0}
-        # evict oldest if over 8 cached videos; do this before downloading
-        if len(_mv_file_cache) > 8:
-            oldest_id, oldest = next(iter(_mv_file_cache.items()))
-            if oldest_id != video_id:
-                del _mv_file_cache[oldest_id]
-                try:
-                    os.unlink(oldest['path'])
-                except OSError:
-                    pass
+        _evict_paths = []
+        for _eid, _ent in list(_mv_file_cache.items()):
+            if len(_mv_file_cache) <= 8:
+                break
+            if _eid != video_id and _ent.get('done'):
+                del _mv_file_cache[_eid]
+                _evict_paths.append(_ent['path'])
+    for _ep in _evict_paths:
+        try:
+            os.unlink(_ep)
+        except OSError:
+            pass
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         req = _urllib_request.Request(stream_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -8507,6 +8539,7 @@ def api_mv_status(sid):
     with _mv_find_gen_lock:
         _mv_find_gen += 1
         my_gen = _mv_find_gen
+        _mv_find_gens[sid] = my_gen
     _log_mv.info(f'[mv] kicking off search for song={sid} {artist!r} - {title!r} hint={hint}')
     _mv_find_pool.submit(_mv_find_and_cache, sid, artist, title, my_gen, hint_video_id=hint)
     return jsonify({'status': 'searching'})
@@ -8611,7 +8644,10 @@ def api_mv_proxy(video_id):
 
 @app.route('/api/settings', methods=['POST'])
 def api_set_cfg():
-    data = request.json or {}
+    _raw = request.get_json(silent=True)
+    if not isinstance(_raw, dict):
+        _raw = {}
+    data = {k: v for k, v in _raw.items() if k not in ('dropbox_refresh_token', 'device_id')}
     with _cfg_lock:
         resets = [k for k, v in data.items()
                   if k in _DBX_SHARED_PREFS and k in _DEFS
@@ -8789,8 +8825,10 @@ def api_import_backup():
                             save_cfg(_restored_cfg)
                         # reload CFG immediately so ddir()/mdir()/cdir() use the
                         # correct path for all subsequent writes in this loop
-                        global CFG
-                        CFG = load_cfg()
+                        _fresh_cfg = load_cfg()
+                        with _cfg_lock:
+                            CFG.clear()
+                            CFG.update(_fresh_cfg)
                         mkdirs()
                     except Exception as _sce:
                         _log_backup.warning('backup import: skipped invalid settings.json in archive: %s', _sce)
@@ -11763,7 +11801,7 @@ body.design-glassy .list-header.pinned::before{
 #app.mobile .playbtn canvas.playbtn-spiky { width: 36px; height: 36px; }
 #app.mobile .cbtn                         { width: 30px; height: 30px; font-size: 14px; }
 #app.mobile #nowplaying-sidebar .cbtn     { width: 45px; height: 45px; font-size: 14px; }
-#app.mobile #nowplaying-sidebar .cbtn svg { width: 22px; height: 22px; }
+#app.mobile #nowplaying-sidebar .mob-np-controls .cbtn svg { width: 22px; height: 22px; }
 /* mobile bottom nav */
 #mobile-nav {
   display: none;
@@ -20320,6 +20358,10 @@ function stripBrackets(t) {
 
 function esc(t) {
   return String(t || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function escJ(t) {
+  return String(t == null ? '' : t).replace(/[\\'"<>&\n\r\u2028\u2029`$]/g, ch => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
 // ===============================================
