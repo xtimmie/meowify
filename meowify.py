@@ -10798,7 +10798,6 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 1px 3px rgba(0,0,0,.3);transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .18s!important}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-far{opacity:0;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 :is(.song-row,.song-row-mobile).drag-drop{position:relative;z-index:5;scale:1;box-shadow:none;backdrop-filter:blur(0px) saturate(1);-webkit-backdrop-filter:blur(0px) saturate(1);transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .16s!important}
-:is(.song-row,.song-row-mobile).drag-anchor[data-drag-count]::after{content:attr(data-drag-count);position:absolute;top:50%;right:48px;transform:translateY(-50%);min-width:22px;height:22px;padding:0 7px;box-sizing:border-box;border-radius:11px;display:flex;align-items:center;justify-content:center;background:var(--color-primary);color:var(--color-on-primary,#fff);font:var(--type-label-small);box-shadow:0 0 0 2px var(--color-surface-container-high);pointer-events:none}
 body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted{background:color-mix(in oklch,var(--color-surface-container-highest) calc(42% * var(--glass-a,1)),transparent)!important;backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);box-shadow:0 8px 32px rgba(0,0,0,.28),0 0 0 1px var(--glass-border-hi) inset}
 body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 0 0 1px var(--glass-border-hi) inset}
 .song-row{
@@ -24685,7 +24684,6 @@ function initReorderDrag(listEl, opts) {
       const el = rows[i];
       el.style.scale = '';
       el.style.zIndex = '';
-      delete el.dataset.dragCount;
       el.classList.remove('drag-lifted', 'drag-anchor', 'drag-follow', 'drag-far', 'drag-drop');
     });
     listEl.classList.remove('reordering');
@@ -24740,7 +24738,6 @@ function initReorderDrag(listEl, opts) {
       el.classList.add('drag-lifted');
       if (i === from) {
         el.classList.add('drag-anchor');
-        if (group.length > 1) el.dataset.dragCount = group.length;
         return;
       }
       n++;
