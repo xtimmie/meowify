@@ -19553,7 +19553,7 @@ async function pickAlbumForSong(sid) {
   showModal('pick album',
     `<div style="display:flex;flex-direction:column;gap:6px;max-height:400px;overflow-y:auto;padding-right:4px">
        ${albums.map(a => `
-         <div class="search-track mu-ripple" style="cursor:pointer" onclick="applyAlbumPick('${sid}','${a.id}','${esc(a.title||'')}')">
+         <div class="search-track mu-ripple" style="cursor:pointer" onclick="applyAlbumPick('${sid}','${a.id}','${escJ(a.title||'')}')">
            ${a.cover_path ? `<img src="/cover/${a.id}" alt="">` : '<div style="width:48px;height:48px;border-radius:var(--radius-sm);background:var(--color-surface-container-high);flex-shrink:0"></div>'}
            <div class="search-track-info" style="min-width:0">
              <div class="search-track-title">${esc(a.title||'')}</div>
@@ -20339,7 +20339,7 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
 function artistNameHtml(name, style='') {
   if (!name) return '';
   if (isMobile()) return `<span class="artist-link" style="${style}">${esc(name)}</span>`;
-  return `<span class="artist-link" style="cursor:pointer;${style}" onclick="event.stopPropagation();navigateToArtist('${esc(name.replace(/'/g, "\\'"))}',false,this)"
+  return `<span class="artist-link" style="cursor:pointer;${style}" onclick="event.stopPropagation();navigateToArtist('${escJ(name)}',false,this)"
     onmouseenter="this.style.color='var(--color-primary)';this.style.textDecoration='underline'"
     onmouseleave="this.style.color='';this.style.textDecoration='';">${esc(name)}</span>`;
 }
@@ -22149,7 +22149,7 @@ async function _loadArtistYtmProfile(aid, artist) {
         const cov = r.thumbnail
           ? `<img src="${esc(r.thumbnail)}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-sm)" onerror="this.style.display='none'">`
           : `<div style="width:100%;aspect-ratio:1;background:var(--color-surface-container-high);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:32px">💿</div>`;
-        const click = r.browseId ? `onclick="openAlbumByBrowseId('${esc(r.browseId)}')"` : '';
+        const click = r.browseId ? `onclick="openAlbumByBrowseId('${escJ(r.browseId)}')"` : '';
         return `<div class="album-card mu-ripple" ${click} style="cursor:${r.browseId?'pointer':'default'}">
           ${cov}
           <div class="album-info">
@@ -23951,7 +23951,7 @@ async function _spModSearch(jid, idx) {
   if (!tracks.length) { resEl.innerHTML = '<div style="color:var(--color-on-surface-variant);padding:8px 0">no results</div>'; return; }
   resEl.innerHTML = tracks.map(t => `
     <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--color-outline-variant);cursor:pointer;border-radius:var(--radius-sm)"
-      onclick="_spModPick('${jid}',${idx},'${esc(t.video_id||'')}')">
+      onclick="_spModPick('${jid}',${idx},'${escJ(t.video_id||'')}')">
       ${t.thumbnail ? `<img src="${esc(t.thumbnail)}" style="width:36px;height:36px;object-fit:cover;border-radius:var(--radius-sm);flex-shrink:0">` : '<div style="width:36px;height:36px;background:var(--color-surface-container-high);border-radius:var(--radius-sm);flex-shrink:0"></div>'}
       <div style="min-width:0;flex:1">
         <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${esc(t.title||'')}</div>
@@ -26629,7 +26629,7 @@ function _renderStatsContent() {
       const sub = mode === 'time'
         ? `${a.play_count} play${a.play_count===1?'':'s'}`
         : fmtDuration(a.listen_seconds);
-      const clickFn = `navigateToArtist('${esc(a.name.replace(/'/g,"\\'"))}')`;
+      const clickFn = `navigateToArtist('${escJ(a.name)}')`;
       return `<div class="song-row ui-list-item mu-ripple" style="grid-template-columns:20px 40px minmax(0,1fr) auto;gap:10px;padding:6px 8px;" onclick="${clickFn}">
         <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-outline);text-align:right;flex-shrink:0">${rank}</div>
         <div class="sthumb" style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0">${covHtml}</div>
