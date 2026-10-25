@@ -11337,9 +11337,9 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   display:flex;align-items:center;justify-content:center;
   padding:5vh 6vw calc(88px + 5vh) 6vw;
   opacity:0;pointer-events:none;
-  transition:opacity var(--dur-3,.2s) ease;
+  visibility:hidden;transition:opacity var(--dur-3,.2s) ease,visibility 0s var(--dur-3,.2s);
 }
-#set-pc-overlay.open{opacity:1;pointer-events:auto}
+#set-pc-overlay.open{opacity:1;pointer-events:auto;visibility:visible;transition-delay:0s}
 .set-pc-shell{
   width:100%;height:100%;max-width:980px;max-height:760px;
   background:var(--color-surface);border:1px solid var(--color-outline-variant);
@@ -11510,9 +11510,9 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   display:flex;align-items:center;justify-content:center;
   padding:5vh 6vw calc(88px + 5vh) 6vw;
   opacity:0;pointer-events:none;
-  transition:opacity var(--dur-3,.2s) ease;
+  visibility:hidden;transition:opacity var(--dur-3,.2s) ease,visibility 0s var(--dur-3,.2s);
 }
-#modal-overlay.open{opacity:1;pointer-events:auto}
+#modal-overlay.open{opacity:1;pointer-events:auto;visibility:visible;transition-delay:0s}
 #modal-overlay .mbox{
   transform:scale(.97);transition:transform var(--dur-3,.2s) ease;
 }
