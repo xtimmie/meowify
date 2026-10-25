@@ -20406,7 +20406,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
 
   const cellsHtml=cols.map(key=>cell[key]||'').join('');
   return`<div class="song-row ui-list-item${isSpecial?'':' mu-ripple'}${isSel?' selected':''}${isDling?' dl-active':''}${isUnavail?' dl-unavailable':''}\" style=\"${isGhost?'cursor:pointer;':''}\"
-    draggable=\"${!isSpecial&&pid?'true':'false'}\" data-id=\"${s.id}\" data-ghost-id=\"${isGhost?s.id:''}\" data-pid=\"${pid||''}\" data-idx=\"${idx}\" data-num=\"${num}\" data-ripple
+    draggable=\"false\" data-id=\"${s.id}\" data-ghost-id=\"${isGhost?s.id:''}\" data-pid=\"${pid||''}\" data-idx=\"${idx}\" data-num=\"${num}\" data-ripple
     ${clickHandler}>${cellsHtml}</div>`;
 }
 
