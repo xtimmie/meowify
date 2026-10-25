@@ -10885,7 +10885,8 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 }
 .song-row.selected{background:color-mix(in oklch,var(--color-primary) 8%,transparent)}
 .song-row.selected .snum-num{color:var(--color-primary)}
-.vl-inner>:is(.song-row,.song-row-mobile){height:var(--vrow-h);box-sizing:border-box}
+.vl-inner>:is(.song-row,.song-row-mobile){height:var(--vrow-h);box-sizing:border-box;will-change:auto}
+#vc :is(.song-row,.song-row-mobile){transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out)}
 .song-row.selected.sel-up,.song-row-mobile.selected.sel-up{border-top-left-radius:0;border-top-right-radius:0}
 .song-row.selected.sel-dn,.song-row-mobile.selected.sel-dn{border-bottom-left-radius:0;border-bottom-right-radius:0}
 .sthumb{
@@ -21712,7 +21713,8 @@ function _showUndoToast(desc, wasUndo) {
 class VirtualList {
   get ROW_H() { return this._rowH; }
   set ROW_H(v) {
-    this._rowH = v > 0 ? Math.round(v) : v;
+    const q = (window.devicePixelRatio || 1) * (typeof _zoom === 'number' && _zoom > 0 ? _zoom : 1);
+    this._rowH = v > 0 ? Math.round(v * q) / q : v;
     if (this._inner && this._rowH > 0) {
       this._inner.classList.add('vl-inner');
       this._inner.style.setProperty('--vrow-h', this._rowH + 'px');
@@ -21728,10 +21730,12 @@ class VirtualList {
     probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
     this._inner.appendChild(probeEl);
     void this._inner.offsetHeight;
-    const h = Math.round(probeEl.getBoundingClientRect().height / (_zoom || 1));
+    const h = probeEl.getBoundingClientRect().height / (_zoom || 1);
     probeEl.remove();
-    if (!(h > 0) || h === this.ROW_H) return;
+    if (!(h > 0)) return;
+    const prevH = this.ROW_H;
     this.ROW_H = h;
+    if (this.ROW_H === prevH) return;
     this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
     this._remeasure();
     this._rendered = {start: -1, end: -1};
