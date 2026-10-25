@@ -10885,6 +10885,9 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 }
 .song-row.selected{background:color-mix(in oklch,var(--color-primary) 8%,transparent)}
 .song-row.selected .snum-num{color:var(--color-primary)}
+.vl-inner>:is(.song-row,.song-row-mobile){height:var(--vrow-h);box-sizing:border-box}
+.song-row.selected.sel-up,.song-row-mobile.selected.sel-up{border-top-left-radius:0;border-top-right-radius:0}
+.song-row.selected.sel-dn,.song-row-mobile.selected.sel-dn{border-bottom-left-radius:0;border-bottom-right-radius:0}
 .sthumb{
   width:44px;height:44px;border-radius:var(--radius-md);
   object-fit:cover;background:var(--color-surface-container-high);flex-shrink:0;
@@ -21707,6 +21710,48 @@ function _showUndoToast(desc, wasUndo) {
 // BULK SELECT
 // ===============================================
 class VirtualList {
+  get ROW_H() { return this._rowH; }
+  set ROW_H(v) {
+    this._rowH = v > 0 ? Math.round(v) : v;
+    if (this._inner && this._rowH > 0) {
+      this._inner.classList.add('vl-inner');
+      this._inner.style.setProperty('--vrow-h', this._rowH + 'px');
+    }
+  }
+
+  _reprobe() {
+    if (this._dead || !this._inner || !this._inner.isConnected || !this._scroller || !this._scroller.clientHeight) return;
+    const probeEl = this._makeRow(0);
+    if (!probeEl) return;
+    probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
+    this._inner.appendChild(probeEl);
+    void this._inner.offsetHeight;
+    const h = Math.round(probeEl.getBoundingClientRect().height / (_zoom || 1));
+    probeEl.remove();
+    if (!(h > 0) || h === this.ROW_H) return;
+    this.ROW_H = h;
+    this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
+    this._remeasure();
+    this._rendered = {start: -1, end: -1};
+    for (const [i, el] of this._nodes) _regDel(el.dataset.id, el);
+    this._nodes.forEach(el => el.remove());
+    this._nodes.clear();
+    this._render();
+  }
+
+  _scheduleReprobe() {
+    [150, 450, 1100].forEach(ms => setTimeout(() => this._reprobe(), ms));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this._reprobe());
+    if (!this._visH) {
+      this._visH = () => {
+        if (document.visibilityState !== 'visible') return;
+        this._reprobe();
+        setTimeout(() => this._reprobe(), 300);
+      };
+      document.addEventListener('visibilitychange', this._visH);
+    }
+  }
+
   // scrollerId: id of the scrolling element (defaults to 'vc')
   // rowRenderer: optional fn(item, index) -> HTMLElement; defaults to library songRow
   // extraBottom: auto-computed from --bar-h CSS var; detects whether the scroller
@@ -21756,7 +21801,10 @@ class VirtualList {
     // without this, rows can misalign with the actual viewport until the
     // next manual refresh
     if (typeof ResizeObserver !== 'undefined') {
-      this._resizeObs = new ResizeObserver(() => this._remeasure());
+      this._resizeObs = new ResizeObserver(() => {
+        this._remeasure();
+        if (this._probed) { clearTimeout(this._roT); this._roT = setTimeout(() => this._reprobe(), 60); }
+      });
       this._resizeObs.observe(this._scroller);
     }
     requestAnimationFrame(() => {
@@ -21783,6 +21831,8 @@ class VirtualList {
         }
       }
       this._probed = true;
+      this.ROW_H = this.ROW_H;
+      this._scheduleReprobe();
       this._render();
       this._applyPending();
       // on mobile (chaquopy android webview), fonts and system text scaling
@@ -21906,6 +21956,7 @@ class VirtualList {
         }
       }
       if (S.selected.has(row.dataset.id)) row.classList.add('selected');
+      _applySelJoin(row);
       // highlight if this is current song
       const _rc = row.dataset.id;
       if (_rc === S.cur?.id) {
@@ -22054,7 +22105,7 @@ class VirtualList {
     this._render();
   }
 
-  destroy() { if (this._scroller) { this._scroller.removeEventListener('scroll', this._onScroll); this._scroller.removeEventListener('scrollend', this._onScrollEnd); } if (this._resizeObs) { this._resizeObs.disconnect(); this._resizeObs = null; } clearTimeout(this._bufResetTimer); if (this._raf) cancelAnimationFrame(this._raf); if (this._renderChunkRaf) cancelAnimationFrame(this._renderChunkRaf); for (const [i, el] of this._nodes) _regDel(el.dataset.id, el); this._inner.innerHTML = ''; this._nodes.clear(); S._vlist = null; }
+  destroy() { this._dead = true; if (this._visH) document.removeEventListener('visibilitychange', this._visH); clearTimeout(this._roT); if (this._scroller) { this._scroller.removeEventListener('scroll', this._onScroll); this._scroller.removeEventListener('scrollend', this._onScrollEnd); } if (this._resizeObs) { this._resizeObs.disconnect(); this._resizeObs = null; } clearTimeout(this._bufResetTimer); if (this._raf) cancelAnimationFrame(this._raf); if (this._renderChunkRaf) cancelAnimationFrame(this._renderChunkRaf); for (const [i, el] of this._nodes) _regDel(el.dataset.id, el); this._inner.innerHTML = ''; this._nodes.clear(); S._vlist = null; }
 }
 
 // ═══════════════════════════════════════════════
@@ -22115,10 +22166,19 @@ function _mountStaticRows() {
   });
 }
 
+function _applySelJoin(r) {
+  const id = r.dataset.id;
+  if (!id || !S.selected.has(id) || r.closest('#queue-inner')) { r.classList.remove('sel-up', 'sel-dn'); return; }
+  const i = _viewSongIdx.get(id);
+  if (i == null) { r.classList.remove('sel-up', 'sel-dn'); return; }
+  r.classList.toggle('sel-up', i > 0 && S.selected.has(S.viewSongs[i - 1]?.id));
+  r.classList.toggle('sel-dn', S.selected.has(S.viewSongs[i + 1]?.id));
+}
+
 function refreshSelectionUI() {
   for (const [id, els] of _rowRegistry) {
     const sel = S.selected.has(id);
-    for (const r of els) r.classList.toggle('selected', sel);
+    for (const r of els) { r.classList.toggle('selected', sel); _applySelJoin(r); }
   }
   updateBulkBar();
 }
