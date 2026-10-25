@@ -10792,15 +10792,15 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
 .reordering{user-select:none;-webkit-user-select:none}
-.reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted){transition:translate .16s var(--ease-out)!important}
-:is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s!important}
+.reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted):not(.drag-drop){transition:translate .16s var(--ease-out)!important}
+:is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out)!important}
 :is(.song-row,.song-row-mobile).drag-lifted.selected .snum-num{color:inherit}
-:is(.song-row,.song-row-mobile).drag-lifted.drag-follow{transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s,opacity .18s!important}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 1px 3px rgba(0,0,0,.3);transition:translate .18s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .18s!important}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-far{opacity:0;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-:is(.song-row,.song-row-mobile).drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s,opacity .16s!important}
-:is(.song-row,.song-row-mobile).drag-anchor[data-drag-count]::after{content:attr(data-drag-count);position:absolute;top:-7px;right:12px;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--color-primary);color:var(--color-on-primary,#fff);font:var(--type-label-small);pointer-events:none}
+:is(.song-row,.song-row-mobile).drag-drop{position:relative;z-index:5;scale:1;box-shadow:none;backdrop-filter:blur(0px) saturate(1);-webkit-backdrop-filter:blur(0px) saturate(1);transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),backdrop-filter .16s var(--ease-out),-webkit-backdrop-filter .16s var(--ease-out),opacity .16s!important}
+:is(.song-row,.song-row-mobile).drag-anchor[data-drag-count]::after{content:attr(data-drag-count);position:absolute;top:50%;right:48px;transform:translateY(-50%);min-width:22px;height:22px;padding:0 7px;box-sizing:border-box;border-radius:11px;display:flex;align-items:center;justify-content:center;background:var(--color-primary);color:var(--color-on-primary,#fff);font:var(--type-label-small);box-shadow:0 0 0 2px var(--color-surface-container-high);pointer-events:none}
 body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted{background:color-mix(in oklch,var(--color-surface-container-highest) calc(42% * var(--glass-a,1)),transparent)!important;backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);box-shadow:0 8px 32px rgba(0,0,0,.28),0 0 0 1px var(--glass-border-hi) inset}
-body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-drop{box-shadow:0 0 0 1px var(--glass-border-hi) inset}
+body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-shadow:0 0 0 1px var(--glass-border-hi) inset}
 .song-row{
   display:grid;
   grid-template-columns:var(--song-table-tpl);
@@ -24793,24 +24793,25 @@ function initReorderDrag(listEl, opts) {
     raf = requestAnimationFrame(tick);
   }
 
-  function drop() {
+  function settle(commit) {
     cancelAnimationFrame(raf);
     active = false;
     dropping = true;
-    suppressClick = true;
+    if (commit) suppressClick = true;
     let y = slots[slot];
     group.forEach(i => {
       const el = rows[i];
-      el.classList.remove('drag-far');
+      el.classList.remove('drag-lifted', 'drag-follow', 'drag-far');
       el.classList.add('drag-drop');
       el.style.scale = '';
-      el.style.translate = '0 ' + (y - tops[i]) + 'px';
+      el.style.translate = commit ? '0 ' + (y - tops[i]) + 'px' : '';
       y += heights[i] + gap;
     });
+    if (!commit) rest.forEach(i => { rows[i].style.translate = ''; });
     const order = rest.slice(0, slot).concat(group, rest.slice(slot));
     const ids = order.map(i => rows[i].dataset.id);
     setTimeout(async () => {
-      const changed = order.some((v, i) => v !== i);
+      const changed = commit && order.some((v, i) => v !== i);
       if (changed) {
         const ref = slot < rest.length ? rows[rest[slot]] : null;
         group.forEach(i => { if (ref) ref.before(rows[i]); else listEl.append(rows[i]); });
@@ -24819,7 +24820,7 @@ function initReorderDrag(listEl, opts) {
       dropping = false;
       setTimeout(() => { suppressClick = false; }, 0);
       if (changed) await opts.onCommit(ids, prevIds);
-    }, ANIM_MS);
+    }, ANIM_MS + 30);
   }
 
   listEl.addEventListener('pointerdown', e => {
@@ -24848,14 +24849,13 @@ function initReorderDrag(listEl, opts) {
     if (e.pointerId !== pid) return;
     cancelHold();
     if (!active) return;
-    if (Math.abs(offset()) > MOVE_THRESH) drop();
-    else clear();
+    settle(Math.abs(offset()) > MOVE_THRESH);
   });
 
   listEl.addEventListener('pointercancel', e => {
     if (e.pointerId !== pid) return;
     cancelHold();
-    if (active) clear();
+    if (active) settle(false);
   });
 
   listEl.addEventListener('touchmove', e => {
