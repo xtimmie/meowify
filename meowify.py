@@ -11936,6 +11936,10 @@ body.design-glassy .list-header.pinned::before{
   transition: background var(--dur-2);
 }
 .mob-sort-btn svg { flex-shrink: 0; }
+.mob-sel-btn{padding:5px 9px}
+.mob-sel-btn.on{background:var(--color-primary);color:var(--color-on-primary)}
+#qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
+#app:not(.mobile) #qs-sel-btn{display:none}
 /* sort drawer items */
 .mob-sort-drawer-item {
   display: flex; align-items: center; justify-content: space-between;
@@ -12220,7 +12224,10 @@ body.design-glassy .list-header.pinned::before{
           background:transparent;transition:background .15s;
         " onmousedown="startQueueResize(event)"></div>
         <div class="qs-hdr ui-panel-hdr">
-          <span>queue</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span>queue</span>
+            <button class="cbtn mu-ripple" id="qs-sel-btn" onclick="toggleSelectMode()" title="select and reorder"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="3" y="4" width="6" height="6" rx="1.6"/><path d="M4.6 7.1l1.1 1.1 1.9-2.2"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1.6"/><path d="M13 17h8"/></svg></button>
+          </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span id="qs-count" style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)"></span>
             <button class="cbtn mu-ripple" onclick="toggleQueue()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="display:block"><line x1="4" y1="4" x2="20" y2="20"/><line x1="20" y1="4" x2="4" y2="20"/></svg></button>
@@ -12701,6 +12708,7 @@ function _initMobRowInteraction(){
     // preload on touch (onmouseenter doesn't fire on touch devices)
     if(_startId) { clearTimeout(window._preloadT); window._preloadT=setTimeout(()=>engine.preload(_startId),150); }
 
+    if(S.selectMode) return; // select mode: no ctx menu on hold, reorder handler takes over
     _holdTimer = setTimeout(()=>{
       if(_moved) return;
       _holdFired = true;
@@ -12740,6 +12748,7 @@ function _initMobRowInteraction(){
     if(_moved){ return; }
     if(!sid){ return; } // ghost rows have no data-id - their onclick handles them
     // plain click/tap
+    if(S.selectMode){ _toggleSel(sid); return; }
     if(S.selected.size>0){
       if(isMobile()){
         clearSelection();
@@ -17006,6 +17015,7 @@ function _queueRenderSoon() {
 
 function setView(v, pid, aid) {
   window._viewGen = (window._viewGen || 0) + 1; // lets late async navigation detect that the user moved on
+  if (S.selectMode) _setSelectMode(false);
   // kill any in-flight ripple waves in #vc before replacing content
   document.getElementById('vc').querySelectorAll('.mu-ripple-wave').forEach(w => {
     w.style.animation = 'none';
@@ -17201,7 +17211,8 @@ function renderLibrary(){
   const _curSortLabel = (_sortFields.find(([f])=>f===S.libSort)||_sortFields[0])[1];
   const _curDirSymbol = S.libSortDir==='asc' ? '↑' : '↓';
   const _sortBtn = isMobile() && S.libTab==='songs'
-    ? `<button id="lib-sort-btn" class="mob-sort-btn mu-ripple" onclick="openSortDrawer()" style="margin-left:auto">
+    ? `<button id="lib-sel-btn" class="mob-sort-btn mob-sel-btn mu-ripple${S.selectMode ? ' on' : ''}" onclick="toggleSelectMode()" style="margin-left:auto" title="select and reorder">${_SEL_ICON}</button>
+      <button id="lib-sort-btn" class="mob-sort-btn mu-ripple" onclick="openSortDrawer()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="9" y1="18" x2="15" y2="18"/></svg>
         <span id="lib-sort-label">${esc(_curSortLabel)} ${_curDirSymbol}</span>
       </button>`
@@ -17236,6 +17247,8 @@ function renderLibrary(){
       }
     } else {
       if (existingBtn) existingBtn.remove();
+      document.getElementById('lib-sel-btn')?.remove();
+      if (S.selectMode && S.view === 'library') _setSelectMode(false);
     }
   }
   const _lc = document.getElementById('lib-content');
@@ -17584,6 +17597,7 @@ function _scrollQueueToCurrent() {
 }
 
 function toggleQueue() {
+  if (S.selectMode) _setSelectMode(false);
   S.queueOpen = !S.queueOpen;
   if (S.queueOpen) {
     _exclusiveOpen('queue');
@@ -19087,7 +19101,7 @@ function _makeQueueRow(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.selectMode && S.selected.has(s.id) ? ' selected' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -19106,6 +19120,7 @@ function _makeQueueRow(s, i) {
     removeFromQueue(parseInt(el.dataset.qi));
   });
   el.addEventListener('click', () => {
+    if (S.selectMode) { _toggleSel(el.dataset.id); return; }
     const qi = parseInt(el.dataset.qi);
     S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
   });
@@ -19407,7 +19422,7 @@ function renderQueueSidebar() {
     row.querySelector('.smenu-btn')?.addEventListener('click', e => {
       e.stopPropagation(); removeFromQueue(i);
     });
-    row.addEventListener('click', () => { S.qi = i; S.cur = S.queue[i]; playSong(S.cur); });
+    row.addEventListener('click', () => { if (S.selectMode) { _toggleSel(row.dataset.id); return; } S.qi = i; S.cur = S.queue[i]; playSong(S.cur); });
   });
   _queueAfterFullRender(inner, _hadSig, _prevScroll);
   // drag-to-reorder for small queue
@@ -19416,6 +19431,7 @@ function renderQueueSidebar() {
     getList: () => S.queue,
     getId: s => s.id,
     scrollEl: inner,
+    isSelected: id => !!S.selectMode && S.selected.has(id),
     onCommit: async (newIds) => {
       const idMap = new Map(S.queue.map(s => [s.id, s]));
       const curId = S.cur?.id;
@@ -22138,6 +22154,35 @@ class VirtualList {
 // BULK SELECT
 // ═══════════════════════════════════════════════
 let _lastSelectedId = null;
+
+// ── select and reorder mode (mobile library + queue) ─────────────────────────
+// tap rows to select/deselect, long press doesnt open the ctx menu, held rows get reordered
+const _SEL_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="3" y="4" width="6" height="6" rx="1.6"/><path d="M4.6 7.1l1.1 1.1 1.9-2.2"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1.6"/><path d="M13 17h8"/></svg>';
+
+function _setSelectMode(on) {
+  on = !!on;
+  if (!!S.selectMode === on) return;
+  S.selectMode = on;
+  if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
+  document.querySelectorAll('.mob-sel-btn, #qs-sel-btn').forEach(b => b.classList.toggle('on', on));
+}
+
+function toggleSelectMode() { _setSelectMode(!S.selectMode); }
+
+function _toggleSel(id) {
+  if (!id) return;
+  if (S.selected.has(id)) S.selected.delete(id);
+  else { S.selected.add(id); _lastSelectedId = id; }
+  refreshSelectionUI();
+}
+
+// swallow the native long-press context menu on song rows while select mode is on
+document.addEventListener('contextmenu', e => {
+  if (!S.selectMode || !e.target.closest) return;
+  if (!e.target.closest('.song-row,.song-row-mobile')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 function toggleSelect(sid, event) {
   if (event && event.type === 'contextmenu') {
