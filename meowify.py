@@ -11941,11 +11941,11 @@ body.design-glassy .list-header.pinned::before{
 :where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
 .song-list>.song-row-mobile,#vc .song-row-mobile{will-change:auto}
-:where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out)!important}
+:where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;padding-right:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out),padding-right .28s var(--ease-out)!important}
 .sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:40px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2;opacity:0;translate:30px 0;pointer-events:none;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out)}
 .sel-reorderable .sel-handle{display:flex}
 body.select-mode .sel-reorderable .sel-handle{opacity:1;translate:0 0;pointer-events:auto}
-body.select-mode .sel-reorderable .smenu-btn{opacity:0!important;pointer-events:none}
+body.select-mode .sel-reorderable :is(.song-row-mobile,.song-row){padding-right:44px!important}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row){padding-left:44px!important}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
 :is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out),scale .34s cubic-bezier(.34,1.7,.5,1),background var(--dur-2),border-color var(--dur-2)}
@@ -17443,6 +17443,16 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   updateHighlights();updateBulkBar();
 }
 
+// queue x button: in select mode on a selected row it removes the whole selection
+function _removeQueueRowsAt(qi, id) {
+  if (S.selectMode && S.selected.size > 1 && S.selected.has(id)) {
+    const idx = S.queue.map((s, k) => S.selected.has(s.id) ? k : -1).filter(k => k >= 0).reverse();
+    idx.forEach(k => removeFromQueue(k));
+    S.selected.clear();
+    refreshSelectionUI();
+  } else removeFromQueue(qi);
+}
+
 function removeFromQueue(i) {
   const removedId = S.queue[i]?.id;
   const _rg = _queueRemoveGhost(i); // must grab the row before the queue changes
@@ -19139,7 +19149,7 @@ function _makeQueueRow(s, i) {
   + _SEL_HANDLE;
   el.querySelector('.smenu-btn').addEventListener('click', e => {
     e.stopPropagation();
-    removeFromQueue(parseInt(el.dataset.qi));
+    _removeQueueRowsAt(parseInt(el.dataset.qi), el.dataset.id);
   });
   el.addEventListener('click', () => {
     if (S.selectMode) { _toggleSel(el.dataset.id); return; }
@@ -19442,7 +19452,7 @@ function renderQueueSidebar() {
   // re-attach event listeners for small queue (outerHTML loses them)
   inner.querySelectorAll('.song-row').forEach((row, i) => {
     row.querySelector('.smenu-btn')?.addEventListener('click', e => {
-      e.stopPropagation(); removeFromQueue(parseInt(row.dataset.qi));
+      e.stopPropagation(); _removeQueueRowsAt(parseInt(row.dataset.qi), row.dataset.id);
     });
     row.addEventListener('click', () => { if (S.selectMode) { _toggleSel(row.dataset.id); return; } const _i = parseInt(row.dataset.qi); S.qi = _i; S.cur = S.queue[_i]; playSong(S.cur); });
   });
