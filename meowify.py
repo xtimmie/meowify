@@ -17567,6 +17567,7 @@ function toggleQueue() {
     document.getElementById('queue-sidebar').classList.remove('hidden');
     document.getElementById('bqueue').classList.add('active');
     if (isMobile()) _openMobSheet('queue');
+    _qSig = null;
     renderQueueSidebar();
     _scrollQueueToCurrent();
     S._queueScrollPending = false;
