@@ -11937,6 +11937,8 @@ body.design-glassy .list-header.pinned::before{
 }
 .mob-sort-btn svg { flex-shrink: 0; }
 #app:not(.mobile) #sel-mode-btn{display:none}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-follow.drag-stacked{transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
+:where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
 .song-list>.song-row-mobile,#vc .song-row-mobile{will-change:auto}
 :where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out)!important}
@@ -19123,7 +19125,7 @@ function _makeQueueRow(s, i) {
   el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.selectMode && S.selected.has(s.id) ? ' selected' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
-  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;border-radius:var(--radius-md);cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center">' +
       '<span class=\"snum-num\">' + (isCur ? (S.isPlaying ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="3,2 21,12 3,22"/></svg>' : (i + 1)) : i + 1) + '</span>' +
@@ -19392,7 +19394,7 @@ function renderQueueSidebar() {
   }
 
   // same songs in the same order: only touch the rows whose playing state changed, no rebuild
-  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + (S.selectMode && S.queue.length > 20 && S.queue.length <= 400 ? '|p' : '');
+  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
   if (_qSig === _sig && S.queue.length && (_qvlist || inner.querySelector('.song-list'))) {
     if (_qvlist) _qvlist.songs = S.queue;
     if (_qLastQi !== S.qi) _queueRefreshRow(_qLastQi);
@@ -19417,7 +19419,7 @@ function renderQueueSidebar() {
   }
 
   // use virtual list for any non-trivial queue
-  const QUEUE_VLIST_THRESHOLD = 20;
+  const QUEUE_VLIST_THRESHOLD = 400;
   if (S.queue.length > QUEUE_VLIST_THRESHOLD && !(S.selectMode && S.queue.length <= 400)) {
     inner.innerHTML = '';
     const wrap = document.createElement('div');
@@ -19440,9 +19442,9 @@ function renderQueueSidebar() {
   // re-attach event listeners for small queue (outerHTML loses them)
   inner.querySelectorAll('.song-row').forEach((row, i) => {
     row.querySelector('.smenu-btn')?.addEventListener('click', e => {
-      e.stopPropagation(); removeFromQueue(i);
+      e.stopPropagation(); removeFromQueue(parseInt(row.dataset.qi));
     });
-    row.addEventListener('click', () => { if (S.selectMode) { _toggleSel(row.dataset.id); return; } S.qi = i; S.cur = S.queue[i]; playSong(S.cur); });
+    row.addEventListener('click', () => { if (S.selectMode) { _toggleSel(row.dataset.id); return; } const _i = parseInt(row.dataset.qi); S.qi = _i; S.cur = S.queue[_i]; playSong(S.cur); });
   });
   _queueAfterFullRender(inner, _hadSig, _prevScroll);
   // drag-to-reorder for small queue
@@ -19458,7 +19460,13 @@ function renderQueueSidebar() {
       S.queue = newIds.map(id => idMap.get(id)).filter(Boolean);
       S.qi = curId ? Math.max(0, S.queue.findIndex(s => s.id === curId)) : 0;
       // re-index data-qi on rows
-      _qListEl.querySelectorAll('.song-row').forEach((r, i) => { r.dataset.qi = i; });
+      _qListEl.querySelectorAll('.song-row').forEach((r, i) => {
+        r.dataset.qi = i;
+        const sn = r.querySelector('.snum-num');
+        if (sn && !r.classList.contains('playing')) sn.textContent = i + 1;
+      });
+      _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
+      _qLastQi = S.qi;
     }
   });
 }
@@ -22187,7 +22195,7 @@ function _setSelectMode(on) {
   S.selectMode = on;
   if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
   // in select mode the queue (<=400) renders as the plain songlist so it shares the songlist drag engine
-  const _qRe = () => { if (S.queueOpen && S.queue.length > 20 && S.queue.length <= 400) renderQueueSidebar(); };
+  const _qRe = () => {}; // queue is always the plain songlist up to 400 now, nothing to swap
   if (on) {
     _qRe();
     // two frames so freshly built rows exist unstyled first and the slide-in actually animates
@@ -24838,6 +24846,259 @@ async function rmFromPl(pid, sid) {
 //   enableVlist()   → optional, called after commit
 // }
 function initReorderDrag(listEl, opts) {
+  if (!listEl) return;
+  listEl.classList.add('sel-reorderable');
+  // tapping a handle must not also toggle the row selection
+  listEl.addEventListener('click', e => { if (e.target.closest && e.target.closest('.sel-handle')) { e.stopPropagation(); e.preventDefault(); } }, true);
+  const HOLD_MS = 120;
+  const MOVE_THRESH = 8;
+  const SCROLL_ZONE = 60;
+  const SCROLL_MAX = 18;
+  const ANIM_MS = 160;
+  const STACK_GAP = 5;
+  const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
+  const sc = opts.scrollEl;
+
+  // every position below is in visual (client) px, read straight from rects / pointer / list scroll,
+  // and kT converts visual px -> `translate` px. kT is measured per drag, so zoom can never get out of sync
+  let rows = [], tops = [], heights = [];
+  let group = [], rest = [], packed = [], slots = [], ranks = new Map();
+  let row = null, from = -1, slot = 0, slotH = 0, gap = 0, listBottom = 0, kT = 1, base0 = 0;
+  let pid = null, downY = 0, lastY = 0, raf = 0, stackAt = 0, stacked = false;
+  let armedRow = null, holdTimer = null, prevIds = [];
+  let active = false, dropping = false, suppressClick = false;
+
+  const scrolled = () => base0 - listEl.getBoundingClientRect().top;
+  const offset = () => (lastY - downY) + scrolled();
+  const tr = v => '0 ' + (v / kT) + 'px';
+
+  function probeK(el) {
+    const t0 = el.getBoundingClientRect().top;
+    const old = el.style.translate;
+    el.style.translate = '0 100px';
+    const d = el.getBoundingClientRect().top - t0;
+    el.style.translate = old;
+    return d > 1 ? d / 100 : (_zoom || 1);
+  }
+
+  function cancelHold() {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    armedRow = null;
+  }
+
+  function clear() {
+    cancelAnimationFrame(raf);
+    active = false;
+    stacked = false;
+    rows.forEach(r => { r.style.translate = ''; });
+    group.forEach(i => {
+      const el = rows[i];
+      el.style.scale = '';
+      el.style.zIndex = '';
+      el.classList.remove('drag-lifted', 'drag-anchor', 'drag-follow', 'drag-far', 'drag-drop', 'drag-stacked');
+    });
+    listEl.classList.remove('reordering');
+    row = null;
+    rows = [];
+    group = [];
+    rest = [];
+  }
+
+  function joins() {
+    const sel = i => !!(opts.isSelected && opts.isSelected(rows[i].dataset.id));
+    rest.forEach((i, j) => {
+      const s = sel(i);
+      rows[i].classList.toggle('sel-up', s && j > 0 && j !== slot && sel(rest[j - 1]));
+      rows[i].classList.toggle('sel-dn', s && j < rest.length - 1 && j + 1 !== slot && sel(rest[j + 1]));
+    });
+  }
+
+  function layout() {
+    joins();
+    rest.forEach((i, j) => {
+      const t = (j < slot ? packed[j] : packed[j] + slotH + gap) - tops[i];
+      rows[i].style.translate = Math.abs(t) < 0.5 ? '' : tr(t);
+    });
+  }
+
+  function lift(target) {
+    cancelHold();
+    rows = [...listEl.querySelectorAll(ROWS)];
+    from = rows.indexOf(target);
+    if (from < 0) { rows = []; return; }
+    kT = probeK(target);
+    base0 = listEl.getBoundingClientRect().top;
+    const rects = rows.map(r => r.getBoundingClientRect());
+    tops = rects.map(r => r.top - base0);
+    heights = rects.map(r => r.height);
+    gap = rows.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0;
+    if (gap < 0.5) gap = 0;
+    listBottom = tops[rows.length - 1] + heights[rows.length - 1];
+    const picked = !!(opts.isSelected && opts.isSelected(target.dataset.id));
+    const all = rows.map((_, i) => i);
+    group = all.filter(i => i === from || (picked && opts.isSelected(rows[i].dataset.id)));
+    const gset = new Set(group);
+    rest = all.filter(i => !gset.has(i));
+    slotH = group.reduce((s, i) => s + heights[i], 0) + gap * (group.length - 1);
+    let removed = 0;
+    packed = [];
+    all.forEach(i => {
+      if (gset.has(i)) removed += heights[i] + gap;
+      else packed.push(tops[i] - removed);
+    });
+    const last = rest.length - 1;
+    slots = packed.concat(last < 0 ? tops[0] : packed[last] + heights[rest[last]] + gap);
+    slot = rest.filter(i => i < from).length;
+    prevIds = opts.getList().map(opts.getId);
+    row = target;
+    active = true;
+    stacked = false;
+    stackAt = performance.now() + ANIM_MS + 60;
+    ranks = new Map();
+    let n = 0;
+    group.forEach(i => {
+      const el = rows[i];
+      el.classList.add('drag-lifted');
+      if (i === from) {
+        el.classList.add('drag-anchor');
+        return;
+      }
+      n++;
+      ranks.set(i, n);
+      el.classList.add('drag-follow');
+      if (n > 3) el.classList.add('drag-far');
+      el.style.zIndex = String(Math.max(1, 5 - n));
+      el.style.scale = String(1.02 - Math.min(n, 3) * 0.02);
+    });
+    listEl.classList.add('reordering');
+    getSelection()?.removeAllRanges();
+    document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid }));
+    try { listEl.setPointerCapture(pid); } catch (_) {}
+    layout();
+    tick();
+  }
+
+  function update() {
+    const top = Math.max(tops[0], Math.min(tops[from] + offset(), listBottom - heights[from]));
+    row.style.translate = tr(top - tops[from]);
+    group.forEach(i => {
+      if (i === from) return;
+      rows[i].style.translate = tr(top + Math.min(ranks.get(i), 3) * STACK_GAP * kT - tops[i]);
+    });
+    // the slot is decided by where the dragged row sits against the other rows' centers,
+    // so what you see under the finger is exactly where it lands, for single rows and stacks alike
+    const center = top + heights[from] / 2;
+    let k = 0;
+    while (k < rest.length && packed[k] + heights[rest[k]] / 2 < center) k++;
+    if (k === slot) return;
+    slot = k;
+    layout();
+  }
+
+  function tick() {
+    if (!active) return;
+    if (!listEl.isConnected) { clear(); return; }
+    // after the fly in, followers stop chasing with a transition and ride rigidly in the stack (no gaps/lag)
+    if (!stacked && performance.now() >= stackAt) {
+      stacked = true;
+      group.forEach(i => { if (i !== from) rows[i].classList.add('drag-stacked'); });
+    }
+    if (sc) {
+      const c = sc.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      const zone = SCROLL_ZONE * kT;
+      const toTop = r.top - c.top;
+      const toBot = c.bottom - r.bottom;
+      let v = 0;
+      if (toTop < zone) v = -SCROLL_MAX * Math.min(1, (zone - toTop) / zone);
+      else if (toBot < zone) v = SCROLL_MAX * Math.min(1, (zone - toBot) / zone);
+      if (v) sc.scrollTop += v;
+    }
+    update();
+    raf = requestAnimationFrame(tick);
+  }
+
+  function settle(commit) {
+    cancelAnimationFrame(raf);
+    active = false;
+    dropping = true;
+    if (commit) suppressClick = true;
+    let y = slots[slot];
+    group.forEach(i => {
+      const el = rows[i];
+      el.classList.remove('drag-lifted', 'drag-follow', 'drag-far', 'drag-stacked');
+      el.classList.add('drag-drop');
+      el.style.scale = '';
+      el.style.translate = commit ? tr(y - tops[i]) : '';
+      y += heights[i] + gap;
+    });
+    if (!commit) rest.forEach(i => { rows[i].style.translate = ''; });
+    const order = rest.slice(0, slot).concat(group, rest.slice(slot));
+    const ids = order.map(i => rows[i].dataset.id);
+    setTimeout(async () => {
+      const changed = commit && order.some((v, i) => v !== i);
+      if (changed) {
+        const ref = slot < rest.length ? rows[rest[slot]] : null;
+        group.forEach(i => { if (ref) ref.before(rows[i]); else listEl.append(rows[i]); });
+      }
+      clear();
+      dropping = false;
+      setTimeout(() => { suppressClick = false; }, 0);
+      if (changed) await opts.onCommit(ids, prevIds);
+      refreshSelectionUI();
+    }, ANIM_MS + 30);
+  }
+
+  listEl.addEventListener('pointerdown', e => {
+    if (active || dropping || (e.button && e.button !== 0)) return;
+    if (e.target.closest('button,a,[role=button]')) return;
+    const target = e.target.closest('.song-row,.song-row-mobile');
+    if (!target || target.parentElement !== listEl) return;
+    pid = e.pointerId;
+    downY = lastY = e.clientY;
+    armedRow = target;
+    if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
+    if (e.pointerType !== 'mouse') {
+      holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
+    }
+  });
+
+  listEl.addEventListener('pointermove', e => {
+    if (e.pointerId !== pid) return;
+    lastY = e.clientY;
+    if (active) { e.preventDefault(); return; }
+    if (!armedRow || Math.abs(e.clientY - downY) <= MOVE_THRESH) return;
+    if (e.pointerType === 'mouse') lift(armedRow);
+    else cancelHold();
+  }, { passive: false });
+
+  listEl.addEventListener('pointerup', e => {
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (!active) return;
+    settle(Math.abs(offset()) > MOVE_THRESH);
+  });
+
+  listEl.addEventListener('pointercancel', e => {
+    if (e.pointerId !== pid) return;
+    cancelHold();
+    if (active) settle(false);
+  });
+
+  listEl.addEventListener('touchmove', e => {
+    if (active) e.preventDefault();
+  }, { passive: false });
+
+  listEl.addEventListener('click', e => {
+    if (!suppressClick) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+}
+
+// previous engine, unused now, safe to delete
+function _initReorderDragOld(listEl, opts) {
   if (!listEl) return;
   const HOLD_MS = 120;
   const MOVE_THRESH = 8;
