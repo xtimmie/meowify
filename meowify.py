@@ -21716,6 +21716,8 @@ class VirtualList {
     if (this._inner && this._rowH > 0) {
       this._inner.classList.add('vl-inner');
       this._inner.style.setProperty('--vrow-h', this._rowH + 'px');
+    } else if (this._inner) {
+      this._inner.style.removeProperty('--vrow-h');
     }
   }
 
