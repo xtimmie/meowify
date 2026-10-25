@@ -10792,9 +10792,9 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
 .reordering{user-select:none;-webkit-user-select:none}
-.reordering>.song-row:not(.drag-lifted){transition:translate .16s var(--ease-out)!important}
-.song-row.drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s!important}
-.song-row.drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s!important}
+.reordering>:is(.song-row,.song-row-mobile):not(.drag-lifted){transition:translate .16s var(--ease-out)!important}
+:is(.song-row,.song-row-mobile).drag-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s!important}
+:is(.song-row,.song-row-mobile).drag-lifted.drag-drop{scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s!important}
 .song-row{
   display:grid;
   grid-template-columns:var(--song-table-tpl);
@@ -13084,7 +13084,7 @@ function renderTable(viewName,songs,pid,listId,rowsOverride){
   const tStyle=_tableStyle(cols);
   S.viewSongs=[...songs];
   _rebuildViewIdx();
-  if(!rowsOverride && songs.length > 60){
+  if(!rowsOverride && songs.length > (listId==='pl-rows' ? 400 : 60)){
     const cid='vlist-'+Math.random().toString(36).slice(2);
     requestAnimationFrame(()=>{
       const el=document.getElementById(cid);
@@ -24649,7 +24649,8 @@ async function rmFromPl(pid, sid) {
 function initReorderDrag(listEl, opts) {
   if (!listEl) return;
   const HOLD_MS = 120;
-  const MOVE_THRESH = 6;
+  const MOVE_THRESH = 8;
+  const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
   const SCROLL_ZONE = 60;
   const SCROLL_MAX = 18;
   const ANIM_MS = 160;
@@ -24657,11 +24658,11 @@ function initReorderDrag(listEl, opts) {
 
   let rows = [], tops = [], heights = [];
   let row = null, from = -1, to = -1, shift = 0;
-  let pid = null, downY = 0, lastY = 0, startScroll = 0, raf = 0;
+  let pid = null, downY = 0, lastY = 0, startScroll = 0, raf = 0, z = 1;
   let armedRow = null, holdTimer = null, prevIds = [];
   let active = false, dropping = false, suppressClick = false;
 
-  const offset = () => lastY - downY + (sc ? sc.scrollTop - startScroll : 0);
+  const offset = () => (lastY - downY) / z + (sc ? sc.scrollTop - startScroll : 0);
 
   function cancelHold() {
     clearTimeout(holdTimer);
@@ -24681,11 +24682,12 @@ function initReorderDrag(listEl, opts) {
 
   function lift(target) {
     cancelHold();
-    rows = [...listEl.querySelectorAll(':scope > .song-row')];
+    rows = [...listEl.querySelectorAll(ROWS)];
     from = rows.indexOf(target);
     if (from < 0) { rows = []; return; }
+    z = _zoom || 1;
     const base = listEl.getBoundingClientRect().top;
-    tops = rows.map(r => r.getBoundingClientRect().top - base);
+    tops = rows.map(r => (r.getBoundingClientRect().top - base) / z);
     heights = rows.map(r => r.offsetHeight);
     shift = heights[from] + (parseFloat(getComputedStyle(listEl).rowGap) || 0);
     startScroll = sc ? sc.scrollTop : 0;
@@ -24696,6 +24698,7 @@ function initReorderDrag(listEl, opts) {
     listEl.classList.add('reordering');
     row.classList.add('drag-lifted');
     getSelection()?.removeAllRanges();
+    document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid }));
     try { listEl.setPointerCapture(pid); } catch (_) {}
     tick();
   }
@@ -24721,11 +24724,12 @@ function initReorderDrag(listEl, opts) {
 
   function tick() {
     if (!active) return;
+    if (!listEl.isConnected) { clear(); return; }
     if (sc) {
       const c = sc.getBoundingClientRect();
       const r = row.getBoundingClientRect();
-      const toTop = r.top - c.top;
-      const toBot = c.bottom - r.bottom;
+      const toTop = (r.top - c.top) / z;
+      const toBot = (c.bottom - r.bottom) / z;
       let v = 0;
       if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
       else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
@@ -24816,7 +24820,7 @@ function initDrag(pid) {
       S.viewSongs = [...newList];
       _rebuildViewIdx();
       // update snum display
-      listEl.querySelectorAll('.song-row').forEach((r, i) => {
+      listEl.querySelectorAll('.song-row,.song-row-mobile').forEach((r, i) => {
         r.dataset.idx = i;
         const sn = r.querySelector('.snum-num');
         if (sn && sn.textContent && !r.classList.contains('playing')) sn.textContent = i + 1;
