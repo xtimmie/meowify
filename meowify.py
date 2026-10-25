@@ -10404,7 +10404,7 @@ html.nb-mu :is(.dialog-backdrop,[data-mu-dialog],[data-mu-sheet]>*){
 }
 html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
 /* unblurred glass parts get a more solid bg so text stays readable (--nb-solid = solid boost slider) */
-.set-blur{border-bottom:1px solid color-mix(in oklch,var(--color-outline-variant) 50%,transparent)}
+.set-blur{border-bottom:1px solid color-mix(in oklch,var(--color-outline-variant) 85%,var(--color-on-surface)))}
 .set-blur>summary{list-style:none;display:flex;align-items:center;gap:12px;padding:14px 0;cursor:pointer}
 .set-blur>summary::-webkit-details-marker{display:none}
 .set-blur>summary .set-title-cell{flex:1;min-width:0}
@@ -10553,6 +10553,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 }
 @media (hover: hover) {.np-album:hover{color:var(--color-primary);opacity:1;text-decoration:none}}
 .np-lrc-preview{
+  margin:0 14px;
   padding:10px 14px;
   border-radius:var(--radius-md);
   background:var(--color-surface-container);
@@ -10566,14 +10567,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .np-lrc-preview:has(.np-lrc-line) {
   min-height:105px;
 }
-.np-lrc-section{margin:10px 14px 0}
-.np-lrc-label{
-  font:var(--type-label-small);font-variation-settings:var(--fv-label);
-  color:var(--color-on-surface-variant);
-  text-transform:uppercase;letter-spacing:.8px;
-  margin-bottom:6px;
-  padding-left:2px;
-}
+/* lyrics = .np-section-hdr + one .np-lrc-preview panel, same shape as details / next up */
 .np-lrc-line{
   font:var(--type-body-medium);font-variation-settings:var(--fv-body);
   color:var(--color-primary);
@@ -10600,10 +10594,19 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   width:100%;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.np-lrc-plain-wrap{
-  padding:10px 14px;
+.np-lrc-plain{
+  width:100%;
   display:flex;flex-direction:column;gap:2px;
-  text-align:left;
+}
+/* fade the text itself (mask) instead of an overlay, so it works on any bg and leaves the box shadow alone */
+.np-lrc-plain.fade{
+  -webkit-mask-image:linear-gradient(#000 40%,transparent);
+  mask-image:linear-gradient(#000 40%,transparent);
+}
+.np-lrc-more{
+  display:flex;align-items:center;gap:4px;
+  font:var(--type-label-small);font-variation-settings:var(--fv-label);
+  color:var(--color-primary);
 }
 .np-lrc-plain-line{
   font:var(--type-body-small);font-variation-settings:var(--fv-body);
@@ -10623,8 +10626,9 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   text-transform:uppercase;letter-spacing:1px;
   opacity:0.6;
   padding:6px 2px 6px;
-  margin:0 14px;
+  margin:14px 14px 0;
 }
+.np-cover-col-sep + .np-section-hdr{margin-top:0}
 .np-cover-col-sep{
   width:calc(100% - 28px);
   margin:18px 14px;
@@ -11460,9 +11464,9 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
    similar elements with one rule instead of long comma selectors.
    ui-sidebar    : #sidebar, .lyrics-sidebar, .queue-sidebar, .nowplaying-sidebar
    ui-topbar     : .topbar, #player, #mobile-nav
-   ui-panel      : .set-section, .np-next-card, .np-meta-grid, .np-lrc-section, .lib-album
+   ui-panel      : .set-section, .np-next-card, .np-meta-grid, .np-lrc-preview, .lib-album
    ui-panel-hdr  : .qs-hdr, .lyrics-hdr, .nowplaying-hdr
-   ui-section-hdr: .np-section-hdr, .np-lrc-label, .pl-sec-hdr
+   ui-section-hdr: .np-section-hdr, .pl-sec-hdr
    ui-overlay    : #ctx, #dl-panel-float, .mbox
    ui-divider    : .sdiv, .cx-sep
    ui-list-item  : .song-row, .song-row-mobile, .disco-row, .dl-item
@@ -18861,9 +18865,13 @@ let _npLrcLastWordIdx = -1;
 let _npLrcMode = 'none'; // 'synced' | 'plain' | 'loading' | 'none'
 let _npLrcFetchSongId = null; // tracks in-flight NP lyrics fetch to avoid duplicates
 
+const NP_PLAIN_LINES = 4; // plain lyrics lines shown in the now playing preview
 function _npLrcSectionHtml(song) {
   // called once on full render; returns static shell for lrc preview
   // the inner content (#np-lrc-active etc) is updated by tickNowPlaying
+  // same shape as the other np sections: header, then one panel
+  const box = inner => `<div class="np-section-hdr ui-section-hdr">lyrics</div>
+    <div class="np-lrc-preview ui-panel" onclick="toggleLyrics()">${inner}</div>`;
   const hasSynced = _lrcLines.length > 0;
   const hasPlain  = !!(S.lyricsData?.plain);
   if (hasSynced) {
@@ -18874,42 +18882,25 @@ function _npLrcSectionHtml(song) {
     const next = _lrcActiveIdx >= 0
       ? (_lrcActiveIdx < _lrcLines.length - 1 ? _lrcLines[_lrcActiveIdx + 1] : null)
       : (_lrcLines.length > 0 ? _lrcLines[0] : null);
-    return `<div class="np-lrc-section ui-panel">
-      <div class="np-lrc-label ui-section-hdr">lyrics</div>
-      <div class="np-lrc-preview" onclick="toggleLyrics()">
+    return box(`
         ${prev ? `<div class="np-lrc-prev-line" id="np-lrc-prev">${esc(prev.text)}</div>` : '<div class="np-lrc-prev-line" id="np-lrc-prev" style="opacity:0"> </div>'}
         <div class="np-lrc-line" id="np-lrc-active">${cur ? _npRenderLine(cur) : ''}</div>
-        ${next ? `<div class="np-lrc-next-line" id="np-lrc-next">${esc(next.text)}</div>` : '<div class="np-lrc-next-line" id="np-lrc-next" style="opacity:0"> </div>'}
-      </div>
-    </div>`;
+        ${next ? `<div class="np-lrc-next-line" id="np-lrc-next">${esc(next.text)}</div>` : '<div class="np-lrc-next-line" id="np-lrc-next" style="opacity:0"> </div>'}`);
   }
   if (hasPlain) {
     _npLrcMode = 'plain';
-    const lines = S.lyricsData.plain.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 3);
-    return `<div class="np-lrc-section ui-panel">
-      <div class="np-lrc-label ui-section-hdr">lyrics</div>
-      <div class="np-lrc-preview np-lrc-plain-wrap" onclick="toggleLyrics()" style="position:relative;overflow:hidden">
-        ${lines.map(l => `<div class="np-lrc-plain-line">${esc(l)}</div>`).join('')}
-        <div style="position:absolute;bottom:0;left:0;right:0;height:50px;background:linear-gradient(transparent,var(--color-surface-container));pointer-events:none"></div>
-      </div>
-    </div>`;
+    const all = S.lyricsData.plain.split('\n').map(l => l.trim()).filter(Boolean);
+    const more = all.length > NP_PLAIN_LINES;
+    return box(`
+        <div class="np-lrc-plain${more ? ' fade' : ''}">${all.slice(0, NP_PLAIN_LINES).map(l => `<div class="np-lrc-plain-line">${esc(l)}</div>`).join('')}</div>
+        ${more ? '<div class="np-lrc-more">show full lyrics<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg></div>' : ''}`);
   }
   if (S.lyricsData) {
     _npLrcMode = 'none';
-    return `<div class="np-lrc-section ui-panel">
-      <div class="np-lrc-label ui-section-hdr">lyrics</div>
-      <div class="np-lrc-preview" onclick="toggleLyrics()">
-        <div class="np-lrc-none">no lyrics found</div>
-      </div>
-    </div>`;
+    return box('<div class="np-lrc-none">no lyrics found</div>');
   }
   _npLrcMode = 'loading';
-  return `<div class="np-lrc-section ui-panel">
-    <div class="np-lrc-label ui-section-hdr">lyrics</div>
-    <div class="np-lrc-preview" onclick="toggleLyrics()">
-      <div class="np-lrc-none" id="np-lrc-loading">searching...</div>
-    </div>
-  </div>`;
+  return box('<div class="np-lrc-none" id="np-lrc-loading">searching...</div>');
 }
 
 function _npRenderLine(line) {
@@ -25199,7 +25190,7 @@ function _applyDesignImpl(design) {
   body.design-glassy .lrc-line.active{text-shadow:0 0 20px color-mix(in oklch,var(--color-primary) 50%,transparent)}
   body.design-glassy .p-cover{box-shadow:0 0 0 1px var(--glass-border)}
   body.design-glassy .qs-hdr,body.design-glassy .lyrics-hdr{border-bottom:1px solid var(--glass-border)}
-  body.design-glassy .np-next-card, .np-lrc-preview, .np-meta-grid {background: color-mix(in oklch, var(--color-primary) 5%, rgba(255, 255, 255, .08)) !important; box-shadow: var(--glass-spec-panel);}
+  body.design-glassy :is(.np-next-card,.np-lrc-preview,.np-meta-grid){background:color-mix(in oklch,var(--color-primary) 5%,rgba(255,255,255,.08))!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #vol-slider-popup {box-shadow: var(--glass-spec-panel);}
   body.design-glassy .set-section {box-shadow: var(--glass-spec-panel);}
   /* svg glass - static icons use #gs-s (no blur pass, crisper at small sizes, cheaper)
@@ -25405,7 +25396,7 @@ body.design-paper .np-meta-grid.ui-panel{
   background:transparent!important;
   box-shadow:none!important;
 }
-body.design-paper .np-lrc-section.ui-panel{
+body.design-paper .np-lrc-preview.ui-panel{
   background:transparent!important;
   box-shadow:none!important;
 }
