@@ -10400,7 +10400,6 @@ body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar{width:
 body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:9999px}
 body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
-body.design-glassy #app:not(.mobile) #content-area #vc:has(.list-header.pinned)::-webkit-scrollbar-track{margin-top:var(--pin-h,34px)!important}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){margin-bottom:10px;padding:8px 16px;position:relative}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,var(--line-lowest));pointer-events:none}
 body.design-glassy #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
