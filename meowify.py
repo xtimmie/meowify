@@ -10203,6 +10203,7 @@ svg {overflow: visible}
 .pl-item{min-width:0}
 .pl-item .ni{flex-shrink:0}
 .pl-sec-hdr button{flex-shrink:0}
+.pl-sec-hdr button svg{width:14px;height:14px;display:block}
 #sidebar.icons-only .nav-btn{justify-content:center;gap:0;padding-left:0;padding-right:0}
 #sidebar.icons-only .nav-btn .nl{display:none}
 #sidebar.icons-only .pl-item .ni{display:none}
@@ -10296,13 +10297,13 @@ svg {overflow: visible}
 .pl-sec::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 .pl-sec-hdr{
   display:flex;align-items:center;justify-content:space-between;
-  padding:8px 12px 4px;
+  padding:14px 4px 6px 12px;
   font:var(--type-label-small);font-variation-settings:var(--fv-label);
   color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;
 }
 .pl-sec-hdr button{
   background:none;border:none;color:var(--color-on-surface-variant);
-  cursor:pointer;font-size:20px;line-height:1;padding:1px 4px;
+  cursor:pointer;display:grid;place-items:center;width:26px;height:26px;padding:0;
   border-radius:var(--radius-sm);
   transition:color var(--dur-2),background var(--dur-2);
 }
@@ -12180,9 +12181,6 @@ body.design-glassy .list-header.pinned::before{
 #tsearch-pL{transition:d .1s cubic-bezier(0,1,0,1),transform .4s cubic-bezier(.4,1.8,.6,1)}
 #tsearch-pR{transition:d .5s cubic-bezier(.1,1.4,.3,1)}
 #tsearch-btn.open #tsearch-pL{transition:d .5s cubic-bezier(.3,1.25,0,1),transform .4s cubic-bezier(.4,1.8,.6,1)}
-/* optical centering: the closed lens+handle ink sits up-left of its box, nudge it back (X state is symmetric so it resets) */
-#tsearch-btn svg{translate:.5px 1px;transition:translate .4s cubic-bezier(.4,1.8,.6,1)}
-#tsearch-btn.open svg{translate:0 0}
 
 #dl-panel-btn path, #dl-panel-btn polyline { transition: .4s cubic-bezier(.3,2,.4,1) }
 #dl-panel-btn.active path { d: path("M3,15 Q4,22 12,22 Q20,22 21,15") }
@@ -12431,7 +12429,7 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{s
       </button>
       <div class="pl-sec-hdr ui-section-hdr">
         <span>playlists</span>
-        <button onclick="showCreatePl()" title="new playlist">+</button>
+        <button onclick="showCreatePl()" title="new playlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
       <div id="pl-list"></div>
     </div>
