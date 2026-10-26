@@ -12078,7 +12078,7 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --lw: 36px; --py: 4px; --px: max(2px, min(12px, calc(50% - var(--lw)))); --s: .8;
+  --lw: 36px; --py: 4px; --px: max(2px, min(var(--py), calc(50% - var(--lw)))); --s: .8;
   /* clip = the scaled pill outline: same box as ::before + full radius (r = half height, needs cqh from #mobile-nav) */
   --ix: min(calc(50% - (50% - var(--px)) * var(--s)), max(0px, calc(50% - var(--lw))));
   --iy: min(calc(50cqh - (50cqh - var(--py)) * var(--s)), 6px);
