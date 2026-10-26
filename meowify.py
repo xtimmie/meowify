@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, Response
 import urllib.request as _urllib_request
+import urllib.error as _urllib_error
 
 # ── logging setup ───────────────────────────────────────────────────────────
 # replaces old bare print(f'[tag] ...') calls scattered through the backend.
