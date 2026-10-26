@@ -12072,20 +12072,19 @@ body.design-glassy .list-header.pinned::before{
   z-index: 50;
   border-top: 1px solid var(--line-low);
 }
-#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; column-gap: 8px; }
+#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; padding-inline: 4px; /* outer margin, matches .mob-tab --py */ }
 @property --s { syntax: '<number>'; inherits: true; initial-value: .8; }
 @keyframes tab-pop { from { --s: .6; } }
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
   --lw: 36px; --py: 4px; --s: .8;
-  --px: max(2px, min(var(--py), calc(50% - var(--lw))));
-  /* clip = the pill's final (post pop-in) outline: ::before's box at --s:1 + full radius (r = half height, needs cqh from #mobile-nav) */
-  --ix: min(var(--px), max(0px, calc(50% - var(--lw))));
+  --g: clamp(0px, calc((100cqw - 8 * var(--lw)) / 3), 16px); /* gap between tabs, shrinks first on narrow widths so each tab keeps room for its label (2 * --lw) */
+  /* clip = the pill's final (post pop-in) outline: ::before's box at --s:1 (full tab width, --py top/bottom) + full radius (r = half height, needs cqh from #mobile-nav) */
   --iy: var(--py);
   --r: calc(50cqh - var(--iy));
   --m: calc(var(--r) * .246); /* bezier handle for superellipse(1.5): (1 - .754) * r */
-  --x0: var(--ix); --x1: calc(var(--ix) + var(--r)); --x2: calc(100% - var(--ix) - var(--r)); --x3: calc(100% - var(--ix));
+  --x0: 0px; --x1: var(--r); --x2: calc(100% - var(--r)); --x3: 100%;
   --y0: var(--iy); --y1: calc(var(--iy) + var(--r)); --y2: calc(100% - var(--iy) - var(--r)); --y3: calc(100% - var(--iy));
   clip-path: shape(
     from var(--x1) var(--y0),
@@ -12110,7 +12109,7 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab::before {
   content: '';
   position: absolute;
-  inset: var(--py) var(--px);
+  inset: var(--py) 0;
   border-radius: 999px;
   corner-shape: superellipse(1.5);
   background: color-mix(in oklch,var(--color-primary) 20%,#0000);
@@ -12121,6 +12120,7 @@ body.design-glassy .list-header.pinned::before{
 }
 .mob-tab.active { color: var(--color-primary); --s: 1; animation: tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy); }
 .mob-tab.active::before { opacity: 1; transition: opacity .1s; }
+.mob-tab + .mob-tab { margin-left: var(--g); }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
 /* mobile seekbar */
 #mob-seek {
