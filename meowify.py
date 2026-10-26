@@ -48,6 +48,15 @@ _miniaudio = None
 
 # ── platform helpers ───────────────────────────────────────────────────────────
 IS_ANDROID = hasattr(sys, 'getandroidapilevel') or 'ANDROID_ROOT' in os.environ
+APP_VERSION = '0.1.0'
+_APP_DIR = Path(__file__).resolve().parent
+_IN_VENV = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
+if not IS_ANDROID:
+    _extra_path = [str(Path(sys.executable).parent)] if _IN_VENV else []
+    if (_APP_DIR / 'bin').is_dir():
+        _extra_path.append(str(_APP_DIR / 'bin'))
+    if _extra_path:
+        os.environ['PATH'] = os.pathsep.join(_extra_path + [os.environ.get('PATH', '')])
 def _subp(args, **kw):
     """subprocess.Popen without console window on windows"""
     if sys.platform == 'win32':
@@ -7960,6 +7969,235 @@ def api_restart():
         except Exception:
             os._exit(0)
     threading.Thread(target=_do_restart, daemon=True).start()
+    return jsonify({'ok': True})
+
+# ── updater ────────────────────────────────────────────────────────────────────
+_UPD_REPO     = 'xtimmie/meowify'
+_UPD_MANIFEST = f'https://github.com/{_UPD_REPO}/releases/latest/download/manifest.json'
+_UPD_FILES    = ('meowify.py', 'requirements.txt')
+_UPD_SAFE     = {'yt-dlp', 'ytmusicapi', 'dropbox', 'duckduckgo-search', 'mutagen', 'flask', 'pywebview', 'langdetect'}
+_UPD_STATE    = {'state': 'idle', 'msg': '', 'needs_restart': False}
+_UPD_CACHE    = {'t': 0.0, 'data': None}
+_upd_lock     = threading.Lock()
+_INSTALL_JSON = _APP_DIR / '.install.json'
+
+def _upd_ver(v):
+    try:
+        return tuple(int(x) for x in re.findall(r'\d+', str(v))[:4])
+    except Exception:
+        return (0,)
+
+def _upd_get(url, timeout=20):
+    req = _urllib_request.Request(url, headers={'User-Agent': f'meowify/{APP_VERSION}'})
+    with _urllib_request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+def _upd_py():
+    p = Path(sys.executable)
+    if p.name.lower() == 'pythonw.exe' and (p.parent / 'python.exe').exists():
+        return str(p.parent / 'python.exe')
+    return sys.executable
+
+def _upd_install_info():
+    try:
+        return json.loads(_INSTALL_JSON.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+def _upd_can_apply():
+    if IS_ANDROID:
+        return False, 'updates on android come with the apk for now'
+    if not _INSTALL_JSON.exists():
+        return False, 'running from a source checkout, update it with git'
+    if not _IN_VENV:
+        return False, 'not running from the meowify install'
+    return True, ''
+
+def _upd_set(state, msg='', restart=False):
+    _UPD_STATE.update(state=state, msg=msg, needs_restart=restart)
+
+def _upd_sha(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _upd_pip(args, timeout=900):
+    r = _subrun([_upd_py(), '-m', 'pip'] + args + ['--disable-pip-version-check'],
+                capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError('pip failed: ' + (r.stderr or r.stdout or '')[-300:].strip())
+
+def _upd_req_names():
+    names = []
+    try:
+        for line in (_APP_DIR / 'requirements.txt').read_text(encoding='utf-8').splitlines():
+            line = line.split('#')[0].strip()
+            m = re.match(r'([A-Za-z0-9_.\-]+)', line) if line else None
+            if m:
+                names.append(m.group(1).lower().replace('_', '-'))
+    except Exception:
+        pass
+    return names
+
+def _upd_outdated_deps():
+    names = set(_upd_req_names()) & _UPD_SAFE
+    if not names:
+        return []
+    r = _subrun([_upd_py(), '-m', 'pip', 'list', '--outdated', '--format=json', '--disable-pip-version-check'],
+                capture_output=True, text=True, timeout=180)
+    if r.returncode != 0:
+        return []
+    out = []
+    for p in json.loads(r.stdout or '[]'):
+        if p['name'].lower().replace('_', '-') in names:
+            out.append({'name': p['name'], 'current': p['version'], 'latest': p['latest_version']})
+    return out
+
+def _upd_check(force=False):
+    now = time.time()
+    if not force and _UPD_CACHE['data'] and now - _UPD_CACHE['t'] < 3600:
+        return _UPD_CACHE['data']
+    ok, why = _upd_can_apply()
+    info = _upd_install_info()
+    cur = APP_VERSION
+    if info.get('version') and _upd_ver(info['version']) > _upd_ver(cur):
+        cur = info['version']
+    try:
+        man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    except Exception as e:
+        return {'error': f'could not reach github ({e.__class__.__name__})', 'current': cur, 'items': []}
+    out = {'platform': sys.platform, 'current': cur, 'latest': man.get('version'), 'items': []}
+    if _upd_ver(man.get('version')) > _upd_ver(cur):
+        app_ok, reason = ok, ('' if ok else why)
+        need_py = man.get('min_python')
+        if ok and need_py and tuple(sys.version_info[:2]) < _upd_ver(need_py)[:2]:
+            app_ok, reason = False, f'needs python {need_py}'
+        out['items'].append({'id': 'app', 'name': 'meowify', 'current': cur, 'latest': man.get('version'),
+                             'notes': man.get('notes', ''), 'can_apply': app_ok, 'reason': reason})
+    if _IN_VENV and not IS_ANDROID:
+        try:
+            dd = _upd_outdated_deps()
+        except Exception:
+            dd = []
+        if dd:
+            out['items'].append({'id': 'deps', 'name': 'python packages', 'packages': dd,
+                                 'can_apply': ok, 'reason': '' if ok else why})
+    _UPD_CACHE.update(t=now, data=out)
+    return out
+
+def _upd_do_deps():
+    _upd_set('running', 'updating packages...')
+    dd = _upd_outdated_deps()
+    if dd:
+        _upd_pip(['install', '-U'] + [p['name'] for p in dd])
+    _upd_set('done', 'packages updated, restart to use them', True)
+
+def _upd_do_app():
+    import tempfile, zipfile
+    _upd_set('running', 'checking release...')
+    man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    tag = man.get('tag') or ('v' + str(man.get('version')))
+    base = f'https://github.com/{_UPD_REPO}/releases/download/{tag}/'
+    info = _upd_install_info()
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-upd-'))
+    try:
+        for name in _UPD_FILES:
+            want = (man.get('files') or {}).get(name)
+            if not want:
+                raise RuntimeError(f'manifest has no hash for {name}')
+            _upd_set('running', f'downloading {name}...')
+            p = tmp / name
+            p.write_bytes(_upd_get(base + name, timeout=120))
+            if _upd_sha(p) != want.lower():
+                raise RuntimeError(f'{name} failed the hash check')
+        compile((tmp / 'meowify.py').read_text(encoding='utf-8'), 'meowify.py', 'exec')
+        mu_tag = man.get('motionui')
+        mu_new = None
+        if mu_tag and mu_tag != info.get('motionui'):
+            _upd_set('running', f'downloading motionui {mu_tag}...')
+            z = tmp / 'mu.zip'
+            z.write_bytes(_upd_get(f'https://github.com/xtimmie/motionui/archive/refs/tags/{mu_tag}.zip', timeout=120))
+            ex = tmp / 'mu'
+            with zipfile.ZipFile(z) as zf:
+                zf.extractall(ex)
+            roots = [d for d in ex.iterdir() if d.is_dir()]
+            src = roots[0] if len(roots) == 1 else ex
+            if not all((src / f).exists() for f in _MU_REQUIRED):
+                raise RuntimeError('motionui download looks wrong')
+            mu_new = src
+        _upd_set('running', 'installing dependencies...')
+        _upd_pip(['install', '-r', str(tmp / 'requirements.txt')])
+        _upd_set('running', 'installing update...')
+        bak = _APP_DIR / 'backup'
+        bak.mkdir(exist_ok=True)
+        for name in _UPD_FILES:
+            cur = _APP_DIR / name
+            if cur.exists():
+                shutil.copy2(cur, bak / name)
+        (bak / 'install.json').write_text(json.dumps(info), encoding='utf-8')
+        if mu_new is not None:
+            dest = Path(MOTIONUI_DIR)
+            shutil.rmtree(bak / 'motionui', ignore_errors=True)
+            if dest.exists():
+                shutil.copytree(dest, bak / 'motionui')
+                shutil.rmtree(dest, ignore_errors=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(mu_new, dest)
+        for name in _UPD_FILES:
+            staged = _APP_DIR / (name + '.new')
+            shutil.copy2(tmp / name, staged)
+            os.replace(staged, _APP_DIR / name)
+        info.update(version=man.get('version'), tag=tag, motionui=mu_tag or info.get('motionui'))
+        _INSTALL_JSON.write_text(json.dumps(info), encoding='utf-8')
+        (_APP_DIR / '.booting').write_text(str(time.time()), encoding='utf-8')
+        _upd_set('done', f"updated to {man.get('version')}, restart to apply", True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def _upd_run(kind):
+    try:
+        if kind == 'app':
+            _upd_do_app()
+        else:
+            _upd_do_deps()
+        _UPD_CACHE['data'] = None
+    except Exception as e:
+        _log_server.error(f'update failed: {e}')
+        _upd_set('error', str(e)[:300])
+
+def _upd_confirm_boot(host, port):
+    if not wait_for_server(host, port, timeout=60):
+        return
+    time.sleep(3)
+    try:
+        (_APP_DIR / '.booting').unlink()
+    except Exception:
+        pass
+
+@app.route('/api/update/check', methods=['GET'])
+def api_update_check():
+    return jsonify(_upd_check(force=request.args.get('force') == '1'))
+
+@app.route('/api/update/status', methods=['GET'])
+def api_update_status():
+    return jsonify(_UPD_STATE)
+
+@app.route('/api/update/apply', methods=['POST'])
+def api_update_apply():
+    kind = (request.get_json(silent=True) or {}).get('id')
+    if kind not in ('app', 'deps'):
+        return jsonify({'error': 'bad id'}), 400
+    ok, why = _upd_can_apply()
+    if not ok:
+        return jsonify({'error': why}), 400
+    with _upd_lock:
+        if _UPD_STATE['state'] == 'running':
+            return jsonify({'error': 'busy'}), 409
+        _upd_set('running', 'starting...')
+    threading.Thread(target=_upd_run, args=(kind,), daemon=True).start()
     return jsonify({'ok': True})
 
 # ── music video backend ────────────────────────────────────────────────────────
@@ -27916,6 +28154,7 @@ function renderSettings() {
       { id: '_stats',       label: 'stats',         icon: '<rect fill="currentColor" x="2" y="9" width="6" height="12" rx="1"/><rect fill="currentColor" x="10" y="13" width="5" height="8" rx="1"/><rect fill="currentColor" x="17" y="5" width="5" height="16" rx="1"/>' },
     ];
     const chevron = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+    _SET_SECTIONS.splice(_SET_SECTIONS.length - 1, 0, { id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
     const listItems = _SET_SECTIONS.map(s => `
       <div class="set-list-item mu-ripple" onclick="${s.id === '_stats' ? "setView('stats')" : `setSettingsSection('${s.id}')`}">
         <div style="display:flex;align-items:center;gap:14px">
@@ -28445,6 +28684,8 @@ function renderSettings() {
         ${row('export backup', 'download songs, covers, settings and library as a .zip', `<button class="btn btn-out mu-ripple" onclick="doExportBackup(this)">export</button>`)}
         ${row('import backup', 'restore from a .meowify.zip - overwrites current library', `<div style="display:flex;gap:8px"><button class="btn btn-err mu-ripple" onclick="document.getElementById('backup-import-in').click()">import</button><input type="file" id="backup-import-in" accept=".zip" style="display:none" onchange="doImportBackup(this)"></div>`)}
       `) : ''}
+
+      ${_sectionMatch('updates') ? section('updates', _updatesHtml(row, rowDisabled)) : ''}
     </div>`;
   requestAnimationFrame(() => { const w = document.getElementById('eq-sliders-wrap'); if (w && window.MU) MU.init(w); });
   if (_existingSearchBar) {
@@ -28465,6 +28706,8 @@ const _SET_PC_SECTIONS = [
   { id: 'dropbox sync', label: 'dropbox sync',  icon: '<path fill="currentColor" d="M12 2L2 7l10 5 10-5-10-5z"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M2 17l10 5 10-5"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M2 12l10 5 10-5"/>' },
   { id: 'library',      label: 'library',       icon: '<path fill="currentColor" d="M18 2H8a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 18H8a1 1 0 0 1 0-2h10v2z"/>' },
 ];
+
+_SET_PC_SECTIONS.push({ id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
 
 function openSettingsPopup() {
   if (isMobile()) { setView('settings'); return; }
@@ -28551,6 +28794,75 @@ function renderSettingsPopupShell() {
       <div class="set-pc-content" id="set-pc-content"></div>
     </div>`;
   renderSettings();
+}
+
+let _updBusy = false;
+let _updPoll = null;
+window._UPD = null;
+window._UPD_ST = null;
+
+async function _updCheck(force) {
+  if (_updBusy) return;
+  _updBusy = true;
+  renderSettings();
+  const r = await api('GET', '/api/update/check' + (force ? '?force=1' : ''));
+  window._UPD = (r && !r.error) ? r : {error: (r && r.error) || 'check failed', items: []};
+  _updBusy = false;
+  renderSettings();
+}
+
+async function _updApply(id) {
+  const r = await api('POST', '/api/update/apply', {id});
+  if (!r || r.error) { alert('update failed to start: ' + ((r && r.error) || 'unknown error')); return; }
+  if (_updPoll) clearInterval(_updPoll);
+  _updPoll = setInterval(async () => {
+    const s = await api('GET', '/api/update/status');
+    window._UPD_ST = s;
+    renderSettings();
+    if (s.state === 'done' || s.state === 'error' || s.state === 'idle') {
+      clearInterval(_updPoll);
+      _updPoll = null;
+      if (s.state === 'done') _updCheck(true);
+    }
+  }, 800);
+}
+
+function _updRestart() {
+  if (!confirm('restart meowify now to finish the update?')) return;
+  fetch('/api/restart', {method: 'POST'}).catch(() => {});
+}
+
+function _updatesHtml(row, rowDisabled) {
+  if (!window._UPD && !_updBusy) _updCheck();
+  const U = window._UPD;
+  const st = window._UPD_ST || {};
+  if (!U) return row('updates', 'checking...', '');
+  if (U.error) return row('updates', esc(U.error), `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">retry</button>`);
+  let h = row('version', 'meowify ' + esc(U.current) + (U.latest ? ', latest ' + esc(U.latest) : ''),
+    `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">check now</button>`);
+  if (st.state && st.state !== 'idle') {
+    h += row('status', esc(st.msg || st.state),
+      st.needs_restart ? `<button class="btn btn-filled mu-ripple" onclick="_updRestart()">restart</button>` : '');
+  }
+  const busy = st.state === 'running';
+  for (const it of (U.items || [])) {
+    let sub;
+    if (it.id === 'deps') {
+      const ps = it.packages || [];
+      sub = ps.slice(0, 4).map(p => esc(p.name) + ' ' + esc(p.current) + ' to ' + esc(p.latest)).join(', ')
+        + (ps.length > 4 ? ' and ' + (ps.length - 4) + ' more' : '');
+    } else {
+      sub = esc(it.current) + ' to ' + esc(it.latest) + (it.notes ? ', ' + esc(it.notes) : '');
+    }
+    if (it.can_apply) {
+      h += row(esc(it.name), sub,
+        `<button class="btn btn-filled mu-ripple" ${busy ? 'disabled' : ''} onclick="_updApply('${it.id}')">update</button>`);
+    } else {
+      h += rowDisabled(esc(it.name), esc(it.reason || 'cannot update here'), '');
+    }
+  }
+  if (!(U.items || []).length) h += row('up to date', 'nothing to update', '');
+  return h;
 }
 
 function setSettingsSection(id) {
@@ -29347,6 +29659,7 @@ def main():
     host = '127.0.0.1'
     port = _cached_port()
     url = f'http://{host}:{port}'
+    threading.Thread(target=_upd_confirm_boot, args=(host, port), daemon=True).start()
 
     if sys.platform == 'win32':
         use_webview = CFG.get('win_use_webview', True) and not no_browser
