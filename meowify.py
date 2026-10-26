@@ -12072,14 +12072,31 @@ body.design-glassy .list-header.pinned::before{
   z-index: 50;
   border-top: 1px solid var(--line-low);
 }
-#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; }
+#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; }
 @property --s { syntax: '<number>'; inherits: true; initial-value: .8; }
 @keyframes tab-pop { from { --s: .6; } }
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
   --lw: 36px; --py: 4px; --px: max(2px, min(12px, calc(50% - var(--lw)))); --s: .8;
-  isolation: isolate;
+  /* clip = the scaled pill outline: same box as ::before + full radius (r = half height, needs cqh from #mobile-nav) */
+  --ix: min(calc(50% - (50% - var(--px)) * var(--s)), max(0px, calc(50% - var(--lw))));
+  --iy: min(calc(50cqh - (50cqh - var(--py)) * var(--s)), 6px);
+  --r: calc(50cqh - var(--iy));
+  --m: calc(var(--r) * .246); /* bezier handle for superellipse(1.5): (1 - .754) * r */
+  --x0: var(--ix); --x1: calc(var(--ix) + var(--r)); --x2: calc(100% - var(--ix) - var(--r)); --x3: calc(100% - var(--ix));
+  --y0: var(--iy); --y1: calc(var(--iy) + var(--r)); --y2: calc(100% - var(--iy) - var(--r)); --y3: calc(100% - var(--iy));
+  clip-path: shape(
+    from var(--x1) var(--y0),
+    line to var(--x2) var(--y0),
+    curve to var(--x3) var(--y1) with calc(var(--x3) - var(--m)) var(--y0) / var(--x3) calc(var(--y0) + var(--m)),
+    line to var(--x3) var(--y2),
+    curve to var(--x2) var(--y3) with var(--x3) calc(var(--y3) - var(--m)) / calc(var(--x3) - var(--m)) var(--y3),
+    line to var(--x1) var(--y3),
+    curve to var(--x0) var(--y2) with calc(var(--x0) + var(--m)) var(--y3) / var(--x0) calc(var(--y3) - var(--m)),
+    line to var(--x0) var(--y1),
+    curve to var(--x1) var(--y0) with var(--x0) calc(var(--y0) + var(--m)) / calc(var(--x0) + var(--m)) var(--y0),
+    close);
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
