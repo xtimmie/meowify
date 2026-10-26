@@ -12078,11 +12078,8 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --lw: 36px; --py: 4px; --px: max(2px, min(12px, calc(50% - var(--lw)))); --pill-r: 16px; --s: .8;
-  clip-path: inset(
-    min(calc(50% - (50% - var(--py)) * var(--s)), 6px)
-    min(calc(50% - (50% - var(--px)) * var(--s)), max(0px, calc(50% - var(--lw))))
-    round calc(var(--pill-r) * var(--s)));
+  --lw: 36px; --py: 4px; --px: max(2px, min(12px, calc(50% - var(--lw)))); --s: .8;
+  isolation: isolate;
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
@@ -12096,7 +12093,8 @@ body.design-glassy .list-header.pinned::before{
   content: '';
   position: absolute;
   inset: var(--py) var(--px);
-  border-radius: var(--pill-r);
+  border-radius: 999px;
+  corner-shape: superellipse(1.5);
   background: color-mix(in oklch,var(--color-primary) 20%,#0000);
   opacity: 0;
   transform: scale(var(--s));
@@ -26335,9 +26333,9 @@ function _applyDesignImpl(design) {
   body.design-glassy .inp:focus{background:rgba(255,255,255,.08)!important;border-color:color-mix(in oklch,var(--color-primary) 70%,var(--glass-border-hi))!important;box-shadow:0 0 0 3px color-mix(in oklch,var(--color-primary) 15%,transparent)}
   body.design-glassy .prog-wrap{background:rgba(255,255,255,.08)!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #mobile-nav{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border)}
-  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:64px;bottom:-10px;padding-bottom:10px;margin:0 2px;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
+  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:64px;bottom:-10px;padding-bottom:10px;margin:0 6px;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
-  body.design-glassy #app.mobile #player{bottom:58px;margin:0 2px;border-width:1px;border-radius:34px}
+  body.design-glassy #app.mobile #player{bottom:58px;margin:0 6px;border-width:1px;border-radius:34px}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
   body.design-glassy #global-prog{background:rgba(255,255,255,.07)!important}
   body.design-glassy .pl-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important;box-shadow:var(--glass-spec-panel)}
