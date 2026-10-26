@@ -19404,6 +19404,29 @@ function tickLyrics(currentTime) {
 // ── queue virtual list ────────────────────────────────────────────────────────
 let _qvlist = null;
 
+function _queueRowClick(row, e) {
+  const id = row.dataset.id;
+  if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.selectMode) { _setSelectMode(true); _lastSelectedId = null; }
+  if (!S.selectMode) {
+    const qi = parseInt(row.dataset.qi);
+    S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
+    return;
+  }
+  if (e.shiftKey && _lastSelectedId) {
+    const ids = S.queue.map(s => s.id);
+    const a = ids.indexOf(_lastSelectedId), b = ids.indexOf(id);
+    if (a >= 0 && b >= 0) {
+      window.getSelection()?.removeAllRanges();
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      S.selected.clear();
+      for (let i = lo; i <= hi; i++) S.selected.add(ids[i]);
+      refreshSelectionUI();
+      return;
+    }
+  }
+  _toggleSel(id);
+}
+
 function _makeQueueRow(s, i) {
   const isCur = i === S.qi;
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
@@ -19428,11 +19451,7 @@ function _makeQueueRow(s, i) {
     e.stopPropagation();
     _removeQueueRowsAt(parseInt(el.dataset.qi), el.dataset.id);
   });
-  el.addEventListener('click', () => {
-    if (S.selectMode) { _toggleSel(el.dataset.id); return; }
-    const qi = parseInt(el.dataset.qi);
-    S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
-  });
+  el.addEventListener('click', e => _queueRowClick(el, e));
   return el;
 }
 
@@ -19731,7 +19750,7 @@ function renderQueueSidebar() {
     row.querySelector('.smenu-btn')?.addEventListener('click', e => {
       e.stopPropagation(); _removeQueueRowsAt(parseInt(row.dataset.qi), row.dataset.id);
     });
-    row.addEventListener('click', () => { if (S.selectMode) { _toggleSel(row.dataset.id); return; } const _i = parseInt(row.dataset.qi); S.qi = _i; S.cur = S.queue[_i]; playSong(S.cur); });
+    row.addEventListener('click', e => _queueRowClick(row, e));
   });
   _queueAfterFullRender(inner, _hadSig, _prevScroll);
   // drag-to-reorder for small queue
