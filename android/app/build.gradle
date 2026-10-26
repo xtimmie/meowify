@@ -1,0 +1,127 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.xtim.meowify'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.xtim.meowify"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+
+        // chaquopy: python block inside defaultConfig is correct for plugin 15.x
+        // when applied via buildscript classpath (not plugins DSL version catalog)
+        python {
+            version "3.13"
+
+            pip {
+                install "flask==3.0.3"
+                install "werkzeug==3.0.3"
+                install "yt-dlp==2026.6.9"
+                install "mutagen==1.47.0"
+                install "ytmusicapi==1.7.2"
+                install "dropbox"
+            }
+        }
+    }
+
+    signingConfigs {
+        debug {
+            // uses default Android debug keystore
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+        }
+        debug {
+            applicationIdSuffix ".debug"
+            debuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            keepDebugSymbols += ['**/*.so']
+        }
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+def repoRoot = rootProject.projectDir.parentFile
+def assetsDir = file("src/main/assets")
+
+tasks.register("syncPyAssets", Copy) {
+    doFirst {
+        ["meowify.py", "android_patch.py"].each { n ->
+            if (!new File(repoRoot, n).isFile()) {
+                throw new GradleException("$n not found in $repoRoot")
+            }
+        }
+    }
+    from(new File(repoRoot, "meowify.py"))
+    from(new File(repoRoot, "android_patch.py"))
+    into(assetsDir)
+}
+
+tasks.register("syncMotionui", Sync) {
+    doFirst {
+        if (!new File(repoRoot, "motionui").isDirectory()) {
+            throw new GradleException("motionui/ not found in $repoRoot (clone the motionui repo there)")
+        }
+    }
+    from(new File(repoRoot, "motionui"))
+    into(new File(assetsDir, "motionui"))
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn "syncPyAssets", "syncMotionui"
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.webkit:webkit:1.10.0'
+    implementation 'androidx.lifecycle:lifecycle-service:2.7.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+    implementation 'androidx.media:media:1.7.0'
+}
