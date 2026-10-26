@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Meowify" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryVariant">@color/colorPrimaryDark</item>
+        <item name="colorOnPrimary">#111111</item>
+        <item name="android:windowBackground">@color/colorBackground</item>
+        <item name="android:statusBarColor">@color/colorBackground</item>
+        <item name="android:navigationBarColor">@color/colorBackground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

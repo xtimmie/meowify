@@ -1,0 +1,15 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+/motionui/
+__pycache__/
+android/app/src/main/assets/meowify.py
+android/app/src/main/assets/android_patch.py
+android/app/src/main/assets/motionui/
+android/app/src/main/assets/ffmpeg

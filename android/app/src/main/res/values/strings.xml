@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">meowify</string>
+    <string name="notification_server_title">meowify</string>
+    <string name="notification_server_text">server running</string>
+</resources>

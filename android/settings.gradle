@@ -1,0 +1,15 @@
+// NOTE: pluginManagement is only needed for plugins{} DSL style.
+// We use buildscript{} classpath style in build.gradle instead,
+// so this file just declares repos and the project structure.
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://chaquo.com/maven" }
+    }
+}
+
+rootProject.name = "meowify"
+include ':app'

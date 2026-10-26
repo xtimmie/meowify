@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0d0d0d">
+
+    <!-- main webview — hidden until server is up -->
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- loading screen shown while server starts -->
+    <LinearLayout
+        android:id="@+id/loadingView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="visible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminateTint="#6fcf97"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="meowify"
+            android:textColor="#6fcf97"
+            android:textSize="22sp"
+            android:letterSpacing="0.05"
+            android:fontFamily="sans-serif-light" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="starting server…"
+            android:textColor="#777777"
+            android:textSize="13sp"
+            android:layout_marginTop="6dp" />
+
+    </LinearLayout>
+
+    <!-- error view shown if server fails to start -->
+    <LinearLayout
+        android:id="@+id/errorView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚠ server failed to start"
+            android:textColor="#eb5757"
+            android:textSize="16sp"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="retry"
+            android:backgroundTint="#6fcf97"
+            android:textColor="#111"
+            android:onClick="retryStart" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
