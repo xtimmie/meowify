@@ -12209,7 +12209,8 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{tr
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{opacity:1;translate:0 0}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{scale:1}
 #qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
-#app:not(.mobile) #qs-sel-btn{display:none}
+#app:not(.mobile) .sel-handle{display:none!important}
+body.select-mode #app:not(.mobile) .sel-reorderable :is(.song-row-mobile,.song-row){padding-right:8px!important}
 /* sort drawer items */
 .mob-sort-drawer-item {
   display: flex; align-items: center; justify-content: space-between;
@@ -19406,7 +19407,7 @@ let _qvlist = null;
 
 function _queueRowClick(row, e) {
   const id = row.dataset.id;
-  if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.selectMode) { _setSelectMode(true, true); _lastSelectedId = null; }
+  if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.selectMode) { _setSelectMode(true); _lastSelectedId = null; }
   if (!S.selectMode) {
     const qi = parseInt(row.dataset.qi);
     S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
@@ -19425,7 +19426,6 @@ function _queueRowClick(row, e) {
     }
   }
   _toggleSel(id);
-  if (S.selQuiet && !S.selected.size) _setSelectMode(false);
 }
 
 function _makeQueueRow(s, i) {
@@ -22496,34 +22496,25 @@ const _SEL_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" s
 // drag handle shown on the right of rows in select mode (queue + playlists, the only reorderable lists)
 const _SEL_HANDLE = '<div class="sel-handle"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:block"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg></div>';
 
-function _setSelectMode(on, quiet) {
+function _setSelectMode(on) {
   on = !!on;
   if (!!S.selectMode === on) return;
   S.selectMode = on;
-  S.selQuiet = on && !!quiet;
   if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
   // in select mode the queue (<=400) renders as the plain songlist so it shares the songlist drag engine
   const _qRe = () => {}; // queue is always the plain songlist up to 400 now, nothing to swap
   if (on) {
     _qRe();
     // two frames so freshly built rows exist unstyled first and the slide-in actually animates
-    requestAnimationFrame(() => requestAnimationFrame(() => { if (S.selectMode && !S.selQuiet) document.body.classList.add('select-mode'); }));
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (S.selectMode) document.body.classList.add('select-mode'); }));
   } else {
     document.body.classList.remove('select-mode');
     setTimeout(() => { if (!S.selectMode) _qRe(); }, 340); // after the slide-out finished
   }
-  document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.toggle('on', on && !S.selQuiet); b.classList.toggle('active', on && !S.selQuiet); });
+  document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
 }
 
-function toggleSelectMode() {
-  if (S.selectMode && S.selQuiet) {
-    S.selQuiet = false;
-    document.body.classList.add('select-mode');
-    document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.add('on'); b.classList.add('active'); });
-    return;
-  }
-  _setSelectMode(!S.selectMode);
-}
+function toggleSelectMode() { _setSelectMode(!S.selectMode); }
 
 function _toggleSel(id) {
   if (!id) return;
