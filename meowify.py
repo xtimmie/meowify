@@ -28858,7 +28858,7 @@ async function _updCheck(force) {
   _updBusy = true;
   renderSettings();
   const r = await api('GET', '/api/update/check' + (force ? '?force=1' : ''));
-  window._UPD = (r && !r.error) ? r : {error: (r && r.error) || 'check failed', items: []};
+  window._UPD = (r && !r.error && typeof r === 'object') ? r : {error: (r && typeof r.error === 'string' && r.error) || 'update check failed', items: []};
   _updBusy = false;
   renderSettings();
 }
