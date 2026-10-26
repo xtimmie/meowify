@@ -12855,7 +12855,9 @@ function setMobileTab(tab){
     S.view='playlists-mobile';
     document.getElementById('vtitle').textContent='playlists';
     document.getElementById('tacts').innerHTML=
-      `<button class="btn btn-fill mu-ripple" onclick="showCreatePl()" style="height:30px;">+ new</button>`;
+      `<button class="cbtn mu-ripple" title="new playlist" onclick="showCreatePl()">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>`;
     document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
     _updateMobileTab('playlists-mobile');
     renderMobilePlaylists();
@@ -17378,9 +17380,9 @@ function setView(v, pid, aid) {
     tacts.innerHTML = `
       <input type="file" id="spotify-history-in" multiple accept=".json" style="display:none"
         onchange="importSpotifyHistory(this)">
-      <button class="btn btn-out mu-ripple" style="padding:4px 14px;font-size:13px;display:flex;align-items:center;gap:6px"
+      <button class="cbtn mu-ripple" title="import spotify stats"
         onclick="document.getElementById('spotify-history-in').click()">
-        ♫ import spotify stats
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" style="display:block"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
       </button>`;
     renderStats();
   } else if (v === 'settings') {
@@ -27366,8 +27368,8 @@ function statsSection(title, songs, showRank) {
 
 async function importSpotifyHistory(input) {
   if (!input.files.length) return;
-  const btn = document.querySelector('#tacts .btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'importing...'; }
+  const btn = document.querySelector('#tacts .cbtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.4'; }
   const fd = new FormData();
   for (const f of input.files) fd.append('files', f);
   input.value = '';
@@ -27414,7 +27416,7 @@ async function importSpotifyHistory(input) {
     showModal('import failed', `<p>${esc(String(e))}</p>`,
       `<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '♫ import spotify stats'; }
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
   }
 }
 
