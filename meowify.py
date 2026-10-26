@@ -10410,14 +10410,14 @@ body.rs-full #app:not(.mobile) #main>#global-prog-status{grid-column:1;grid-row:
 body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
-#vc{flex:1;overflow:auto;padding:0 24px var(--bar-h)}
+#vc{flex:1;overflow:auto;padding:0 16px var(--bar-h)}
 body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -24px!important}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
 body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);width:calc(100% + 1px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
 body.design-glassy #app:not(.mobile) #vc-wrap:has(.list-header.pinned)::before{opacity:1}
 body.design-glassy #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap::before{box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 var(--glass-border) inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 rgba(255,255,255,.09) inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
-#vc{--pin-bg:var(--color-surface);--view-top:20px}
+#vc{--pin-bg:var(--color-surface);--view-top:14px}
 #vc > :first-child{margin-top:var(--view-top)}
 body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
 body.design-paper #vc{--pin-bg:var(--paper-surface)}
@@ -11177,7 +11177,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 }
 .p-left{display:flex;align-items:center;gap:12px;overflow:visible;}
 .p-cover{
-  width:52px;height:52px;border-radius:var(--radius-sm);
+  width:52px;height:52px;border-radius:var(--radius-xl);
   background:var(--color-surface-container);flex-shrink:0;
   display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;
 }
@@ -12044,7 +12044,7 @@ body.design-glassy .list-header.pinned::before{
 #app.mobile #main  { grid-area: 1/1/2/2; }
 #app.mobile #player {
   grid-template-columns: 1fr auto;
-  padding: 8px 12px 19px;
+  padding: 8px 12px 19px 8px;
   position: fixed;
   bottom: 45px;
   left: 0; right: 0;
@@ -26335,7 +26335,7 @@ function _applyDesignImpl(design) {
   body.design-glassy .inp:focus{background:rgba(255,255,255,.08)!important;border-color:color-mix(in oklch,var(--color-primary) 70%,var(--glass-border-hi))!important;box-shadow:0 0 0 3px color-mix(in oklch,var(--color-primary) 15%,transparent)}
   body.design-glassy .prog-wrap{background:rgba(255,255,255,.08)!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #mobile-nav{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-top:1px solid var(--glass-border)}
-  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:54px;bottom:0;margin:0;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
+  body.design-glassy #app.mobile #mobile-nav{box-sizing:border-box;height:64px;bottom:-10px;padding-bottom:10px;margin:0 2px;overflow:hidden;border:1px solid var(--glass-border);border-bottom:none;border-radius:34px 34px 0 0;box-shadow:var(--glass-spec-panel);background:var(--glass-bg-mid)!important}
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
   body.design-glassy #app.mobile #player{bottom:58px;margin:0 2px;border-width:1px;border-radius:34px}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
