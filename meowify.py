@@ -8067,6 +8067,9 @@ def _upd_check(force=False):
         cur = info['version']
     try:
         man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    except _urllib_error.HTTPError as e:
+        msg = 'no release published yet' if e.code == 404 else f'github returned {e.code}'
+        return {'error': msg, 'current': cur, 'items': []}
     except Exception as e:
         return {'error': f'could not reach github ({e.__class__.__name__})', 'current': cur, 'items': []}
     out = {'platform': sys.platform, 'current': cur, 'latest': man.get('version'), 'items': []}
