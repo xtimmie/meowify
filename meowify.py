@@ -13376,7 +13376,7 @@ function _fitColsToWidth(cols,availableW){
   if(!S.colWidths)S.colWidths={};
   const fixedW=cols.reduce((s,k)=>s+(COL_DEFS[k]?.fixed?COL_DEFS[k].w:0),0);
   // .song-row has gap:12px between every column - subtract total gap from available space
-  const gapTotal=(cols.length-1)*12;
+  const gapTotal=(cols.length-1)*12+16;
   const space=availableW-fixedW-gapTotal;
   if(space<=0)return;
   const scalable=cols.filter(k=>!COL_DEFS[k]?.fixed);
