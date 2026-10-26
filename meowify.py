@@ -10322,7 +10322,8 @@ svg {overflow: visible}
   overflow:hidden;background:var(--color-surface);
 }
 .topbar{
-  display:flex;align-items:center;gap:6px;
+  --tb-gap:6px; /* spacing between every topbar button/group */
+  display:flex;align-items:center;gap:var(--tb-gap);
   padding:6px 12px 4px 8px;
   flex-shrink:0;
   color:color-mix(in srgb, var(--color-on-primary-container) 50%, #ffffff 50%);
@@ -10387,7 +10388,7 @@ svg {overflow: visible}
   opacity:1;
   pointer-events:all;
 }
-.topbar-acts{display:flex;gap:8px;flex-shrink:0;min-width:0}
+.topbar-acts{display:flex;align-items:center;gap:var(--tb-gap);flex-shrink:0;min-width:0}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar{width:8px}
@@ -12175,6 +12176,9 @@ body.design-glassy .list-header.pinned::before{
 #tsearch-pL{transition:d .1s cubic-bezier(0,1,0,1),transform .4s cubic-bezier(.4,1.8,.6,1)}
 #tsearch-pR{transition:d .5s cubic-bezier(.1,1.4,.3,1)}
 #tsearch-btn.open #tsearch-pL{transition:d .5s cubic-bezier(.3,1.25,0,1),transform .4s cubic-bezier(.4,1.8,.6,1)}
+/* optical centering: the closed lens+handle ink sits up-left of its box, nudge it back (X state is symmetric so it resets) */
+#tsearch-btn svg{translate:.5px 1px;transition:translate .4s cubic-bezier(.4,1.8,.6,1)}
+#tsearch-btn.open svg{translate:0 0}
 
 #dl-panel-btn path, #dl-panel-btn polyline { transition: .4s cubic-bezier(.3,2,.4,1) }
 #dl-panel-btn.active path { d: path("M3,15 Q4,22 12,22 Q20,22 21,15") }
@@ -12193,6 +12197,7 @@ body.design-glassy .list-header.pinned::before{
 }
 .mob-sort-btn svg { flex-shrink: 0; }
 #app:not(.mobile) #sel-mode-btn{display:none}
+#sel-mode-btn svg{translate:-.4px .2px} /* optical centering: the tick overshoots the checkbox to the top right */
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow.drag-stacked{transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
 :where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
@@ -12442,7 +12447,7 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{s
         </div>
       </div>
       <div class="topbar-acts" id="tacts"></div>
-      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:4px">
+      <div class="topbar-acts">
         <button id="sel-mode-btn" class="cbtn mu-ripple" title="select" onclick="toggleSelectMode()">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg>
         </button>
