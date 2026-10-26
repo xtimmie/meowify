@@ -12799,6 +12799,7 @@ function isMobile(){return window.innerWidth<768;}
   vc.addEventListener('scroll', sync, { passive: true });
   new MutationObserver(sync).observe(vc, { childList: true });
   new ResizeObserver(sync).observe(vc);
+  window._syncVcFade = sync; // called right after programmatic scrollTop resets so tab switches snap instantly
   sync();
 })();
 let _listCompact=false;
@@ -12852,6 +12853,7 @@ function setMobileTab(tab){
 function openPlaylistsView(){
   if(S._vlist){S._vlist.destroy();S._vlist=null;}
   document.getElementById('vc').scrollTop=0;
+  window._syncVcFade?.();
   setMobileTab('playlists');
   document.getElementById('nb-pls')?.classList.add('active');
 }
@@ -17303,6 +17305,7 @@ function setView(v, pid, aid) {
     w.remove();
   });
   document.getElementById('vc').scrollTop = 0;
+  window._syncVcFade?.();
   // destroy vlist when leaving - its container will be gone after next render
   if (v !== 'library' && S._vlist) { S._vlist.destroy(); S._vlist = null; }
   if (S.view === 'settings' && v !== 'settings') window.resetGear?.();
