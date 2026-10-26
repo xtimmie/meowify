@@ -101,14 +101,42 @@ tasks.register("syncPyAssets", Copy) {
     into(assetsDir)
 }
 
-tasks.register("syncMotionui", Sync) {
-    doFirst {
-        if (!new File(repoRoot, "motionui").isDirectory()) {
-            throw new GradleException("motionui/ not found in $repoRoot (clone the motionui repo there)")
+tasks.register("syncMotionui") {
+    doLast {
+        def dest = new File(assetsDir, "motionui")
+        def lp = new Properties()
+        def lpf = new File(rootProject.projectDir, "local.properties")
+        if (lpf.isFile()) lpf.withInputStream { lp.load(it) }
+        def localSrc = lp.getProperty("motionui.local")
+        if (localSrc) {
+            delete(dest)
+            copy {
+                from(localSrc)
+                into(dest)
+            }
+            return
         }
+        def tagFile = new File(repoRoot, "motionui.version")
+        if (!tagFile.isFile()) {
+            throw new GradleException("motionui.version not found in $repoRoot")
+        }
+        def tag = tagFile.text.trim()
+        def stamp = new File(dest, ".tag")
+        if (stamp.isFile() && stamp.text.trim() == tag) return
+        def zip = new File(buildDir, "motionui-${tag}.zip")
+        zip.parentFile.mkdirs()
+        new URL("https://github.com/xtimmie/motionui/archive/refs/tags/${tag}.zip").withInputStream { i ->
+            zip.withOutputStream { o -> o << i }
+        }
+        delete(dest)
+        copy {
+            from(zipTree(zip))
+            into(dest)
+            eachFile { it.path = it.path.substring(it.path.indexOf('/') + 1) }
+            includeEmptyDirs = false
+        }
+        stamp.text = tag
     }
-    from(new File(repoRoot, "motionui"))
-    into(new File(assetsDir, "motionui"))
 }
 
 tasks.matching { it.name == "preBuild" }.configureEach {
