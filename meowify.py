@@ -12078,13 +12078,18 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --lw: 36px; --py: 4px; --px: max(2px, min(var(--py), calc(50% - var(--lw)))); --s: .8;
+  --lw: 36px; --py: 4px; --gap: 6px; --s: .8;
+  --px: max(2px, min(var(--py), calc(50% - var(--lw)))); /* outer side inset */
+  --gi: max(0px, min(var(--gap), calc(50% - var(--lw) - var(--px)))); /* extra inner-side inset, shrinks to 0 first on narrow widths */
+  --pl: calc(var(--px) + var(--gi)); --pr: calc(var(--px) + var(--gi));
   /* clip = the scaled pill outline: same box as ::before + full radius (r = half height, needs cqh from #mobile-nav) */
-  --ix: min(calc(50% - (50% - var(--px)) * var(--s)), max(0px, calc(50% - var(--lw))));
+  --cx: calc((100% + var(--pl) - var(--pr)) / 2); --hw: calc((100% - var(--pl) - var(--pr)) / 2); /* pill center + half width, it scales around its own center */
+  --ix0: min(calc(var(--cx) - var(--hw) * var(--s)), max(0px, calc(50% - var(--lw))));
+  --ix1: min(calc(100% - var(--cx) - var(--hw) * var(--s)), max(0px, calc(50% - var(--lw))));
   --iy: min(calc(50cqh - (50cqh - var(--py)) * var(--s)), 6px);
   --r: calc(50cqh - var(--iy));
   --m: calc(var(--r) * .246); /* bezier handle for superellipse(1.5): (1 - .754) * r */
-  --x0: var(--ix); --x1: calc(var(--ix) + var(--r)); --x2: calc(100% - var(--ix) - var(--r)); --x3: calc(100% - var(--ix));
+  --x0: var(--ix0); --x1: calc(var(--ix0) + var(--r)); --x2: calc(100% - var(--ix1) - var(--r)); --x3: calc(100% - var(--ix1));
   --y0: var(--iy); --y1: calc(var(--iy) + var(--r)); --y2: calc(100% - var(--iy) - var(--r)); --y3: calc(100% - var(--iy));
   clip-path: shape(
     from var(--x1) var(--y0),
@@ -12109,7 +12114,7 @@ body.design-glassy .list-header.pinned::before{
 .mob-tab::before {
   content: '';
   position: absolute;
-  inset: var(--py) var(--px);
+  inset: var(--py) var(--pr) var(--py) var(--pl);
   border-radius: 999px;
   corner-shape: superellipse(1.5);
   background: color-mix(in oklch,var(--color-primary) 20%,#0000);
@@ -12120,6 +12125,8 @@ body.design-glassy .list-header.pinned::before{
 }
 .mob-tab.active { color: var(--color-primary); --s: 1; animation: tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy); }
 .mob-tab.active::before { opacity: 1; transition: opacity .1s; }
+.mob-tab:first-child { --pl: var(--px); }
+.mob-tab:last-child { --pr: var(--px); }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
 /* mobile seekbar */
 #mob-seek {
