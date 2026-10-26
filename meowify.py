@@ -8138,6 +8138,8 @@ def _upd_do_app():
             if cur.exists():
                 shutil.copy2(cur, bak / name)
         (bak / 'install.json').write_text(json.dumps(info), encoding='utf-8')
+        shutil.rmtree(bak / 'motionui', ignore_errors=True)
+        (bak / 'motionui_path.txt').write_text(str(MOTIONUI_DIR), encoding='utf-8')
         if mu_new is not None:
             dest = Path(MOTIONUI_DIR)
             shutil.rmtree(bak / 'motionui', ignore_errors=True)
@@ -8152,7 +8154,7 @@ def _upd_do_app():
             os.replace(staged, _APP_DIR / name)
         info.update(version=man.get('version'), tag=tag, motionui=mu_tag or info.get('motionui'))
         _INSTALL_JSON.write_text(json.dumps(info), encoding='utf-8')
-        (_APP_DIR / '.booting').write_text(str(time.time()), encoding='utf-8')
+        (_APP_DIR / '.booting').write_text('pending', encoding='utf-8')
         _upd_set('done', f"updated to {man.get('version')}, restart to apply", True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
