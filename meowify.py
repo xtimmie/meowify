@@ -12781,6 +12781,10 @@ const VIEW_COLS = {
 
 let _dragCol=null,_dragColRight=null,_dragStartX=0,_dragStartW=0,_dragStartWRight=0,_dragMoved=false;
 function isMobile(){return window.innerWidth<768;}
+// toggles body.vc-scrolled once #vc is scrolled off the top (capture because scroll doesnt bubble)
+document.addEventListener('scroll',e=>{
+  if(e.target&&e.target.id==='vc')document.body.classList.toggle('vc-scrolled',e.target.scrollTop>2);
+},{capture:true,passive:true});
 let _listCompact=false;
 function isCompactList(){return isMobile()||_listCompact;}
 const COMPACT_COLS=['num','title','menu'];
@@ -26257,7 +26261,8 @@ function _applyDesignImpl(design) {
   body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
-  body.design-glassy #app.mobile .topbar{border-radius:44px;corner-shape:superellipse(2.2)}
+  body.design-glassy #app.mobile .topbar{border-radius:0 0 44px 44px;corner-shape:superellipse(2.2);background:transparent!important;box-shadow:0 20px 25px var(--color-surface-dim)!important;border-bottom-color:var(--glass-border);transition:box-shadow var(--dur-3,.2s) ease,border-color var(--dur-3,.2s) ease}
+  body.design-glassy:not(.vc-scrolled) #app.mobile .topbar{box-shadow:none!important;border-bottom-color:transparent}
   body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
   body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
