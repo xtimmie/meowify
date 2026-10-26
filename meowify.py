@@ -10423,7 +10423,7 @@ body.design-glassy #vc{--pin-bg:rgba(0,0,0,.18)}
 body.design-paper #vc{--pin-bg:var(--paper-surface)}
 body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 #app:not(.mobile) #vc:has(.list-header.pinned){background:linear-gradient(var(--pin-bg),var(--pin-bg)) right 0 top 0/var(--sbw,0px) var(--pin-h,34px) no-repeat}
-#app.mobile #vc{padding-left:8px;padding-right:8px}
+#app.mobile #vc{padding-left:8px;padding-right:8px;--view-top:8px}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
