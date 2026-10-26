@@ -10416,7 +10416,7 @@ body.rs-full #app:not(.mobile) #content-area{display:contents}
 body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 16px var(--bar-h)}
-body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -24px!important}
+body.design-glassy #app:not(.mobile) .list-header.pinned::before{background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important;box-shadow:none!important;top:0!important;margin:0 -16px!important}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative}
 body.design-glassy #app:not(.mobile) #vc-wrap::before{content:"";position:absolute;top:0;left:0;right:0;height:var(--pin-h,0px);width:calc(100% + 1px);border-radius:inherit;corner-shape: inherit;pointer-events:none;z-index:5;opacity:0;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:opacity 180ms var(--ease-out),box-shadow var(--dur-8) var(--ease-spring-soft);box-shadow:0 1px 0 var(--glass-border) inset,1px 0 0 var(--glass-border) inset,-1px 0 0 transparent inset,0 2px 0 rgba(255,255,255,.09) inset,2px 0 0 rgba(255,255,255,.09) inset,-2px 0 0 transparent inset,0 2px 0 rgba(0,0,0,.14) inset,0 -1px 0 transparent inset}
@@ -12000,7 +12000,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .list-header::before{
   content:'';
   position:absolute;inset:0;
-  margin:0 -24px;
+  margin:0 -16px;
   background:transparent;
   z-index:-1;
   /*transition:background 180ms var(--ease-out),box-shadow 180ms var(--ease-out),backdrop-filter 180ms var(--ease-out),-webkit-backdrop-filter 180ms var(--ease-out),border-color 180ms var(--ease-out);*/
