@@ -13,3 +13,13 @@ android/app/src/main/assets/meowify.py
 android/app/src/main/assets/android_patch.py
 android/app/src/main/assets/motionui/
 android/app/src/main/assets/ffmpeg
+/app.ico
+/app.ico.sig
+/app-live.ico
+/*.ico.new
+/meowify.log*
+/backup/
+/.booting
+/.install.json
+/venv/
+/bin/
