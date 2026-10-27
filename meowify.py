@@ -12210,6 +12210,17 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{opacity:1;
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{scale:1}
 #qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
 #app:not(.mobile) .sel-handle{display:none!important}
+/* the remove ghost lives in the sidebar, outside #queue-inner, so it needs its own copy of the select-mode look */
+.qs-ghost-wrap .song-row{padding-left:8px!important;padding-right:8px!important}
+body.select-mode .qs-ghost-wrap .song-row{padding-left:44px!important;padding-right:44px!important}
+body.select-mode #app:not(.mobile) .qs-ghost-wrap .song-row{padding-right:8px!important}
+body.select-mode .qs-ghost-wrap .song-row.selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
+.qs-ghost-wrap .song-row::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9}
+.qs-ghost-wrap .song-row::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none}
+body.select-mode .qs-ghost-wrap .song-row::before{opacity:1;translate:0 0}
+body.select-mode .qs-ghost-wrap .song-row::after{translate:0 0}
+body.select-mode .qs-ghost-wrap .song-row.selected::before{background:var(--color-primary);border-color:var(--color-primary);scale:1}
+body.select-mode .qs-ghost-wrap .song-row.selected::after{transform:rotate(45deg) scale(1);opacity:1}
 body.select-mode #app:not(.mobile) .sel-reorderable :is(.song-row-mobile,.song-row){padding-right:8px!important}
 /* sort drawer items */
 .mob-sort-drawer-item {
@@ -19486,6 +19497,16 @@ const _qDeferRows = new Set();
 
 // clone the row about to be removed and slide it off to the right. lives in the sidebar
 // (not queue-inner) so the list rebuild can't wipe it. returns the row step for the slide-up
+// real zoom of an element, measured: nested zooms (--ui-zoom inside the app zoom) make _zoom lie
+function _probeZoom(el) {
+  const t0 = el.getBoundingClientRect().top;
+  const old = el.style.translate;
+  el.style.translate = '0 100px';
+  const d = el.getBoundingClientRect().top - t0;
+  el.style.translate = old;
+  return d > 1 ? d / 100 : (_zoom || 1);
+}
+
 function _queueRemoveGhost(i) {
   if (!S.queueOpen || (S.shuffle && S.shuffleMode === 'chaos')) return null;
   if (typeof Element.prototype.animate !== 'function') return null;
@@ -19495,7 +19516,7 @@ function _queueRemoveGhost(i) {
   const rows = _qvlist ? null : inner.querySelectorAll('.song-list > .song-row');
   const row = _qvlist ? _qvlist._nodes.get(i) : rows[i];
   if (!row) return null;
-  const z = _zoom || 1;
+  const z = _probeZoom(row);
   const rr = row.getBoundingClientRect();
   const sr = sb.getBoundingClientRect();
   let step;
@@ -19504,13 +19525,18 @@ function _queueRemoveGhost(i) {
   const op = getComputedStyle(row).opacity;
   const g = row.cloneNode(true);
   g.style.cssText += ';position:absolute;top:' + ((rr.top - sr.top) / z) + 'px;left:' + ((rr.left - sr.left) / z) + 'px;width:' + (rr.width / z) + 'px;height:' + (rr.height / z) + 'px;right:auto;bottom:auto;min-width:0;margin:0;align-self:auto;transform:none;opacity:1;transition:none;z-index:50;pointer-events:none';
-  sb.appendChild(g);
+  // wrapper carries .sel-reorderable so the handle and the checkbox/tick styling apply to the ghost too
+  const wrap = document.createElement('div');
+  wrap.className = 'qs-ghost-wrap sel-reorderable';
+  wrap.style.display = 'contents';
+  wrap.appendChild(g);
+  sb.appendChild(wrap);
   const a = g.animate(
     [{transform: 'translateX(0)', opacity: op}, {transform: 'translateX(' + Math.ceil(sr.width / z) + 'px)', opacity: 0}],
     {duration: 280, easing: 'cubic-bezier(.4,0,.8,.6)'}
   );
-  a.onfinish = a.oncancel = () => g.remove();
-  setTimeout(() => g.remove(), 700);
+  a.onfinish = a.oncancel = () => wrap.remove();
+  setTimeout(() => wrap.remove(), 700);
   return {step};
 }
 
@@ -19562,6 +19588,7 @@ document.addEventListener('pointermove', e => {
       _qSwipeSynth = false;
     }
     // a selected row drags every selected row along with it
+    s.z = _probeZoom(s.row);
     s.all = [s.row];
     if (S.selectMode && S.selected.size > 1 && S.selected.has(s.row.dataset.id)) {
       document.querySelectorAll('#queue-inner .song-row[data-id]').forEach(r => { if (r !== s.row && S.selected.has(r.dataset.id)) s.all.push(r); });
@@ -19570,9 +19597,10 @@ document.addEventListener('pointermove', e => {
     s.all.forEach(r => { r.style.transition = 'none'; r.style.userSelect = 'none'; });
   }
   s.dx = Math.max(0, dx);
+  s.lx = s.dx / (s.z || 1); // translateX lives in the row's own zoomed space, so convert from pointer px
   const w = s.row.offsetWidth || 1;
-  const op = String(Math.max(0.25, 1 - s.dx / (w * 1.1)));
-  s.all.forEach(r => { r.style.transform = 'translateX(' + s.dx + 'px)'; r.style.opacity = op; });
+  const op = String(Math.max(0.25, 1 - s.lx / (w * 1.1)));
+  s.all.forEach(r => { r.style.transform = 'translateX(' + s.lx + 'px)'; r.style.opacity = op; });
 }, true);
 function _qSwipeEnd(e, cancelled) {
   const s = _qSwipe;
@@ -19583,17 +19611,23 @@ function _qSwipeEnd(e, cancelled) {
   setTimeout(() => { _qSwipeSuppressClick = false; }, 60);
   const row = s.row;
   const w = row.offsetWidth || 1;
+  const lx = s.lx || 0;
   const v = s.dx / Math.max(1, performance.now() - s.t0);
-  const commit = !cancelled && row.isConnected && (s.dx > Math.max(90, w * 0.4) || (s.dx > 40 && v > 0.6));
+  const commit = !cancelled && row.isConnected && (lx > Math.max(90, w * 0.4) || (lx > 40 && v > 0.6));
   const i = parseInt(row.dataset.qi);
   if (commit && !isNaN(i)) { _removeQueueRowsAt(i, row.dataset.id); return; }
   const all = s.all || [row];
-  all.forEach(r => {
-    r.style.transition = 'transform .22s var(--ease-out), opacity .22s var(--ease-out)';
+  all.forEach((r, k) => {
+    // ease back from exactly where it was released. WAAPI, so the row's own transition rules can't turn it into a snap
+    const fromOp = r.style.opacity || '1';
+    const fromTf = r.style.transform || 'translateX(0px)';
     r.style.transform = '';
     r.style.opacity = '';
+    const done = () => { r.style.transition = (s.trs && s.trs[k]) || ''; r.style.userSelect = ''; };
+    if (typeof r.animate !== 'function') { done(); return; }
+    const a = r.animate([{transform: fromTf, opacity: fromOp}, {transform: 'translateX(0px)', opacity: 1}], {duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)'});
+    a.onfinish = a.oncancel = done;
   });
-  setTimeout(() => { all.forEach((r, k) => { r.style.transition = (s.trs && s.trs[k]) || ''; r.style.userSelect = ''; }); }, 260);
 }
 document.addEventListener('pointerup', e => _qSwipeEnd(e, false), true);
 document.addEventListener('pointercancel', e => _qSwipeEnd(e, true), true);
@@ -25705,7 +25739,7 @@ function initVlistReorder(vl) {
   let active = false, dropping = false, suppressClick = false;
   let from = -1, ghost = null, grab = 0, z = 1, y0 = 0, startScroll = 0;
   const STACK_GAP = 5;
-  let group = [], rankFrom = 0, startSlot = 0, curY = 0, folls = [], stackAt = 0, stacked = false;
+  let group = [], rankFrom = 0, startSlot = 0, curY = 0, folls = [], stackAt = 0, stacked = false, top0 = 0;
 
   function cancelHold() {
     clearTimeout(holdTimer);
@@ -25715,7 +25749,8 @@ function initVlistReorder(vl) {
 
   function place() {
     const n = vl.songs.length;
-    const y = Math.max(0, Math.min(y0 + (lastY - downY) / z + (sc.scrollTop - startScroll), (n - 1) * vl.ROW_H));
+    // scroll is read from the list's own rect (visual px / z) instead of scrollTop, so no unit can drift at non 100% zoom
+    const y = Math.max(0, Math.min(y0 + (lastY - downY) / z + (top0 - inner.getBoundingClientRect().top) / z, (n - 1) * vl.ROW_H));
     curY = y;
     ghost.style.translate = '0 ' + y + 'px';
     // followers ride in a tight stack under the dragged row
@@ -25762,9 +25797,10 @@ function initVlistReorder(vl) {
     cancelHold();
     from = parseInt(target.dataset.qi);
     if (isNaN(from) || from < 0 || from >= vl.songs.length || vl.songs.length < 2 || !target.isConnected) return;
-    z = _zoom || 1;
-    // same snapshot math as the songlist engine: row top at lift (layout px) + pointer/scroll delta / zoom
-    y0 = (target.getBoundingClientRect().top - inner.getBoundingClientRect().top) / z;
+    z = _probeZoom(target); // measured per drag, same as the songlist engine
+    top0 = inner.getBoundingClientRect().top;
+    // row top at lift (layout px) + pointer/scroll delta / zoom
+    y0 = (target.getBoundingClientRect().top - top0) / z;
     startScroll = sc.scrollTop;
     ghost = target.cloneNode(true);
     ghost.classList.add('drag-lifted', 'drag-anchor');
