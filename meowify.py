@@ -10967,7 +10967,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .np-next-title{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .np-next-artist{font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .lyrics-body{
-  flex:1;overflow-y:auto;padding:16px;
+  flex:1;overflow-y:auto;padding:0 16px;
   scroll-behavior:smooth;
 }
 .lyrics-body::after {
@@ -12197,34 +12197,34 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 :where(.song-row-mobile,#queue-inner .song-row){padding-left:8px!important;padding-right:8px!important;transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out),padding-left .28s var(--ease-out),padding-right .28s var(--ease-out)!important}
 .sel-handle{display:none;position:absolute;right:0;top:0;bottom:0;width:40px;align-items:center;justify-content:center;touch-action:none;color:var(--color-on-surface-variant);cursor:grab;z-index:2;opacity:0;translate:30px 0;pointer-events:none;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out)}
 .sel-reorderable .sel-handle{display:flex}
-body.select-mode .sel-reorderable .sel-handle{opacity:1;translate:0 0;pointer-events:auto}
-body.select-mode .sel-reorderable :is(.song-row-mobile,.song-row){padding-right:44px!important}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row){padding-left:44px!important}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
+body.select-mode #vc .sel-reorderable .sel-handle,body.qselect-mode #queue-inner .sel-reorderable .sel-handle,body.qselect-mode .qs-ghost-wrap.sel-reorderable .sel-handle{opacity:1;translate:0 0;pointer-events:auto}
+body.select-mode #vc .sel-reorderable :is(.song-row-mobile,.song-row),body.qselect-mode #queue-inner .sel-reorderable .song-row{padding-right:44px!important}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row){padding-left:44px!important}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
 :is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out),scale .34s cubic-bezier(.34,1.7,.5,1),background var(--dur-2),border-color var(--dur-2)}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{background:var(--color-primary);border-color:var(--color-primary)}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected::before{background:var(--color-primary);border-color:var(--color-primary)}
 :is(.song-row-mobile,#queue-inner .song-row)::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none;transition:transform .3s cubic-bezier(.34,1.7,.5,1),opacity .12s,translate .28s var(--ease-out)}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::after{translate:0 0}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{transform:rotate(45deg) scale(1);opacity:1}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row)::after{translate:0 0}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected::after{transform:rotate(45deg) scale(1);opacity:1}
 :is(.song-row-mobile,#queue-inner .song-row)::after{margin-top:-5.5px}
 .qs-ghost-wrap .song-row::after{margin-top:-5.5px}
 .sel-reorderable .smenu-btn{transition:opacity .2s var(--ease-out)}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{opacity:1;translate:0 0}
-body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{scale:1}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row)::before{opacity:1;translate:0 0}
+:is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected::before{scale:1}
 #qs-sel-btn.on{background:var(--color-primary-container);color:var(--color-on-primary-container)}
 #app:not(.mobile) .sel-handle{display:none!important}
 /* the remove ghost lives in the sidebar, outside #queue-inner, so it needs its own copy of the select-mode look */
 .qs-ghost-wrap .song-row{padding-left:8px!important;padding-right:8px!important}
-body.select-mode .qs-ghost-wrap .song-row{padding-left:44px!important;padding-right:44px!important}
-body.select-mode #app:not(.mobile) .qs-ghost-wrap .song-row{padding-right:8px!important}
-body.select-mode .qs-ghost-wrap .song-row.selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
+body.qselect-mode .qs-ghost-wrap .song-row{padding-left:44px!important;padding-right:44px!important}
+body.qselect-mode #app:not(.mobile) .qs-ghost-wrap .song-row{padding-right:8px!important}
+body.qselect-mode .qs-ghost-wrap .song-row.selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
 .qs-ghost-wrap .song-row::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9}
 .qs-ghost-wrap .song-row::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none}
-body.select-mode .qs-ghost-wrap .song-row::before{opacity:1;translate:0 0}
-body.select-mode .qs-ghost-wrap .song-row::after{translate:0 0}
-body.select-mode .qs-ghost-wrap .song-row.selected::before{background:var(--color-primary);border-color:var(--color-primary);scale:1}
-body.select-mode .qs-ghost-wrap .song-row.selected::after{transform:rotate(45deg) scale(1);opacity:1}
-body.select-mode #app:not(.mobile) .sel-reorderable :is(.song-row-mobile,.song-row){padding-right:8px!important}
+body.qselect-mode .qs-ghost-wrap .song-row::before{opacity:1;translate:0 0}
+body.qselect-mode .qs-ghost-wrap .song-row::after{translate:0 0}
+body.qselect-mode .qs-ghost-wrap .song-row.selected::before{background:var(--color-primary);border-color:var(--color-primary);scale:1}
+body.qselect-mode .qs-ghost-wrap .song-row.selected::after{transform:rotate(45deg) scale(1);opacity:1}
+body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.song-row),body.qselect-mode #app:not(.mobile) #queue-inner .sel-reorderable .song-row{padding-right:8px!important}
 /* sort drawer items */
 .mob-sort-drawer-item {
   display: flex; align-items: center; justify-content: space-between;
@@ -12514,7 +12514,7 @@ body.select-mode #app:not(.mobile) .sel-reorderable :is(.song-row-mobile,.song-r
         <div class="qs-hdr ui-panel-hdr">
           <div style="display:flex;align-items:center;gap:6px">
             <span>queue</span>
-            <button class="cbtn mu-ripple" id="qs-sel-btn" onclick="toggleSelectMode()" title="select and reorder"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg></button>
+            <button class="cbtn mu-ripple" id="qs-sel-btn" onclick="toggleQSelectMode()" title="select and reorder"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg></button>
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span id="qs-count" style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)"></span>
@@ -15126,6 +15126,8 @@ const S = {
   libSort: 'added_at',
   libSortDir: 'desc',
   selected: new Set(),
+  qSelected: new Set(), // queue has its own selection + select mode, fully separate from the songlist one
+  qSelectMode: false,
   queueOpen: false,
   globalSearch: '',
   globalSearchOpen: false,
@@ -17741,13 +17743,13 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
 
 // queue x button: on a selected row it removes the whole selection
 function _removeQueueRowsAt(qi, id) {
-  if (S.selectMode && S.selected.has(id)) {
+  if (S.qSelectMode && S.qSelected.has(id)) {
     const idx = [], ids = [];
-    S.queue.forEach((s, k) => { if (S.selected.has(s.id)) { idx.push(k); ids.push(s.id); } });
+    S.queue.forEach((s, k) => { if (S.qSelected.has(s.id)) { idx.push(k); ids.push(s.id); } });
     if (idx.length) {
       _removeQueueMany(idx);
-      ids.forEach(x => S.selected.delete(x));
-      refreshSelectionUI();
+      ids.forEach(x => S.qSelected.delete(x));
+      _qRefreshSelUI();
       return;
     }
   }
@@ -17943,7 +17945,7 @@ function _scrollQueueToCurrent() {
 }
 
 function toggleQueue() {
-  if (S.selectMode) _setSelectMode(false);
+  if (S.qSelectMode) _setQSelectMode(false);
   S.queueOpen = !S.queueOpen;
   if (S.queueOpen) {
     _exclusiveOpen('queue');
@@ -19441,28 +19443,29 @@ function tickLyrics(currentTime) {
 
 // ── queue virtual list ────────────────────────────────────────────────────────
 let _qvlist = null;
+let _qLastSel = null; // last tapped queue row, anchor for shift range select (separate from the songlist one)
 
 function _queueRowClick(row, e) {
   const id = row.dataset.id;
-  if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.selectMode) { _setSelectMode(true); _lastSelectedId = null; }
-  if (!S.selectMode) {
+  if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.qSelectMode) { _setQSelectMode(true); _qLastSel = null; }
+  if (!S.qSelectMode) {
     const qi = parseInt(row.dataset.qi);
     S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
     return;
   }
-  if (e.shiftKey && _lastSelectedId) {
+  if (e.shiftKey && _qLastSel) {
     const ids = S.queue.map(s => s.id);
-    const a = ids.indexOf(_lastSelectedId), b = ids.indexOf(id);
+    const a = ids.indexOf(_qLastSel), b = ids.indexOf(id);
     if (a >= 0 && b >= 0) {
       window.getSelection()?.removeAllRanges();
       const lo = Math.min(a, b), hi = Math.max(a, b);
-      S.selected.clear();
-      for (let i = lo; i <= hi; i++) S.selected.add(ids[i]);
-      refreshSelectionUI();
+      S.qSelected.clear();
+      for (let i = lo; i <= hi; i++) S.qSelected.add(ids[i]);
+      _qRefreshSelUI();
       return;
     }
   }
-  _toggleSel(id);
+  _qToggleSel(id);
 }
 
 function _makeQueueRow(s, i) {
@@ -19470,7 +19473,7 @@ function _makeQueueRow(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.selectMode && S.selected.has(s.id) ? ' selected' : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -19597,8 +19600,8 @@ document.addEventListener('pointermove', e => {
     // a selected row drags every selected row along with it
     s.z = _probeZoom(s.row);
     s.all = [s.row];
-    if (S.selectMode && S.selected.size > 1 && S.selected.has(s.row.dataset.id)) {
-      document.querySelectorAll('#queue-inner .song-row[data-id]').forEach(r => { if (r !== s.row && S.selected.has(r.dataset.id)) s.all.push(r); });
+    if (S.qSelectMode && S.qSelected.size > 1 && S.qSelected.has(s.row.dataset.id)) {
+      document.querySelectorAll('#queue-inner .song-row[data-id]').forEach(r => { if (r !== s.row && S.qSelected.has(r.dataset.id)) s.all.push(r); });
     }
     s.trs = s.all.map(r => r.style.transition);
     s.all.forEach(r => { r.style.transition = 'none'; r.style.userSelect = 'none'; });
@@ -19817,7 +19820,7 @@ function renderQueueSidebar() {
 
   // use virtual list for any non-trivial queue
   const QUEUE_VLIST_THRESHOLD = 400;
-  if (S.queue.length > QUEUE_VLIST_THRESHOLD && !(S.selectMode && S.queue.length <= 400)) {
+  if (S.queue.length > QUEUE_VLIST_THRESHOLD && !(S.qSelectMode && S.queue.length <= 400)) {
     inner.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'width:100%;height:100%';
@@ -19850,7 +19853,7 @@ function renderQueueSidebar() {
     getList: () => S.queue,
     getId: s => s.id,
     scrollEl: inner,
-    isSelected: id => !!S.selectMode && S.selected.has(id),
+    isSelected: id => !!S.qSelectMode && S.qSelected.has(id),
     onCommit: async (newIds) => {
       const idMap = new Map(S.queue.map(s => [s.id, s]));
       const curId = S.cur?.id;
@@ -22593,22 +22596,50 @@ const _SEL_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" s
 // drag handle shown on the right of rows in select mode (queue + playlists, the only reorderable lists)
 const _SEL_HANDLE = '<div class="sel-handle"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:block"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg></div>';
 
+// songlist / playlists select mode (topbar button). the queue has its own, see _setQSelectMode
 function _setSelectMode(on) {
   on = !!on;
   if (!!S.selectMode === on) return;
   S.selectMode = on;
   if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); _plSelRefresh(); }
-  // in select mode the queue (<=400) renders as the plain songlist so it shares the songlist drag engine
-  const _qRe = () => {}; // queue is always the plain songlist up to 400 now, nothing to swap
   if (on) {
-    _qRe();
     // two frames so freshly built rows exist unstyled first and the slide-in actually animates
     requestAnimationFrame(() => requestAnimationFrame(() => { if (S.selectMode) document.body.classList.add('select-mode'); }));
   } else {
     document.body.classList.remove('select-mode');
-    setTimeout(() => { if (!S.selectMode) _qRe(); }, 340); // after the slide-out finished
   }
-  document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
+  document.querySelectorAll('#sel-mode-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
+}
+
+// queue select mode (queue sidebar button), own state + own body class so it never touches the songlist one
+function _setQSelectMode(on) {
+  on = !!on;
+  if (!!S.qSelectMode === on) return;
+  S.qSelectMode = on;
+  if (!on) { S.qSelected.clear(); _qLastSel = null; _qRefreshSelUI(); }
+  if (on) {
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (S.qSelectMode) document.body.classList.add('qselect-mode'); }));
+  } else {
+    document.body.classList.remove('qselect-mode');
+  }
+  document.querySelectorAll('#qs-sel-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
+}
+
+function toggleQSelectMode() { _setQSelectMode(!S.qSelectMode); }
+
+function _qToggleSel(id) {
+  if (!id) return;
+  if (S.qSelected.has(id)) S.qSelected.delete(id);
+  else { S.qSelected.add(id); _qLastSel = id; }
+  _qRefreshSelUI();
+}
+
+// queue rows are looked up straight from #queue-inner (not the row registry, plain queue rows never made it in there)
+function _qRefreshSelUI() {
+  document.querySelectorAll('#queue-inner .song-row[data-id]').forEach(r => {
+    r.classList.toggle('selected', S.qSelected.has(r.dataset.id));
+    _applySelJoin(r);
+  });
 }
 
 // the select button only makes sense where there is something to select (songlists, the playlists page)
@@ -22718,7 +22749,8 @@ function _toggleSel(id) {
 
 // swallow the native long-press context menu on song rows while select mode is on
 document.addEventListener('contextmenu', e => {
-  if (!S.selectMode || !e.target.closest) return;
+  if (!e.target.closest) return;
+  if (!(e.target.closest('#queue-inner') ? S.qSelectMode : S.selectMode)) return;
   if (!e.target.closest('.song-row,.song-row-mobile')) return;
   e.preventDefault();
   e.stopImmediatePropagation();
@@ -22796,10 +22828,12 @@ function _mountStaticRows() {
 
 function _applySelJoin(r) {
   const id = r.dataset.id;
-  if (id && S.selected.has(id) && r.closest('#queue-inner')) {
+  if (r.closest('#queue-inner')) {
+    // queue rows join by queue position against the queue selection only
+    if (!id || !S.qSelected.has(id)) { r.classList.remove('sel-up', 'sel-dn'); return; }
     const qi = parseInt(r.dataset.qi);
-    r.classList.toggle('sel-up', qi > 0 && S.selected.has(S.queue[qi - 1]?.id));
-    r.classList.toggle('sel-dn', S.selected.has(S.queue[qi + 1]?.id));
+    r.classList.toggle('sel-up', qi > 0 && S.qSelected.has(S.queue[qi - 1]?.id));
+    r.classList.toggle('sel-dn', S.qSelected.has(S.queue[qi + 1]?.id));
     return;
   }
   if (!id || !S.selected.has(id)) { r.classList.remove('sel-up', 'sel-dn'); return; }
@@ -22812,8 +22846,12 @@ function _applySelJoin(r) {
 function refreshSelectionUI() {
   for (const [id, els] of _rowRegistry) {
     const sel = S.selected.has(id);
-    for (const r of els) { r.classList.toggle('selected', sel); _applySelJoin(r); }
+    for (const r of els) {
+      if (r.closest('#queue-inner')) continue; // same song in the queue must not follow the songlist selection
+      r.classList.toggle('selected', sel); _applySelJoin(r);
+    }
   }
+  if (S.queueOpen) _qRefreshSelUI(); // the drag engines only call this after a drop, keeps queue joins right
   updateBulkBar();
 }
 
@@ -22825,6 +22863,7 @@ function updateBulkBar() {
 function clearSelection() {
   S.selected.clear();
   document.querySelectorAll('.song-row.selected').forEach(r => {
+    if (r.closest('#queue-inner')) return; // queue selection is its own thing
     r.classList.remove('selected');
     const numEl = r.querySelector('.snum-num');
     if (numEl && r.dataset.num) numEl.textContent = r.dataset.num;
@@ -25566,7 +25605,7 @@ function initReorderDrag(listEl, opts) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armedRow = target;
-    if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
+    if ((listEl.closest('#queue-inner') ? S.qSelectMode : S.selectMode) && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
     }
@@ -25924,7 +25963,7 @@ function initVlistReorder(vl) {
     ghost.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:6';
     // group = every selected queue row when the grabbed one is selected, else just the grabbed one
     const gs = [];
-    if (S.selectMode && S.selected.has(target.dataset.id)) vl.songs.forEach((s, k) => { if (k === from || S.selected.has(s.id)) gs.push(k); });
+    if (S.qSelectMode && S.qSelected.has(target.dataset.id)) vl.songs.forEach((s, k) => { if (k === from || S.qSelected.has(s.id)) gs.push(k); });
     else gs.push(from);
     group = gs;
     rankFrom = group.indexOf(from);
@@ -25981,7 +26020,7 @@ function initVlistReorder(vl) {
     const _restSongs = commit ? vl.songs.filter((x, k) => !_gs.has(k)) : null;
     const finalArr = commit ? _restSongs.slice(0, slot).concat(group.map(k => vl.songs[k]), _restSongs.slice(slot)) : vl.songs;
     const joinAt = (el, f) => {
-      const sl = k => k >= 0 && k < finalArr.length && S.selected.has(finalArr[k].id);
+      const sl = k => k >= 0 && k < finalArr.length && S.qSelected.has(finalArr[k].id);
       const me = sl(f);
       el.classList.toggle('sel-up', me && sl(f - 1));
       el.classList.toggle('sel-dn', me && sl(f + 1));
@@ -26068,7 +26107,7 @@ function initVlistReorder(vl) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armed = target;
-    if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
+    if (S.qSelectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armed) lift(armed); }, HOLD_MS);
     }
