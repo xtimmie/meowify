@@ -25210,7 +25210,7 @@ function showCtx(e, items, opts) {
       x.className = 'cx-close';
       x.title = 'close';
       x.innerHTML = closeSvg;
-      x.onclick = (ev) => { ev.stopPropagation(); hideCtx(); };
+      x.onclick = (ev) => { ev.stopPropagation(); closeCtxAnimated(); };
       div.append(span, x);
     } else {
       div.textContent = label || '';
@@ -25318,17 +25318,19 @@ function hideCtx() {
     ctx.classList.remove('on', 'no-anim', 'mob-ctx-active');
     _unregisterDrawer(ctx);
   } else {
-    if (!ctx.classList.contains('on') || ctx.classList.contains('closing')) return;
-    // play the out animation first, then actually hide (skipped if a new menu opened meanwhile)
-    ctx.classList.add('closing');
-    const gen = _ctxGeneration;
-    const done = () => {
-      if (_ctxGeneration !== gen) return;
-      ctx.classList.remove('on', 'no-anim', 'mob-ctx-active', 'closing');
-    };
-    ctx.addEventListener('animationend', done, { once: true });
-    setTimeout(done, 220);
+    ctx.classList.remove('on', 'no-anim', 'mob-ctx-active', 'closing');
   }
+}
+
+// close button: desktop plays a short out animation from the center, then hides normally
+function closeCtxAnimated() {
+  const ctx = document.getElementById('ctx');
+  if (isMobile() || !ctx.classList.contains('on')) { hideCtx(); return; }
+  const gen = _ctxGeneration; // a newly opened menu bumps this, so we never hide it by mistake
+  ctx.style.transformOrigin = 'center center';
+  ctx.classList.add('closing');
+  Promise.allSettled(ctx.getAnimations().map(a => a.finished))
+    .then(() => { if (_ctxGeneration === gen) hideCtx(); });
 }
 
 // drag-to-dismiss for the ctx bottom sheet (mobile only)
