@@ -11854,6 +11854,19 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #ctx .cx-icon{--ico:16px;display:grid;place-items:center;height:20px}
 #ctx .cx-icon>svg{display:block;width:var(--ico);height:var(--ico)}
 .cx-sep{height:1px;background:var(--line-high);margin:3px 0}
+/* toggle rows: motionui checkbox / radio sit in the icon slot (row click does the toggling) */
+#ctx .cx-icon.cx-ctl{--ico:16px}
+#ctx .cx-icon .checkbox,#ctx .cx-icon .radio{display:grid;place-items:center;gap:0;pointer-events:none}
+#ctx .cx-icon .checkbox-box,#ctx .cx-icon .radio-dot{width:16px;height:16px}
+#ctx .cx-icon .checkbox-box{border-radius:5px;border-width:2px}
+#ctx .cx-icon .checkbox-box::after{width:9px;height:5px;border-left-width:2px;border-bottom-width:2px}
+#ctx .cx-icon .radio-dot::after{width:8px;height:8px}
+/* keep-open mode: close button on the header row */
+.cx-header.has-close{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 2px 2px 14px}
+.cx-close{width:24px;height:24px;display:grid;place-items:center;flex-shrink:0;border:none;padding:0;border-radius:var(--radius-full);background:transparent;color:var(--color-on-surface-variant);cursor:pointer;pointer-events:auto;transition:background var(--dur-2)}
+.cx-close svg{display:block;width:12px;height:12px}
+@media (hover: hover) {.cx-close:hover{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}}
+.cx-close:active{transform:scale(.9)}
 .cx-header{padding:6px 14px 2px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.08em;pointer-events:none;user-select:none}
 /* modal */
 #modal{
@@ -12203,7 +12216,7 @@ body.select-mode #vc .sel-reorderable :is(.song-row-mobile,.song-row),body.qsele
 :is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected{background:color-mix(in oklch,var(--color-primary) 16%,transparent)}
 :is(.song-row-mobile,#queue-inner .song-row)::before{content:'';position:absolute;left:12px;top:50%;width:18px;height:18px;margin-top:-9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--color-outline);pointer-events:none;opacity:0;translate:-34px 0;scale:.9;transition:opacity .2s var(--ease-out),translate .28s var(--ease-out),scale .34s cubic-bezier(.34,1.7,.5,1),background var(--dur-2),border-color var(--dur-2)}
 :is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected::before{background:var(--color-primary);border-color:var(--color-primary)}
-:is(.song-row-mobile,#queue-inner .song-row)::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none;transition:transform .3s cubic-bezier(.34,1.7,.5,1),opacity .12s,translate .28s var(--ease-out)}
+:is(.song-row-mobile,#queue-inner .song-row)::after{content:'';position:absolute;left:19px;top:52%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none;transition:transform .4s cubic-bezier(.3,1.7,.3,1),opacity .12s,translate .28s var(--ease-out)}
 :is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row)::after{translate:0 0}
 :is(body.select-mode .song-row-mobile,body.qselect-mode #queue-inner .song-row).selected::after{transform:rotate(45deg) scale(1);opacity:1}
 :is(.song-row-mobile,#queue-inner .song-row)::after{margin-top:-5.5px}
@@ -13543,15 +13556,15 @@ function showPlayerRightCtx(e) {
   const spikyVol = CFG.spiky_vol_icon !== false;
   showCtx(e, [
     { _header: true, label: 'player buttons' },
-    { icon: !_playerBtnHidden('nowplaying') ? '☑' : '☐', label: 'now playing button', fn: () => _togglePlayerBtn('nowplaying') },
-    { icon: !_playerBtnHidden('lyrics')     ? '☑' : '☐', label: 'lyrics button',      fn: () => _togglePlayerBtn('lyrics') },
-    { icon: !_playerBtnHidden('queue')      ? '☑' : '☐', label: 'queue button',        fn: () => _togglePlayerBtn('queue') },
+    { check: !!(!_playerBtnHidden('nowplaying')), label: 'now playing button', fn: () => _togglePlayerBtn('nowplaying') },
+    { check: !!(!_playerBtnHidden('lyrics')), label: 'lyrics button',      fn: () => _togglePlayerBtn('lyrics') },
+    { check: !!(!_playerBtnHidden('queue')), label: 'queue button',        fn: () => _togglePlayerBtn('queue') },
     { sep: true },
-    { icon: spikyVol ? '☑' : '☐', label: 'spiky volume icon', fn: () => {
-        saveSetting('spiky_vol_icon', !spikyVol).then(() => { CFG.spiky_vol_icon = !spikyVol; updateVolIcon(); });
+    { check: !!(spikyVol), label: 'spiky volume icon', fn: (on) => {
+        saveSetting('spiky_vol_icon', on).then(() => { updateVolIcon(); });
     }},
-    { icon: vertVol ? '☑' : '☐', label: 'vertical volume slider', fn: () => {
-        saveSetting('vertical_vol_slider', !vertVol).then(() => { CFG.vertical_vol_slider = !vertVol; applyVolSliderOrientation(); });
+    { check: !!(vertVol), label: 'vertical volume slider', fn: (on) => {
+        saveSetting('vertical_vol_slider', on).then(() => { applyVolSliderOrientation(); });
     }},
   ]);
 }
@@ -13564,11 +13577,11 @@ function showPCenterCtx(e) {
   const spikyPlay = CFG.spiky_play_btn !== false;
   showCtx(e, [
     { _header: true, label: 'playback controls' },
-    { icon: wavyOn    ? '☑' : '☐', label: 'wavy seekbar',      fn: () => {
-        saveSetting('wavy_seekbar', !wavyOn).then(() => { CFG.wavy_seekbar = !wavyOn; initWavySeekbar(); });
+    { check: !!(wavyOn), label: 'wavy seekbar',      fn: (on) => {
+        saveSetting('wavy_seekbar', on).then(() => { initWavySeekbar(); });
     }},
-    { icon: spikyPlay ? '☑' : '☐', label: 'spiky play button', fn: () => {
-        saveSetting('spiky_play_btn', !spikyPlay).then(() => { CFG.spiky_play_btn = !spikyPlay; updateSpikyBtn(); });
+    { check: !!(spikyPlay), label: 'spiky play button', fn: (on) => {
+        saveSetting('spiky_play_btn', on).then(() => { updateSpikyBtn(); });
     }},
   ]);
 }
@@ -13579,14 +13592,14 @@ function showVolRowCtx(e) {
   const spikyVol = CFG.spiky_vol_icon !== false;
   showCtx(e, [
     { _header: true, label: 'volume' },
-    { icon: CFG.volume_boost ? '☑' : '☐', label: 'volume boost', fn: () => {
-        saveSetting('volume_boost', !CFG.volume_boost).then(() => applyVolBoost());
+    { check: !!(CFG.volume_boost), label: 'volume boost', fn: (on) => {
+        saveSetting('volume_boost', on).then(() => applyVolBoost());
     }},
-    { icon: spikyVol ? '☑' : '☐', label: 'spiky volume icon', fn: () => {
-        saveSetting('spiky_vol_icon', !spikyVol).then(() => { CFG.spiky_vol_icon = !spikyVol; updateVolIcon(); });
+    { check: !!(spikyVol), label: 'spiky volume icon', fn: (on) => {
+        saveSetting('spiky_vol_icon', on).then(() => { updateVolIcon(); });
     }},
-    { icon: vertVol ? '☑' : '☐', label: 'vertical slider', fn: () => {
-        saveSetting('vertical_vol_slider', !vertVol).then(() => { CFG.vertical_vol_slider = !vertVol; applyVolSliderOrientation(); });
+    { check: !!(vertVol), label: 'vertical slider', fn: (on) => {
+        saveSetting('vertical_vol_slider', on).then(() => { applyVolSliderOrientation(); });
     }},
   ]);
 }
@@ -13651,10 +13664,10 @@ function showNowPlayingCtx(e) {
     if (_sep && !(_sep.compareDocumentPosition(e.target) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
   }
   showCtx(e, [
-    { icon: !_npSectionHidden('lyrics')  ? '☑' : '☐', label: 'lyrics section',   fn: () => _toggleNpSection('lyrics') },
-    { icon: !_npSectionHidden('details') ? '☑' : '☐', label: 'details section',   fn: () => _toggleNpSection('details') },
-    { icon: !_npSectionHidden('nextup')  ? '☑' : '☐', label: 'next up section',   fn: () => _toggleNpSection('nextup') },
-  ]);
+    { check: !!(!_npSectionHidden('lyrics')), label: 'lyrics section',   fn: () => _toggleNpSection('lyrics') },
+    { check: !!(!_npSectionHidden('details')), label: 'details section',   fn: () => _toggleNpSection('details') },
+    { check: !!(!_npSectionHidden('nextup')), label: 'next up section',   fn: () => _toggleNpSection('nextup') },
+  ], { title: 'sections' });
 }
 
 function toggleRsFull(v){
@@ -13668,7 +13681,7 @@ document.addEventListener('contextmenu', e => {
   e.preventDefault();
   showCtx(e, [
     { _header: true, label: 'right sidebar' },
-    { icon: CFG.rs_full_height ? '☑' : '☐', label: 'full height', fn: () => toggleRsFull() },
+    { check: !!(CFG.rs_full_height), label: 'full height', fn: (on) => toggleRsFull(on) },
   ]);
 });
 
@@ -13692,11 +13705,11 @@ function showColCtx(e,view){
   const all=VIEW_COLS[view]||VIEW_COLS.library;
   const hidden=S.hiddenCols[view]||new Set();
   const items=all.filter(k=>!COL_DEFS[k]?.fixed).map(key=>({
-    icon:hidden.has(key)?'☐':'☑',
+    check:!hidden.has(key),
     label:COL_DISPLAY_LABEL[key]||key,
     fn:()=>toggleCol(view,key)
   }));
-  showCtx(e,items);
+  showCtx(e,items,{title:'columns'});
 }
 function toggleCol(view,key){
   if(!S.hiddenCols[view])S.hiddenCols[view]=new Set();
@@ -16278,16 +16291,14 @@ function _updateShuffleBtnTitle() {
 function showShuffleCtx(e) {
   e.preventDefault(); e.stopPropagation();
   const mode = S.shuffleMode;
-  const smart = S.smartShuffle;
-  const check = (on) => on ? '☑' : '☐';
   showCtx(e, [
     { _header: true, label: 'shuffle mode' },
-    { icon: check(mode === 'random'), label: 'random',    fn: () => setShuffleMode('random') },
-    { icon: check(mode === 'chaos'),  label: 'chaos',     fn: () => setShuffleMode('chaos')  },
-    { icon: check(mode === 'flow'),   label: 'flow',      fn: () => setShuffleMode('flow')   },
-    { icon: check(mode === 'intact'),  label: 'intact',     fn: () => setShuffleMode('intact')  },
+    { radio: mode === 'random', group: 'mode', label: 'random', fn: () => setShuffleMode('random') },
+    { radio: mode === 'chaos',  group: 'mode', label: 'chaos',  fn: () => setShuffleMode('chaos')  },
+    { radio: mode === 'flow',   group: 'mode', label: 'flow',   fn: () => setShuffleMode('flow')   },
+    { radio: mode === 'intact', group: 'mode', label: 'intact', fn: () => setShuffleMode('intact') },
     { sep: true },
-    { icon: check(smart), label: 'smart shuffle', fn: () => setSmartShuffle(!smart) },
+    { check: !!S.smartShuffle, label: 'smart shuffle', fn: (on) => setSmartShuffle(on) },
   ]);
 }
 
@@ -25163,7 +25174,7 @@ function fitIcon(html) {
   return out;
 }
 
-function showCtx(e, items) {
+function showCtx(e, items, opts) {
   const ctx = document.getElementById('ctx');
   const mobile = isMobile();
   const myGen = ++_ctxGeneration;
@@ -25180,6 +25191,33 @@ function showCtx(e, items) {
     ctx.appendChild(zone);
   }
 
+  // menus with checkbox/radio rows can stay open after a pick (settings: keep toggle menus open)
+  const sticky = !!CFG.ctx_keep_open && items.some(it => it.check !== undefined || it.radio !== undefined);
+  let closeDone = false;
+  const closeSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const mkHeader = (label) => {
+    const div = document.createElement('div');
+    div.className = 'cx-header';
+    if (sticky && !closeDone) {
+      closeDone = true;
+      div.classList.add('has-close');
+      const span = document.createElement('span');
+      span.textContent = label || '';
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'cx-close';
+      x.title = 'close';
+      x.innerHTML = closeSvg;
+      x.onclick = (ev) => { ev.stopPropagation(); hideCtx(); };
+      div.append(span, x);
+    } else {
+      div.textContent = label || '';
+    }
+    return div;
+  };
+  // no label row of its own: add one so the close button has somewhere to live
+  if (sticky && !items.some(it => it._header)) ctx.appendChild(mkHeader(opts && opts.title));
+
   items.forEach(it => {
     if (it.sep) {
       const div = document.createElement('div');
@@ -25188,17 +25226,36 @@ function showCtx(e, items) {
       return;
     }
     if (it._header) {
-      const div = document.createElement('div');
-      div.className = 'cx-header';
-      div.textContent = it.label;
-      ctx.appendChild(div);
+      ctx.appendChild(mkHeader(it.label));
       return;
     }
+    const isRadio = it.radio !== undefined;
+    const isToggle = isRadio || it.check !== undefined;
     const div = document.createElement('div');
     div.className = 'cx-item' + (it.err ? ' err' : '');
     if (mobile) div.classList.add('mu-ripple');
-    div.innerHTML = `<span class="cx-icon">${fitIcon(it.icon || '')}</span>${esc(it.label)}`;
-    div.onclick = () => { hideCtx(); it.fn(); };
+    let iconHtml;
+    if (isToggle) {
+      const on = isRadio ? it.radio : it.check;
+      const kind = isRadio ? 'radio' : 'checkbox';
+      const box = isRadio ? 'radio-dot' : 'checkbox-box';
+      const nm = isRadio ? ` name="cxr-${myGen}-${esc(it.group || 'g')}"` : '';
+      iconHtml = `<span class="${kind}"><input type="${kind}" tabindex="-1"${nm}${on ? ' checked' : ''}><span class="${box}"></span></span>`;
+    } else {
+      iconHtml = fitIcon(it.icon || '');
+    }
+    div.innerHTML = `<span class="cx-icon${isToggle ? ' cx-ctl' : ''}">${iconHtml}</span>${esc(it.label)}`;
+    div.onclick = () => {
+      if (isToggle) {
+        const inp = div.querySelector('input');
+        inp.checked = isRadio ? true : !inp.checked; // radios in the same group uncheck themselves
+        if (!sticky) hideCtx();
+        it.fn(inp.checked);
+        return;
+      }
+      hideCtx();
+      it.fn();
+    };
     ctx.appendChild(div);
   });
 
@@ -28874,6 +28931,12 @@ function renderSettings() {
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
+        `)}
+        ${row('keep toggle menus open', 'right click menus with checkboxes or radio buttons stay open after you pick something and get a close button in the top right instead. changes still save instantly', `
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${CFG.ctx_keep_open?'checked':''} onchange="saveSetting('ctx_keep_open',this.checked)" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
