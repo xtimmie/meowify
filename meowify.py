@@ -8153,6 +8153,9 @@ def _upd_check(force=False):
         out['modules'].append({'id': 'deps', 'name': 'python packages', 'packages': pk,
                                'can_apply': bool(ok and todo), 'reason': '' if ok else why,
                                'status': 'update' if todo else 'current'})
+    if not IS_ANDROID:
+        out['modules'].append({'id': 'repair', 'name': 'repair install', 'can_apply': bool(ok),
+                               'reason': '' if ok else why, 'status': 'current'})
     _UPD_CACHE.update(t=now, data=out)
     return out
 
@@ -8258,12 +8261,93 @@ def _upd_do_app():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+def _upd_do_repair():
+    import tempfile
+    from importlib import metadata as _md
+    _upd_set('running', 'looking up your installed release...')
+    info = _upd_install_info()
+    tag = info.get('tag') or ('v' + str(info.get('version') or APP_VERSION))
+    note = ''
+    try:
+        man = json.loads(_upd_get(f'https://github.com/{_UPD_REPO}/releases/download/{tag}/manifest.json').decode('utf-8'))
+    except Exception:
+        man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+        tag = man.get('tag') or ('v' + str(man.get('version')))
+        note = ' (your exact release was not found, used the latest)'
+    base = f'https://github.com/{_UPD_REPO}/releases/download/{tag}/'
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-fix-'))
+    try:
+        files = ('meowify.py', 'requirements.txt', 'launcher.pyw')
+        for name in files:
+            want_hash = (man.get('files') or {}).get(name)
+            if not want_hash:
+                raise RuntimeError(f'manifest has no hash for {name}')
+            _upd_set('running', f'downloading {name}...')
+            p = tmp / name
+            p.write_bytes(_upd_get(base + name, timeout=120))
+            if _upd_sha(p) != want_hash.lower():
+                raise RuntimeError(f'{name} failed the hash check')
+        compile((tmp / 'meowify.py').read_text(encoding='utf-8'), 'meowify.py', 'exec')
+        mu_tag = man.get('motionui')
+        mu_src = None
+        if mu_tag:
+            _upd_set('running', f'downloading motionui {mu_tag}...')
+            mu_src = _upd_fetch_motionui(mu_tag, tmp)
+        _upd_set('running', 'reinstalling packages...')
+        _upd_pip(['install', '-r', str(tmp / 'requirements.txt')])
+        want = set()
+        for line in (tmp / 'requirements.txt').read_text(encoding='utf-8').splitlines():
+            m = re.match(r'([A-Za-z0-9_.\-]+)', line.split('#')[0].strip())
+            if m:
+                want.add(m.group(1).lower().replace('_', '-'))
+        pins = []
+        for n in sorted((want & _UPD_SAFE) - {'pywebview'}):
+            try:
+                pins.append(f'{n}=={_md.version(n)}')
+            except Exception:
+                pass
+        if pins:
+            _upd_pip(['install', '--force-reinstall', '--no-deps'] + pins)
+        _upd_set('running', 'restoring files...')
+        bak = _APP_DIR / 'backup'
+        bak.mkdir(exist_ok=True)
+        for name in ('meowify.py', 'requirements.txt'):
+            cur = _APP_DIR / name
+            if cur.exists():
+                shutil.copy2(cur, bak / name)
+        (bak / 'install.json').write_text(json.dumps(info), encoding='utf-8')
+        (bak / 'motionui_path.txt').write_text(str(MOTIONUI_DIR), encoding='utf-8')
+        if mu_src is not None:
+            dest = Path(MOTIONUI_DIR)
+            shutil.rmtree(bak / 'motionui', ignore_errors=True)
+            if dest.exists():
+                shutil.copytree(dest, bak / 'motionui')
+                shutil.rmtree(dest, ignore_errors=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(mu_src, dest)
+            (dest / '.tag').write_text(str(mu_tag), encoding='utf-8')
+        for name in files:
+            staged = _APP_DIR / (name + '.new')
+            shutil.copy2(tmp / name, staged)
+            os.replace(staged, _APP_DIR / name)
+        info.update(version=man.get('version'), tag=tag, motionui=mu_tag or info.get('motionui'))
+        _INSTALL_JSON.write_text(json.dumps(info), encoding='utf-8')
+        (_APP_DIR / '.booting').write_text('pending', encoding='utf-8')
+        msg = 'repair finished, restart to apply' + note
+        if not shutil.which('ffmpeg'):
+            msg += '. ffmpeg was not found, re-run the installer to fetch it'
+        _upd_set('done', msg, True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 def _upd_run(kind, names=None):
     try:
         if kind == 'app':
             _upd_do_app()
         elif kind == 'motionui':
             _upd_do_motionui()
+        elif kind == 'repair':
+            _upd_do_repair()
         else:
             _upd_do_deps(names)
         _UPD_CACHE['data'] = None
@@ -8292,7 +8376,7 @@ def api_update_status():
 def api_update_apply():
     body = request.get_json(silent=True) or {}
     kind = body.get('id')
-    if kind not in ('app', 'motionui', 'deps'):
+    if kind not in ('app', 'motionui', 'deps', 'repair'):
         return jsonify({'error': 'bad id'}), 400
     names = body.get('packages') if isinstance(body.get('packages'), list) else None
     ok, why = _upd_can_apply()
@@ -29459,6 +29543,11 @@ async function _updApply(id, packages) {
   }, 800);
 }
 
+function _updRepair() {
+  if (!confirm('repair the install? this re-downloads meowify, motionui and packages at your current version. your library, playlists and settings are not touched.')) return;
+  _updApply('repair');
+}
+
 function _updRestart() {
   if (!confirm('restart meowify now to finish the update?')) return;
   fetch('/api/restart', {method: 'POST'}).catch(() => {});
@@ -29542,6 +29631,16 @@ function _updatesHtml(row, rowDisabled) {
     }
     if (!ps.length) h += row('python packages', 'no tracked packages found', '');
     h += _updStatusRow(row, st, 'deps');
+  }
+
+  const rp = mods.repair;
+  if (rp) {
+    h += _updSub('repair');
+    const desc = 'puts meowify, motionui and packages back to the installed version. your library, playlists and settings are not touched.';
+    h += rp.can_apply
+      ? row('repair install', desc, btn('repair', '_updRepair()'))
+      : rowDisabled('repair install', esc(rp.reason || 'cannot repair here'), '');
+    h += _updStatusRow(row, st, 'repair');
   }
   return h;
 }
