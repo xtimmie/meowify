@@ -6320,7 +6320,14 @@ def _dbx_list_device_ids(dbx):
     except Exception:
         return []
 
+_dbx_manifest_lock = threading.RLock()
+
 def _dbx_push_manifest(dbx, extra_song_sync_ids=None, extra_cover_names=None):
+    # one build+upload at a time, so the live heartbeat thread can never overwrite a newer manifest with an older one
+    with _dbx_manifest_lock:
+        return _dbx_push_manifest_locked(dbx, extra_song_sync_ids, extra_cover_names)
+
+def _dbx_push_manifest_locked(dbx, extra_song_sync_ids=None, extra_cover_names=None):
     """build and upload this device's manifest to /meowify/devices/<device_id>.json."""
     import dropbox as _dbxmod
     device_id   = _dbx_get_device_id()
@@ -6347,10 +6354,11 @@ def _dbx_push_manifest(dbx, extra_song_sync_ids=None, extra_cover_names=None):
             'audio_sync_ids': audio_sync_ids,
             'cover_names':   cover_names,
             'db_hash':       _dbx_db_hash(local_db),
+            'live':          int(_time.time()) if _dbx_live_flag[0] else 0,
         }
-        _sig = (device_name, hash(frozenset(song_sync_ids)), hash(frozenset(audio_sync_ids)), hash(frozenset(cover_names)))
+        _sig = (device_name, _dbx_live_flag[0], hash(frozenset(song_sync_ids)), hash(frozenset(audio_sync_ids)), hash(frozenset(cover_names)))
         _now = _time.time()
-        if _sig == _dbx_manifest_sig['sig'] and _now - _dbx_manifest_sig['t'] < 120:
+        if _sig == _dbx_manifest_sig['sig'] and _now - _dbx_manifest_sig['t'] < (12 if _dbx_live_flag[0] else 120):
             return manifest  # identical to what peers already see, uploaded under 2 min ago
         data = json.dumps(manifest).encode()
         dbx.files_upload(data, f'/meowify/devices/{device_id}.json',
@@ -6521,6 +6529,89 @@ def _dbx_peer_cover_names(dbx, own_device_id, peer_manifests=None):
 
 _COVER_RESERVE = 64 * 1024 * 1024
 _DBX_MAX_ROUNDS = 8
+_DBX_LIVE_MAX = 3600     # hard cap for one live session (s)
+_DBX_LIVE_JOIN = 90      # how long a device waits for the other one to show up (s)
+_DBX_LIVE_STALL = 240    # end the session when nothing moved on either side for this long (s)
+_dbx_live_flag = [False]
+_dbx_live_ctx = {'ids': None}
+_dbx_live_last_beacon = [0]
+_dbx_live_ended = {}     # signature of the backlog the last unfinished live session gave up on
+
+def _dbx_peer_live():
+    """a peer counts as live when its manifest carries a fresh live heartbeat (needs clocks within ~90s)"""
+    now = _time.time()
+    for m in _dbx_last_peer_manifests:
+        lv = m.get('live') or 0
+        if lv and abs(now - lv) < 90:
+            return True
+    return False
+
+def _dbx_peer_progress():
+    return sum(_dbx_playable_count(m) for m in _dbx_last_peer_manifests)
+
+def _dbx_live_beat(dbx, stop_ev):
+    while not stop_ev.wait(15):
+        try:
+            _dbx_push_manifest(dbx, extra_song_sync_ids=_dbx_live_ctx.get('ids'))
+        except Exception:
+            pass
+
+def _dbx_wait_foreign(dbx, cursor, tries=3):
+    """block (longpoll) until something this device did not write changes under /meowify. returns the new cursor"""
+    own = _dbx_get_device_id().lower()
+    cur = cursor
+    try:
+        for _ in range(tries):
+            lp = dbx.files_list_folder_longpoll(cur, timeout=30)
+            if not lp.changes:
+                return cur
+            if lp.backoff:
+                _time.sleep(min(lp.backoff, 30))
+            foreign = False
+            while True:
+                res = dbx.files_list_folder_continue(cur)
+                cur = res.cursor
+                for e in res.entries:
+                    pl = getattr(e, 'path_lower', '') or ''
+                    if own not in pl and pl not in _dbx_own_paths:
+                        foreign = True
+                if not res.has_more:
+                    break
+            if foreign:
+                return cur
+    except Exception:
+        _time.sleep(5)
+    return cur
+
+def _dbx_idle_reason(dbx):
+    """'idle' nothing to do, 'remote' dropbox changed, 'local' only local activity, 'unknown' no valid idle state"""
+    s = _dbx_idle
+    if not (s['clean'] and s['cursor'] and s['stamp'] is not None):
+        return 'unknown'
+    if _time.time() - s['t'] > _DBX_HEARTBEAT:
+        return 'unknown'
+    own = _dbx_get_device_id().lower()
+    try:
+        cur = s['cursor']
+        while True:
+            res = dbx.files_list_folder_continue(cur)
+            for e in res.entries:
+                pl = getattr(e, 'path_lower', '') or ''
+                if own in pl or pl in _dbx_own_paths:
+                    continue
+                oh = _dbx_own_hash.get(pl)
+                if oh and getattr(e, 'content_hash', None) == oh:
+                    continue
+                return 'remote'
+            cur = res.cursor
+            s['cursor'] = cur
+            if not res.has_more:
+                break
+    except Exception:
+        return 'unknown'
+    if _dbx_local_stamp() != s['stamp']:
+        return 'local'
+    return 'idle'
 
 def _dbx_file_ok(p):
     try:
@@ -6604,10 +6695,19 @@ def _dbx_pull_wanted(dbx, results, remote, status):
         return False
 
     got = 0
-    for t, ok, _e in _dbx_run_parallel(todo, _one):
-        if ok:
-            results['pulled'].append(t[0])
-            got += 1
+    step = len(todo) or 1
+    if _dbx_live_flag[0]:
+        step = max(1, _dbx_workers() * 2)  # live: publish progress every few files so the sender can free space and continue
+    for i in range(0, len(todo), step):
+        n = 0
+        for t, ok, _e in _dbx_run_parallel(todo[i:i + step], _one):
+            if ok:
+                results['pulled'].append(t[0])
+                got += 1
+                n += 1
+        if n and _dbx_live_flag[0] and i + step < len(todo):
+            _dbx_reconcile_availability()
+            _dbx_push_manifest(dbx, extra_song_sync_ids=_dbx_live_ctx.get('ids'))
     return got
 
 def _dbx_plan_pushes(dbx, peers, remote):
@@ -6651,6 +6751,76 @@ def _dbx_plan_pushes(dbx, peers, remote):
     return pending, skipped
 
 def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=True, run_rounds=True):
+    _dbx_relay_rounds_classic(dbx, results, pushed_ids, device_id, status, pull_songs, run_rounds)
+    bl = results.get('backlog')
+    if not CFG.get('dbx_live_sync', True) or not _dbx_last_peer_manifests or not bl:
+        return
+    now = _time.time()
+    peer_live = _dbx_peer_live()
+    if not peer_live:
+        if _dbx_poll_state.get('auto'):
+            # auto syncs only advertise once per 10 min, and not again for a backlog a live session already gave up on
+            if now - _dbx_live_last_beacon[0] < 600:
+                return
+            if _dbx_live_ended.get('sig') == (bl.get('push', 0), bl.get('pull', 0), _dbx_peer_progress()):
+                return
+        _dbx_live_last_beacon[0] = now  # manual syncs always advertise
+    moved_total = results.get('relay_moved', 0)
+    t0 = anchor = last_move = now
+    joined = peer_live
+    last_prog = _dbx_peer_progress()
+    first = True
+    beat_stop = threading.Event()
+    beat_th = None
+    _dbx_live_ctx['ids'] = pushed_ids
+    _dbx_live_flag[0] = True
+    try:
+        beat_th = threading.Thread(target=_dbx_live_beat, args=(dbx, beat_stop), daemon=True, name='dbx-live-beat')
+        beat_th.start()
+        _dbx_push_manifest(dbx, extra_song_sync_ids=pushed_ids)
+        while not _dbx_stop.is_set() and _time.time() - t0 < _DBX_LIVE_MAX:
+            cursor = _dbx_latest_cursor(dbx)  # taken before the next round reads anything
+            if not first:
+                results.pop('backlog', None)
+                _dbx_relay_rounds_classic(dbx, results, pushed_ids, device_id, status, pull_songs, True)
+                moved_total += results.get('relay_moved', 0)
+                if results.get('relay_moved'):
+                    last_move = _time.time()
+            first = False
+            prog = _dbx_peer_progress()
+            if prog != last_prog:
+                last_prog = prog
+                last_move = _time.time()
+            if not results.get('backlog'):
+                break  # nothing left to move in either direction
+            now = _time.time()
+            if _dbx_peer_live():
+                anchor = now
+                joined = True
+                if now - last_move > _DBX_LIVE_STALL:
+                    break  # other device is live but nothing has moved for a while
+            elif now - anchor > (45 if joined else _DBX_LIVE_JOIN):
+                break  # other device never showed up / went away
+            status('live sync: ' + ('moving songs with the other device...' if joined else 'waiting for the other device...'))
+            if cursor:
+                _dbx_wait_foreign(dbx, cursor)
+            else:
+                _time.sleep(5)
+            _time.sleep(1)  # debounce bursts of upload events
+    finally:
+        beat_stop.set()
+        if beat_th is not None:
+            beat_th.join(timeout=30)  # make sure no stale live heartbeat lands after our final manifest
+        _dbx_live_flag[0] = False
+        _dbx_live_ctx['ids'] = None
+        results['relay_moved'] = moved_total
+        _b = results.get('backlog')
+        if _b:
+            _dbx_live_ended['sig'] = (_b.get('push', 0), _b.get('pull', 0), _dbx_peer_progress())
+        else:
+            _dbx_live_ended.clear()
+
+def _dbx_relay_rounds_classic(dbx, results, pushed_ids, device_id, status, pull_songs=True, run_rounds=True):
     moved = 0
     quota_hit = False
     waiting_push = 0
@@ -7223,9 +7393,9 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
     except Exception as e:
         results['errors'].append(f'manifest push: {e}')
 
-    _dbx_idle.update(cursor=_idle_cursor, stamp=_idle_stamp, t=_idle_t,
+    _dbx_idle.update(cursor=_idle_cursor, stamp=_idle_stamp, t=_time.time(),
                      clean=bool(_idle_cursor) and push_db and pull_db and pull_songs and sync_settings
-                           and not results['errors'] and not results.get('paused') and not results.get('backlog'))
+                           and not results['errors'])
     _status('done')
     return results
 
@@ -8020,19 +8190,22 @@ _dbx_status_msg = ''
 _dbx_poll_state = {'wait': 300}
 
 def _dbx_bg_poll():
-    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 60s cheap checks while idle state is valid, 5 min otherwise, 60s while a relay backlog moves
-        _dbx_poll_state['wait'] = 60 if _dbx_idle['clean'] else 300
+    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 20s cheap checks while idle state is valid, 5 min otherwise, 60s while a relay backlog moves
+        _dbx_poll_state['wait'] = 20 if _dbx_idle['clean'] else 300
         if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
             continue
-        if _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 180:
-            continue  # last sync was clean and recent, next check not due yet
+        # (the recent-sync gate now lives below and only applies to purely local activity)
         if not _dbx_lock.acquire(blocking=False):
             continue  # manual sync in progress, skip this cycle
         try:
             global _dbx_status_msg
             _dc = _dbx()
-            if _dc is not None and _dbx_idle_skip(_dc):
+            _why = _dbx_idle_reason(_dc) if _dc is not None else 'unknown'
+            if _why == 'idle':
                 continue  # nothing changed locally or on dropbox, skip the full sync
+            if _why in ('local', 'unknown') and _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 180:
+                continue  # only local activity (playback etc), full sync at most every 3 min
+            _dbx_poll_state['auto'] = True
             _dbx_status_msg = 'auto-syncing...'
             sync_lib = CFG.get('sync_library', True)
             _r = dbx_sync_now(push_db=sync_lib,
@@ -8046,6 +8219,7 @@ def _dbx_bg_poll():
         except Exception as _se:
             _log_dbx.error(f'[dbx sync] unhandled error: {_se}', exc_info=True)
         finally:
+            _dbx_poll_state['auto'] = False
             _dbx_status_msg = ''
             _dbx_lock.release()
 
