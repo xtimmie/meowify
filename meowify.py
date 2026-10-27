@@ -8074,6 +8074,7 @@ def _upd_check(force=False):
     except Exception as e:
         return {'error': f'could not reach github ({e.__class__.__name__})', 'current': cur, 'items': []}
     out = {'platform': sys.platform, 'current': cur, 'latest': man.get('version'), 'items': []}
+    out['changelog'] = str(man.get('changelog') or '')
     if _upd_ver(man.get('version')) > _upd_ver(cur):
         app_ok, reason = ok, ('' if ok else why)
         need_py = man.get('min_python')
@@ -29361,6 +29362,22 @@ function _updRestart() {
   fetch('/api/restart', {method: 'POST'}).catch(() => {});
 }
 
+function _updToggleLog() {
+  window._updShowLog = !window._updShowLog;
+  renderSettings();
+}
+
+function _updLogHtml(text) {
+  const out = String(text || '').split('\n').map(l => {
+    const t = l.trim();
+    if (!t) return '';
+    if (t.startsWith('## ')) return `<div style="font-weight:600;margin:12px 0 4px">${esc(t.slice(3))}</div>`;
+    if (t.startsWith('- ') || t.startsWith('* ')) return `<div style="margin:2px 0 2px 12px">&bull; ${esc(t.slice(2))}</div>`;
+    return `<div style="margin:2px 0;opacity:.8">${esc(t)}</div>`;
+  }).join('');
+  return `<div style="max-height:260px;overflow:auto;padding:2px 4px 8px;font-size:13px;line-height:1.45">${out}</div>`;
+}
+
 function _updatesHtml(row, rowDisabled) {
   if (!window._UPD && !_updBusy) _updCheck();
   const U = window._UPD;
@@ -29369,6 +29386,10 @@ function _updatesHtml(row, rowDisabled) {
   if (U.error) return row('updates', esc(U.error), `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">retry</button>`);
   let h = row('version', 'meowify ' + esc(U.current) + (U.latest ? ', latest ' + esc(U.latest) : ''),
     `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">check now</button>`);
+  if (U.changelog) {
+    h += row("what's new", 'recent releases', `<button class="btn btn-out mu-ripple" onclick="_updToggleLog()">${window._updShowLog ? 'hide' : 'show'}</button>`);
+    if (window._updShowLog) h += _updLogHtml(U.changelog);
+  }
   if (st.state && st.state !== 'idle') {
     h += row('status', esc(st.msg || st.state),
       st.needs_restart ? `<button class="btn btn-filled mu-ripple" onclick="_updRestart()">restart</button>` : '');
