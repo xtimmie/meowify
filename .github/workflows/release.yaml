@@ -58,6 +58,9 @@ jobs:
                   'the other files are used by the installer and the in-app updater.\n\n')
           open('release_body.md', 'w', encoding='utf-8').write(head + (body or 'no changelog entry for this version.'))
           open('notes.txt', 'w', encoding='utf-8').write(short)
+          secs = re.findall(r'^## .*?(?=^## |\Z)', text, re.S | re.M)
+          full = '\n'.join(s.strip() + '\n' for s in secs[:10]).strip()
+          open('changelog.txt', 'w', encoding='utf-8').write(full[:6000])
           EOF
 
       - name: build manifest
@@ -72,7 +75,8 @@ jobs:
           sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
           files = ['meowify.py', 'requirements.txt', 'launcher.pyw', 'android_patch.py']
           notes = open('notes.txt', encoding='utf-8').read().strip()
-          man = {'version': ver, 'tag': 'v' + ver, 'motionui': mu, 'min_python': '3.10', 'notes': notes,
+          changelog = open('changelog.txt', encoding='utf-8').read().strip()
+          man = {'version': ver, 'tag': 'v' + ver, 'motionui': mu, 'min_python': '3.10', 'notes': notes, 'changelog': changelog,
                  'files': {f: sha(f) for f in files}}
           json.dump(man, open('manifest.json', 'w'), indent=2)
           EOF
