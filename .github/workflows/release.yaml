@@ -1,7 +1,15 @@
 name: release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths:
+      - meowify.py
+      - requirements.txt
+      - launcher.pyw
+      - android_patch.py
+      - motionui.version
+      - install.ps1
+      - install.sh
 
 permissions:
   contents: write
@@ -12,25 +20,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: read version
+        id: ver
+        run: |
+          VER=$(python3 - <<'EOF'
+          import re
+          m = re.search(r"^APP_VERSION = '([^']+)'", open('meowify.py', encoding='utf-8').read(), re.M)
+          print(m.group(1) if m else '')
+          EOF
+          )
+          [ -n "$VER" ] || { echo "APP_VERSION not found in meowify.py"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v$VER is already released, nothing to do"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: build manifest
+        if: steps.ver.outputs.exists == 'false'
+        env:
+          VER: ${{ steps.ver.outputs.version }}
         run: |
           python3 - <<'EOF'
-          import hashlib, json, os, re
-          tag = os.environ['GITHUB_REF_NAME']
-          ver = tag.lstrip('v')
-          src = open('meowify.py', encoding='utf-8').read()
-          m = re.search(r"^APP_VERSION = '([^']+)'", src, re.M)
-          assert m and m.group(1) == ver, f'APP_VERSION {m and m.group(1)} does not match tag {tag}'
+          import hashlib, json, os
+          ver = os.environ['VER']
           mu = open('motionui.version').read().strip()
           sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
           files = ['meowify.py', 'requirements.txt', 'launcher.pyw', 'android_patch.py']
-          man = {'version': ver, 'tag': tag, 'motionui': mu, 'min_python': '3.10', 'notes': '',
+          man = {'version': ver, 'tag': 'v' + ver, 'motionui': mu, 'min_python': '3.10', 'notes': '',
                  'files': {f: sha(f) for f in files}}
           json.dump(man, open('manifest.json', 'w'), indent=2)
           EOF
 
-      - uses: softprops/action-gh-release@v2
+      - name: publish release
+        if: steps.ver.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: |
             manifest.json
             meowify.py
@@ -39,4 +69,3 @@ jobs:
             android_patch.py
             install.ps1
             install.sh
-          generate_release_notes: true
