@@ -26156,6 +26156,14 @@ function initVlistReorder(vl) {
   }, true);
 }
 
+// while a row is being drag-reordered, touchmove must never reach ancestors (the mobile drawer swipe-to-dismiss lives on one)
+// touch events keep targeting the element the touch started on, so the row itself tells us if its list is mid reorder
+document.addEventListener('touchmove', e => {
+  if (!e.target.closest || !e.target.closest('.reordering,.vl-drag')) return;
+  if (e.cancelable) e.preventDefault();
+  e.stopPropagation();
+}, { capture: true, passive: false });
+
 function initDrag(pid) {
   const listEl = document.getElementById('pl-rows');
   if (!listEl) return;
