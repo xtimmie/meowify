@@ -10459,6 +10459,10 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
   color:var(--color-on-surface);flex-shrink:0;
   text-wrap:nowrap;
 }
+/* long song titles clip with an ellipsis instead of pushing the buttons out (sidebar + mobile drawer) */
+.lyrics-hdr{gap:8px}
+#lyrics-hdr-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lyrics-hdr>div{flex-shrink:0}
 /* now playing sidebar */
 .nowplaying-sidebar{
   width:300px;flex-shrink:0;
