@@ -11798,6 +11798,8 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #dl-panel-float{min-width:320px;max-height:420px;overflow:hidden;padding:0;}
 #ctx.on,#dl-panel-float.on{display:flex;animation:ctx-pop var(--dur-5) var(--ease-spring) both;}
 #ctx.on.no-anim,#dl-panel-float.on.no-anim{animation:none;}
+#ctx.on.closing{animation:ctx-out 140ms ease-in both;pointer-events:none;}
+@keyframes ctx-out{to{opacity:0;transform:scale(.88) translateY(-6px);}}
 @keyframes ctx-pop{from{opacity:0;transform:scale(.82) translateY(-8px);}}
 /* mobile: ctx and dl-panel-float become bottom sheets */
 @media(max-width:767px){
@@ -11862,7 +11864,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #ctx .cx-icon .checkbox-box::after{width:9px;height:5px;border-left-width:2px;border-bottom-width:2px}
 #ctx .cx-icon .radio-dot::after{width:8px;height:8px}
 /* keep-open mode: close button on the header row */
-.cx-header.has-close{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 2px 2px 14px}
+.cx-header.has-close{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 4px 2px 14px}
 .cx-close{width:24px;height:24px;display:grid;place-items:center;flex-shrink:0;border:none;padding:0;border-radius:var(--radius-full);background:transparent;color:var(--color-on-surface-variant);cursor:pointer;pointer-events:auto;transition:background var(--dur-2)}
 .cx-close svg{display:block;width:12px;height:12px}
 @media (hover: hover) {.cx-close:hover{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}}
@@ -25280,7 +25282,7 @@ function showCtx(e, items, opts) {
   }
 
   // ── desktop: floating popup ──────────────────────────────────────────────
-  ctx.classList.remove('on', 'no-anim');
+  ctx.classList.remove('on', 'no-anim', 'closing');
   void ctx.offsetHeight;
   ctx.classList.add('on');
 
@@ -25316,7 +25318,16 @@ function hideCtx() {
     ctx.classList.remove('on', 'no-anim', 'mob-ctx-active');
     _unregisterDrawer(ctx);
   } else {
-    ctx.classList.remove('on', 'no-anim', 'mob-ctx-active');
+    if (!ctx.classList.contains('on') || ctx.classList.contains('closing')) return;
+    // play the out animation first, then actually hide (skipped if a new menu opened meanwhile)
+    ctx.classList.add('closing');
+    const gen = _ctxGeneration;
+    const done = () => {
+      if (_ctxGeneration !== gen) return;
+      ctx.classList.remove('on', 'no-anim', 'mob-ctx-active', 'closing');
+    };
+    ctx.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 220);
   }
 }
 
