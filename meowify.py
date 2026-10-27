@@ -25933,6 +25933,16 @@ function initVlistReorder(vl) {
     armed = null;
   }
 
+  // dragged rows (anchor + every follower) show the number they get at the current slot, playing row keeps its icon
+  function _sn(el, n) {
+    const s = el.querySelector('.snum-num');
+    if (s && s.textContent && !el.classList.contains('playing')) s.textContent = n;
+  }
+  function _numGroup(k) {
+    if (ghost) _sn(ghost, k + rankFrom + 1);
+    folls.forEach(f => _sn(f.el, k + group.indexOf(f.idx) + 1));
+  }
+
   function place() {
     const n = vl.songs.length;
     // closed loop: the ghost's top is measured on screen and walked to where the pointer says it has to be,
@@ -25947,8 +25957,7 @@ function initVlistReorder(vl) {
     if (k !== vl._drag.slot) {
       vl._drag.slot = k;
       vl._relayout();
-      const gsn = ghost.querySelector('.snum-num');
-      if (gsn && gsn.textContent && !ghost.classList.contains('playing')) gsn.textContent = k + rankFrom + 1;
+      _numGroup(k);
     }
   }
 
@@ -26035,6 +26044,7 @@ function initVlistReorder(vl) {
     ghost.style.translate = '0 ' + y0 + 'px';
     vis0 = ghost.getBoundingClientRect().top; // where the grabbed row really is on screen right now
     place();
+    _numGroup(vl._drag.slot);
     tick();
   }
 
@@ -26080,6 +26090,7 @@ function initVlistReorder(vl) {
       el.classList.remove('drag-lifted', 'drag-anchor', 'drag-follow', 'drag-far', 'drag-stacked');
       el.classList.add('drag-drop');
       el.style.scale = '';
+      _sn(el, fin + 1);
       el.style.translate = '0 ' + (fin * H) + 'px';
       joinAt(el, commit ? fin : m);
     });
