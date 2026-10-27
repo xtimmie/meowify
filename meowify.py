@@ -10967,7 +10967,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .np-next-title{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .np-next-artist{font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .lyrics-body{
-  flex:1;overflow-y:auto;padding:0 16px;
+  flex:1;overflow-y:auto;padding:0 16px 16px;
   scroll-behavior:smooth;
 }
 .lyrics-body::after {
@@ -25527,9 +25527,11 @@ function initReorderDrag(listEl, opts) {
     });
     // the slot is decided by where the dragged row sits against the other rows' centers,
     // so what you see under the finger is exactly where it lands, for single rows and stacks alike
-    const center = top + heights[from] / 2;
-    let k = 0;
-    while (k < rest.length && packed[k] + heights[rest[k]] / 2 < center) k++;
+    // the slot flips once the dragged row's leading edge (bottom going down, top going up) passes the middle of the
+    // neighbour, same distance both ways. rows below the hole are displayed shifted by slotH + gap
+    let k = slot;
+    while (k < rest.length && top + heights[from] > packed[k] + slotH + gap + heights[rest[k]] / 2) k++;
+    while (k > 0 && top < packed[k - 1] + heights[rest[k - 1]] / 2) k--;
     if (k === slot) return;
     slot = k;
     layout();
@@ -26686,7 +26688,7 @@ function _applyDesignImpl(design) {
   @media (hover: hover) {body.design-glassy .nav-btn.active:hover{background:color-mix(in oklch,var(--color-primary) 26%,rgba(255,255,255,.09))!important}}
   body.design-glassy .mob-sort-btn{background:color-mix(in oklch,var(--color-primary) 16%,rgba(255,255,255,.06))!important;color:var(--color-primary)!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #ctx,body.design-glassy #dl-panel-float{background:color-mix(in oklch,var(--color-surface-container-highest) min(100%,max(calc(50% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(20px * var(--glass-b,1))) saturate(1.6);border-color:var(--glass-border-hi)!important;box-shadow:var(--glass-spec-panel)!important}
-  @media(max-width:767px){body.design-glassy #ctx,body.design-glassy #dl-panel-float{border:none!important;border-top:1px solid var(--glass-border-hi)!important;box-shadow:none!important}}
+  @media(max-width:767px){body.design-glassy #ctx,body.design-glassy #dl-panel-float{border:none!important;border-top:1px solid var(--glass-border-hi)!important;}}
   body.design-glassy #ctx{border:none!important}
   /* glassy: dividers are translucent so they blend with the blurred backdrop instead of sitting on it as solid lines */
   body.design-glassy{
