@@ -10488,6 +10488,7 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 
 /* ── mobile bottom-sheet overrides for all three sidebars ── */
 /* backdrop styles are in motionui/components.css (.mob-sheet-backdrop) */
+.mob-sheet-backdrop{will-change:opacity}
 
 @media(max-width:767px){
   .queue-sidebar,
@@ -11792,7 +11793,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #ctx,#dl-panel-float{
   position:fixed;z-index:1000;
   background:var(--color-surface-container-high);
-  border:1px solid var(--glass-border);
+  border:1px solid rgba(255,255,255,0.13);
   border-radius:var(--radius-lg);
   box-shadow:0 8px 32px rgba(0,0,0,.55);
   padding:5px;min-width:176px;
@@ -11822,6 +11823,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
     display:flex!important;
     transform:translateY(110%);
     pointer-events:none;
+    will-change:transform; /* own compositor layer: dragging moves a texture instead of repainting the sheet + elevation shadow every frame */
     transition:transform var(--dur-7) var(--ease-spring-soft)!important;
     animation:none!important;
     overflow-y:auto;
