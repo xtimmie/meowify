@@ -12205,6 +12205,8 @@ body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{b
 :is(.song-row-mobile,#queue-inner .song-row)::after{content:'';position:absolute;left:19px;top:50%;width:4px;height:8px;margin-top:-6px;border:solid var(--color-on-primary);border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);opacity:0;translate:-34px 0;pointer-events:none;transition:transform .3s cubic-bezier(.34,1.7,.5,1),opacity .12s,translate .28s var(--ease-out)}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::after{translate:0 0}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::after{transform:rotate(45deg) scale(1);opacity:1}
+:is(.song-row-mobile,#queue-inner .song-row)::after{margin-top:-5.5px}
+.qs-ghost-wrap .song-row::after{margin-top:-5.5px}
 .sel-reorderable .smenu-btn{transition:opacity .2s var(--ease-out)}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row)::before{opacity:1;translate:0 0}
 body.select-mode :is(.song-row-mobile,#queue-inner .song-row).selected::before{scale:1}
@@ -25739,7 +25741,7 @@ function initVlistReorder(vl) {
   let active = false, dropping = false, suppressClick = false;
   let from = -1, ghost = null, grab = 0, z = 1, y0 = 0, startScroll = 0;
   const STACK_GAP = 5;
-  let group = [], rankFrom = 0, startSlot = 0, curY = 0, folls = [], stackAt = 0, stacked = false, top0 = 0;
+  let group = [], rankFrom = 0, startSlot = 0, curY = 0, folls = [], stackAt = 0, stacked = false, top0 = 0, vis0 = 0;
 
   function cancelHold() {
     clearTimeout(holdTimer);
@@ -25749,8 +25751,10 @@ function initVlistReorder(vl) {
 
   function place() {
     const n = vl.songs.length;
-    // scroll is read from the list's own rect (visual px / z) instead of scrollTop, so no unit can drift at non 100% zoom
-    const y = Math.max(0, Math.min(y0 + (lastY - downY) / z + (top0 - inner.getBoundingClientRect().top) / z, (n - 1) * vl.ROW_H));
+    // closed loop: the ghost's top is measured on screen and walked to where the pointer says it has to be,
+    // so zoom (nested or not), scroll and rounding can't leave it drifting off the finger
+    const want = vis0 + (lastY - downY);
+    const y = Math.max(0, Math.min(curY + (want - ghost.getBoundingClientRect().top) / z, (n - 1) * vl.ROW_H));
     curY = y;
     ghost.style.translate = '0 ' + y + 'px';
     // followers ride in a tight stack under the dragged row
@@ -25841,6 +25845,9 @@ function initVlistReorder(vl) {
     void inner.offsetHeight; // commit the followers' start spots so they fly into the stack
     stacked = false;
     stackAt = performance.now() + ANIM_MS + 60;
+    curY = y0;
+    ghost.style.translate = '0 ' + y0 + 'px';
+    vis0 = ghost.getBoundingClientRect().top; // where the grabbed row really is on screen right now
     place();
     tick();
   }
