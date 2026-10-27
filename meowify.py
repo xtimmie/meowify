@@ -12862,7 +12862,9 @@ function _updateMobileTab(view){
 function setMobileTab(tab){
   if(tab==='playlists'){
     if (S.view === 'settings') window.resetGear?.();
+    if (S.selectMode) _setSelectMode(false); // song selection makes no sense on this page, same as setView
     S.view='playlists-mobile';
+    _syncSelBtn();
     document.getElementById('vtitle').textContent='playlists';
     document.getElementById('tacts').innerHTML=
       `<button class="cbtn mu-ripple" title="new playlist" onclick="showCreatePl()">
@@ -12894,12 +12896,13 @@ function renderMobilePlaylists(){
   }
   vc.innerHTML='<div class="song-list">'+S.playlists.map(p=>{
     const cnt=(S.plSongs[p.id]||[]).length;
-    return`<div class="song-row-mobile ui-list-item ui-list-item mu-ripple" onclick="setView('playlist','${p.id}')" oncontextmenu="plCtx(event,'${p.id}')">
+    return`<div class=\"song-row-mobile ui-list-item ui-list-item mu-ripple${S.selected.has(p.id)?' selected':''}\" data-pl=\"${p.id}\" onclick=\"_plRowClick(event,'${p.id}')\" oncontextmenu=\"plCtx(event,'${p.id}')\">
       <div class="sthumb" style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--color-surface-container-high);border-radius:var(--radius-sm);color:var(--color-on-surface-variant)"><svg width="24" height="20" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg></div>
       <div class="sinfo-mob"><div class="stitle-mob">${esc(p.name)}</div><div class="sartist-mob">${cnt?cnt+' songs':''}</div></div>
       <button class="smenu-btn mu-ripple" style="opacity:1;flex-shrink:0" onclick="event.stopPropagation();plCtx(event,'${p.id}')">${MEOW_ICONS.more}</button>
     </div>`;
   }).join('')+'</div>';
+  _plSelRefresh();
 }
 
 function openSortDrawer() {
@@ -17339,6 +17342,7 @@ function setView(v, pid, aid) {
   if (S.view === 'settings' && v !== 'settings') window.resetGear?.();
   if (v === 'settings') window.animateGear?.();
   S.view = v;
+  _syncSelBtn();
   if (v === 'playlist') { S.activePid = pid; S.activeAid = null; S.activeArtid = null; plNoteAnim(pid); }
   else if (v === 'album') { S.activeAid = aid; S.activePid = null; S.activeArtid = null; }
   else if (v === 'artist') { S.activeArtid = aid; S.activePid = null; S.activeAid = null; }
@@ -22592,7 +22596,7 @@ function _setSelectMode(on) {
   on = !!on;
   if (!!S.selectMode === on) return;
   S.selectMode = on;
-  if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); }
+  if (!on) { S.selected.clear(); _lastSelectedId = null; refreshSelectionUI(); _plSelRefresh(); }
   // in select mode the queue (<=400) renders as the plain songlist so it shares the songlist drag engine
   const _qRe = () => {}; // queue is always the plain songlist up to 400 now, nothing to swap
   if (on) {
@@ -22604,6 +22608,102 @@ function _setSelectMode(on) {
     setTimeout(() => { if (!S.selectMode) _qRe(); }, 340); // after the slide-out finished
   }
   document.querySelectorAll('#sel-mode-btn, #qs-sel-btn').forEach(b => { b.classList.toggle('on', on); b.classList.toggle('active', on); });
+}
+
+// the select button only makes sense where there is something to select (songlists, the playlists page)
+function _syncSelBtn() {
+  const b = document.getElementById('sel-mode-btn');
+  if (!b) return;
+  const hide = S.view === 'add' || S.view === 'settings' || S.view === 'stats';
+  b.style.display = hide ? 'none' : '';
+}
+
+// ── mobile playlists page: batch select ──────────────────────────────────────
+// playlist ids live in S.selected too (a page never has songs and playlists at once)
+function _plSelIds() { return S.playlists.filter(p => S.selected.has(p.id)).map(p => p.id); }
+
+function _plSelRefresh() {
+  const rows = [...document.querySelectorAll('#vc .song-list > .song-row-mobile[data-pl]')];
+  rows.forEach((r, i) => {
+    const me = S.selected.has(r.dataset.pl);
+    r.classList.toggle('selected', me);
+    r.classList.toggle('sel-up', me && i > 0 && S.selected.has(rows[i - 1].dataset.pl));
+    r.classList.toggle('sel-dn', me && i < rows.length - 1 && S.selected.has(rows[i + 1].dataset.pl));
+  });
+  _plActs();
+}
+
+function _plRowClick(e, pid) {
+  if (!S.selectMode) { setView('playlist', pid); return; }
+  if (e.shiftKey && _lastSelectedId && S.selected.has(_lastSelectedId)) {
+    const ids = S.playlists.map(p => p.id);
+    const a = ids.indexOf(_lastSelectedId), b = ids.indexOf(pid);
+    if (a >= 0 && b >= 0) {
+      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) S.selected.add(ids[i]);
+      _plSelRefresh();
+      return;
+    }
+  }
+  if (S.selected.has(pid)) S.selected.delete(pid);
+  else { S.selected.add(pid); _lastSelectedId = pid; }
+  _plSelRefresh();
+}
+
+// topbar actions for the selection: rename (one), merge (two or more), delete
+function _plActs() {
+  if (S.view !== 'playlists-mobile') return;
+  const t = document.getElementById('tacts');
+  if (!t) return;
+  let w = document.getElementById('pl-bulk-acts');
+  const ids = _plSelIds();
+  if (!S.selectMode || !ids.length) { if (w) w.remove(); return; }
+  if (!w) { w = document.createElement('span'); w.id = 'pl-bulk-acts'; w.style.cssText = 'display:contents'; t.prepend(w); }
+  const svg = p => `<svg viewBox='0 0 24 24' width='17' height='17' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='display:block'>${p}</svg>`;
+  w.innerHTML =
+    (ids.length === 1 ? `<button class='cbtn mu-ripple' title='rename' onclick='plBulkRename()'>${MEOW_ICONS.pencil}</button>` : '') +
+    (ids.length > 1 ? `<button class='cbtn mu-ripple' title='merge into new playlist' onclick='plBulkMerge()'>${svg("<circle cx='18' cy='18' r='3'/><circle cx='6' cy='6' r='3'/><path d='M6 21V9a9 9 0 0 0 9 9'/>")}</button>` : '') +
+    `<button class='cbtn mu-ripple' title='delete' onclick='plBulkDelete()'>${MEOW_ICONS.trash}</button>`;
+}
+
+async function plBulkRename() {
+  const ids = _plSelIds();
+  if (ids.length !== 1) return;
+  const pl = S.playlists.find(p => p.id === ids[0]);
+  const name = await promptModal('rename playlist', 'name', pl?.name);
+  if (!name) return;
+  await api('PATCH', '/api/playlists/' + ids[0], {name});
+  _setSelectMode(false);
+  await loadData(); renderPlNav(); renderMobilePlaylists();
+}
+
+async function plBulkMerge() {
+  const ids = _plSelIds();
+  if (ids.length < 2) return;
+  const def = ids.map(id => S.playlists.find(p => p.id === id)?.name).filter(Boolean).join(' + ');
+  const name = await promptModal('merge into new playlist', 'name', def);
+  if (!name) return;
+  // songs in playlist order, duplicates dropped. the originals stay untouched
+  const seen = new Set(), songIds = [];
+  for (const pid of ids) {
+    if (!S.plSongs[pid]) S.plSongs[pid] = (await api('GET', '/api/playlists/' + pid + '/songs')) || [];
+    for (const s of S.plSongs[pid]) if (!seen.has(s.id)) { seen.add(s.id); songIds.push(s.id); }
+  }
+  const r = await api('POST', '/api/playlists', {name});
+  if (!r || r.error) { alert((r && r.error) || 'could not create playlist'); return; }
+  for (const sid of songIds) await api('POST', '/api/playlists/' + r.id + '/songs', {song_id: sid});
+  S.plSongs[r.id] = undefined;
+  _setSelectMode(false);
+  await loadData(); renderPlNav(); renderMobilePlaylists();
+}
+
+async function plBulkDelete() {
+  const ids = _plSelIds();
+  if (!ids.length) return;
+  if (!await confirmModal('delete ' + ids.length + (ids.length > 1 ? ' playlists?' : ' playlist?'), 'this cannot be undone')) return;
+  for (const pid of ids) { await api('DELETE', '/api/playlists/' + pid); S.plSongs[pid] = undefined; }
+  if (ids.includes(S.activePid)) S.activePid = null;
+  _setSelectMode(false);
+  await loadData(); renderPlNav(); renderMobilePlaylists();
 }
 
 function toggleSelectMode() { _setSelectMode(!S.selectMode); }
