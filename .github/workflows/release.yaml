@@ -10,6 +10,9 @@ on:
       - motionui.version
       - install.ps1
       - install.sh
+      - CHANGELOG.md
+      - .github/workflows/release.yaml
+  workflow_dispatch:
 
 permissions:
   contents: write
