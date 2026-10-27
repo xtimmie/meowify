@@ -5981,6 +5981,8 @@ _DBX_SKIPPED = object()
 _dbx_manifest_cache = {}   # device_id -> (rev, manifest)
 _dbx_actions_rev = {}      # peer_id -> rev of the action file we already applied
 _dbx_manifest_sig = {'sig': None, 't': 0}
+_dbx_own_paths = set()   # remote paths this device uploaded or deleted during its last sync
+_dbx_own_hash = {}       # remote path -> content hash of what this device last wrote (prefs.json, library.db)
 _dbx_dbhash_cache = {}
 _dbx_hash_cache = {}
 _dbx_reconcile_stamp = [None]
@@ -6137,7 +6139,11 @@ def _dbx_idle_skip(dbx):
         while True:
             res = dbx.files_list_folder_continue(cur)
             for e in res.entries:
-                if own in (getattr(e, 'path_lower', '') or ''):
+                _pl = getattr(e, 'path_lower', '') or ''
+                if own in _pl or _pl in _dbx_own_paths:
+                    continue
+                _oh = _dbx_own_hash.get(_pl)
+                if _oh and getattr(e, 'content_hash', None) == _oh:
                     continue
                 return False
             cur = res.cursor
@@ -6177,7 +6183,13 @@ class DropboxQuotaError(Exception):
 
 def _dbx_upload(dbx, local_path, remote_path):
     try:
-        return _dbx_retry(_dbx_upload_raw, dbx, local_path, remote_path)
+        _r = _dbx_retry(_dbx_upload_raw, dbx, local_path, remote_path)
+        _pl = str(remote_path).lower()
+        if _pl == '/meowify/library.db':
+            _dbx_own_hash[_pl] = _dbx_db_hash(local_path)
+        else:
+            _dbx_own_paths.add(_pl)
+        return _r
     except Exception as e:
         _s = str(e).lower()
         if 'insufficient_space' in _s or 'storage_limit' in _s or 'over_quota' in _s:
@@ -6802,6 +6814,7 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
         def _del_many(folder, items):
             def _d(it):
                 _dbx_retry(dbx.files_delete_v2, f'{folder}/{it[0]}')
+                _dbx_own_paths.add(f'{folder}/{it[0]}'.lower())
                 return it[1] or 0
             n = fr = 0
             for it, v, err in _dbx_run_parallel(items, _d):
@@ -6845,6 +6858,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
         _dbx_actions_rev.clear()
         _dbx_idle['verify_t'] = _idle_t
     _dbx_reconcile_stamp[0] = None  # first reconcile of every sync always really runs
+    _dbx_own_paths.clear()
 
     def _status(msg):
         if status_cb:
@@ -7245,6 +7259,7 @@ def _dbx_push_prefs(dbx):
         data = json.dumps(prefs).encode()
         dbx.files_upload(data, '/meowify/prefs.json',
                          mode=_dbxmod.files.WriteMode.overwrite, mute=True)
+        _dbx_own_hash['/meowify/prefs.json'] = _dropbox_hash(data)
         return True
     except Exception as e:
         _log_dbx.warning(f'[dbx prefs] push failed: {e}')
