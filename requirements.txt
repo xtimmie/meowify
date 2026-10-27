@@ -1,0 +1,13 @@
+flask>=3.0
+mutagen>=1.47
+numpy
+miniaudio
+ytmusicapi
+dropbox
+yt-dlp
+duckduckgo-search
+pillow
+psutil
+langdetect
+scipy
+pywebview; sys_platform == "win32"

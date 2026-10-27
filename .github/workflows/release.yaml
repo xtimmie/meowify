@@ -1,0 +1,42 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build manifest
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json, os, re
+          tag = os.environ['GITHUB_REF_NAME']
+          ver = tag.lstrip('v')
+          src = open('meowify.py', encoding='utf-8').read()
+          m = re.search(r"^APP_VERSION = '([^']+)'", src, re.M)
+          assert m and m.group(1) == ver, f'APP_VERSION {m and m.group(1)} does not match tag {tag}'
+          mu = open('motionui.version').read().strip()
+          sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
+          files = ['meowify.py', 'requirements.txt', 'launcher.pyw', 'android_patch.py']
+          man = {'version': ver, 'tag': tag, 'motionui': mu, 'min_python': '3.10', 'notes': '',
+                 'files': {f: sha(f) for f in files}}
+          json.dump(man, open('manifest.json', 'w'), indent=2)
+          EOF
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            manifest.json
+            meowify.py
+            requirements.txt
+            launcher.pyw
+            android_patch.py
+            install.ps1
+            install.sh
+          generate_release_notes: true

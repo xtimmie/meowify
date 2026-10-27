@@ -26836,7 +26836,7 @@ function _applyDesignImpl(design) {
   body.design-glassy .qs-hdr,body.design-glassy .lyrics-hdr{border-bottom:1px solid var(--glass-border)}
   body.design-glassy :is(.np-next-card,.np-lrc-preview,.np-meta-grid){background:color-mix(in oklch,var(--color-primary) 5%,rgba(255,255,255,.08))!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy #vol-slider-popup {box-shadow: var(--glass-spec-panel);}
-  body.design-glassy .np-cover-inner::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:var(--glass-spec-panel)}
+  body.design-glassy .np-cover-inner::after{content:'';position:absolute;inset:0;border-radius:inherit;corner-shape:inherit;pointer-events:none;box-shadow:var(--glass-spec-checked)}
   body.design-glassy .set-section {box-shadow: var(--glass-spec-panel);}
   /* svg glass - static icons use #gs-s (no blur pass, crisper at small sizes, cheaper)
      animated spiky btns keep full #gs; wavy/vol path SVGs excluded (stroked paths, rim invisible) 
