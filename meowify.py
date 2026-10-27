@@ -7977,7 +7977,7 @@ _UPD_REPO     = 'xtimmie/meowify'
 _UPD_MANIFEST = f'https://github.com/{_UPD_REPO}/releases/latest/download/manifest.json'
 _UPD_FILES    = ('meowify.py', 'requirements.txt')
 _UPD_SAFE     = {'yt-dlp', 'ytmusicapi', 'dropbox', 'duckduckgo-search', 'mutagen', 'flask', 'pywebview', 'langdetect'}
-_UPD_STATE    = {'state': 'idle', 'msg': '', 'needs_restart': False}
+_UPD_STATE    = {'state': 'idle', 'msg': '', 'needs_restart': False, 'id': ''}
 _UPD_CACHE    = {'t': 0.0, 'data': None}
 _upd_lock     = threading.Lock()
 _INSTALL_JSON = _APP_DIR / '.install.json'
@@ -8014,8 +8014,10 @@ def _upd_can_apply():
         return False, 'not running from the meowify install'
     return True, ''
 
-def _upd_set(state, msg='', restart=False):
+def _upd_set(state, msg='', restart=False, mod=None):
     _UPD_STATE.update(state=state, msg=msg, needs_restart=restart)
+    if mod is not None:
+        _UPD_STATE['id'] = mod
 
 def _upd_sha(path):
     import hashlib
@@ -8057,6 +8059,49 @@ def _upd_outdated_deps():
             out.append({'name': p['name'], 'current': p['version'], 'latest': p['latest_version']})
     return out
 
+def _upd_mu_installed(info=None):
+    d = Path(MOTIONUI_DIR)
+    if not d.is_dir():
+        return None
+    try:
+        return (d / '.tag').read_text(encoding='utf-8').strip() or None
+    except Exception:
+        return (info if info is not None else _upd_install_info()).get('motionui')
+
+def _upd_mu_upstream():
+    try:
+        tags = json.loads(_upd_get('https://api.github.com/repos/xtimmie/motionui/tags?per_page=30', timeout=8).decode('utf-8'))
+        names = [t['name'] for t in tags if re.match(r'^v?\d+(\.\d+)*$', t.get('name', ''))]
+        return max(names, key=_upd_ver) if names else None
+    except Exception:
+        return None
+
+def _upd_fetch_motionui(tag, tmp):
+    import zipfile
+    z = tmp / 'mu.zip'
+    z.write_bytes(_upd_get(f'https://github.com/xtimmie/motionui/archive/refs/tags/{tag}.zip', timeout=120))
+    ex = tmp / 'mu'
+    with zipfile.ZipFile(z) as zf:
+        zf.extractall(ex)
+    roots = [d for d in ex.iterdir() if d.is_dir()]
+    src = roots[0] if len(roots) == 1 else ex
+    if not all((src / f).exists() for f in _MU_REQUIRED):
+        raise RuntimeError('motionui download looks wrong')
+    return src
+
+def _upd_pkg_list():
+    from importlib import metadata as _md
+    names = sorted(set(_upd_req_names()) & _UPD_SAFE)
+    newer = {p['name'].lower().replace('_', '-'): p['latest'] for p in _upd_outdated_deps()}
+    out = []
+    for n in names:
+        try:
+            inst = _md.version(n)
+        except Exception:
+            inst = None
+        out.append({'name': n, 'installed': inst, 'latest': newer.get(n)})
+    return out
+
 def _upd_check(force=False):
     now = time.time()
     if not force and _UPD_CACHE['data'] and now - _UPD_CACHE['t'] < 3600:
@@ -8073,32 +8118,89 @@ def _upd_check(force=False):
         return {'error': msg, 'current': cur, 'items': []}
     except Exception as e:
         return {'error': f'could not reach github ({e.__class__.__name__})', 'current': cur, 'items': []}
-    out = {'platform': sys.platform, 'current': cur, 'latest': man.get('version'), 'items': []}
+    out = {'platform': sys.platform, 'current': cur, 'latest': man.get('version'), 'modules': []}
     out['changelog'] = str(man.get('changelog') or '')
-    if _upd_ver(man.get('version')) > _upd_ver(cur):
-        app_ok, reason = ok, ('' if ok else why)
-        need_py = man.get('min_python')
-        if ok and need_py and tuple(sys.version_info[:2]) < _upd_ver(need_py)[:2]:
-            app_ok, reason = False, f'needs python {need_py}'
-        out['items'].append({'id': 'app', 'name': 'meowify', 'current': cur, 'latest': man.get('version'),
-                             'notes': man.get('notes', ''), 'can_apply': app_ok, 'reason': reason})
+    newer = _upd_ver(man.get('version')) > _upd_ver(cur)
+    app_ok, reason = ok, ('' if ok else why)
+    need_py = man.get('min_python')
+    if ok and need_py and tuple(sys.version_info[:2]) < _upd_ver(need_py)[:2]:
+        app_ok, reason = False, f'needs python {need_py}'
+    out['modules'].append({'id': 'app', 'name': 'meowify', 'installed': cur, 'latest': man.get('version'),
+                           'notes': man.get('notes', ''), 'can_apply': bool(newer and app_ok),
+                           'reason': reason if newer else '',
+                           'status': 'update' if (newer and app_ok) else ('blocked' if newer else 'current')})
+    pin = man.get('motionui')
+    mu_inst = _upd_mu_installed(info)
+    mu = {'id': 'motionui', 'name': 'motionui', 'installed': mu_inst, 'pinned': pin,
+          'upstream': _upd_mu_upstream(), 'can_apply': False, 'reason': '', 'status': 'current'}
+    mu['upstream_ahead'] = bool(mu['upstream'] and pin and _upd_ver(mu['upstream']) > _upd_ver(pin))
+    if not pin:
+        mu.update(status='blocked', reason='the latest release does not pin a motionui version')
+    elif pin != mu_inst:
+        if newer:
+            mu.update(status='blocked', reason=f'update meowify first, the latest release needs motionui {pin}')
+        elif not ok:
+            mu.update(status='blocked', reason=why)
+        else:
+            mu.update(status='update', can_apply=True)
+    out['modules'].append(mu)
     if _IN_VENV and not IS_ANDROID:
         try:
-            dd = _upd_outdated_deps()
+            pk = _upd_pkg_list()
         except Exception:
-            dd = []
-        if dd:
-            out['items'].append({'id': 'deps', 'name': 'python packages', 'packages': dd,
-                                 'can_apply': ok, 'reason': '' if ok else why})
+            pk = []
+        todo = any(p['latest'] for p in pk)
+        out['modules'].append({'id': 'deps', 'name': 'python packages', 'packages': pk,
+                               'can_apply': bool(ok and todo), 'reason': '' if ok else why,
+                               'status': 'update' if todo else 'current'})
     _UPD_CACHE.update(t=now, data=out)
     return out
 
-def _upd_do_deps():
+def _upd_do_deps(names=None):
     _upd_set('running', 'updating packages...')
-    dd = _upd_outdated_deps()
+    dd = [p['name'] for p in _upd_outdated_deps()]
+    if names:
+        want = {str(n).lower().replace('_', '-') for n in names}
+        dd = [n for n in dd if n.lower().replace('_', '-') in want]
     if dd:
-        _upd_pip(['install', '-U'] + [p['name'] for p in dd])
+        _upd_pip(['install', '-U'] + dd)
     _upd_set('done', 'packages updated, restart to use them', True)
+
+def _upd_do_motionui():
+    import tempfile
+    _upd_set('running', 'checking release...')
+    man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    tag = man.get('motionui')
+    if not tag:
+        raise RuntimeError('the latest release does not pin a motionui version')
+    info = _upd_install_info()
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-upd-'))
+    try:
+        _upd_set('running', f'downloading motionui {tag}...')
+        src = _upd_fetch_motionui(tag, tmp)
+        _upd_set('running', 'installing motionui...')
+        bak = _APP_DIR / 'backup'
+        bak.mkdir(exist_ok=True)
+        for name in _UPD_FILES:
+            cur = _APP_DIR / name
+            if cur.exists():
+                shutil.copy2(cur, bak / name)
+        (bak / 'install.json').write_text(json.dumps(info), encoding='utf-8')
+        (bak / 'motionui_path.txt').write_text(str(MOTIONUI_DIR), encoding='utf-8')
+        dest = Path(MOTIONUI_DIR)
+        shutil.rmtree(bak / 'motionui', ignore_errors=True)
+        if dest.exists():
+            shutil.copytree(dest, bak / 'motionui')
+            shutil.rmtree(dest, ignore_errors=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dest)
+        (dest / '.tag').write_text(str(tag), encoding='utf-8')
+        info['motionui'] = tag
+        _INSTALL_JSON.write_text(json.dumps(info), encoding='utf-8')
+        (_APP_DIR / '.booting').write_text('pending', encoding='utf-8')
+        _upd_set('done', f'motionui updated to {tag}, restart to apply', True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 def _upd_do_app():
     import tempfile, zipfile
@@ -8121,18 +8223,9 @@ def _upd_do_app():
         compile((tmp / 'meowify.py').read_text(encoding='utf-8'), 'meowify.py', 'exec')
         mu_tag = man.get('motionui')
         mu_new = None
-        if mu_tag and mu_tag != info.get('motionui'):
+        if mu_tag and mu_tag != _upd_mu_installed(info):
             _upd_set('running', f'downloading motionui {mu_tag}...')
-            z = tmp / 'mu.zip'
-            z.write_bytes(_upd_get(f'https://github.com/xtimmie/motionui/archive/refs/tags/{mu_tag}.zip', timeout=120))
-            ex = tmp / 'mu'
-            with zipfile.ZipFile(z) as zf:
-                zf.extractall(ex)
-            roots = [d for d in ex.iterdir() if d.is_dir()]
-            src = roots[0] if len(roots) == 1 else ex
-            if not all((src / f).exists() for f in _MU_REQUIRED):
-                raise RuntimeError('motionui download looks wrong')
-            mu_new = src
+            mu_new = _upd_fetch_motionui(mu_tag, tmp)
         _upd_set('running', 'installing dependencies...')
         _upd_pip(['install', '-r', str(tmp / 'requirements.txt')])
         _upd_set('running', 'installing update...')
@@ -8153,6 +8246,7 @@ def _upd_do_app():
                 shutil.rmtree(dest, ignore_errors=True)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(mu_new, dest)
+            (dest / '.tag').write_text(str(mu_tag), encoding='utf-8')
         for name in _UPD_FILES:
             staged = _APP_DIR / (name + '.new')
             shutil.copy2(tmp / name, staged)
@@ -8164,12 +8258,14 @@ def _upd_do_app():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-def _upd_run(kind):
+def _upd_run(kind, names=None):
     try:
         if kind == 'app':
             _upd_do_app()
+        elif kind == 'motionui':
+            _upd_do_motionui()
         else:
-            _upd_do_deps()
+            _upd_do_deps(names)
         _UPD_CACHE['data'] = None
     except Exception as e:
         _log_server.error(f'update failed: {e}')
@@ -8194,17 +8290,23 @@ def api_update_status():
 
 @app.route('/api/update/apply', methods=['POST'])
 def api_update_apply():
-    kind = (request.get_json(silent=True) or {}).get('id')
-    if kind not in ('app', 'deps'):
+    body = request.get_json(silent=True) or {}
+    kind = body.get('id')
+    if kind not in ('app', 'motionui', 'deps'):
         return jsonify({'error': 'bad id'}), 400
+    names = body.get('packages') if isinstance(body.get('packages'), list) else None
     ok, why = _upd_can_apply()
     if not ok:
         return jsonify({'error': why}), 400
+    if kind in ('app', 'motionui'):
+        mod = next((m for m in (_upd_check().get('modules') or []) if m.get('id') == kind), None)
+        if not mod or not mod.get('can_apply'):
+            return jsonify({'error': (mod or {}).get('reason') or 'nothing to update'}), 400
     with _upd_lock:
         if _UPD_STATE['state'] == 'running':
             return jsonify({'error': 'busy'}), 409
-        _upd_set('running', 'starting...')
-    threading.Thread(target=_upd_run, args=(kind,), daemon=True).start()
+        _upd_set('running', 'starting...', mod=kind)
+    threading.Thread(target=_upd_run, args=(kind, names), daemon=True).start()
     return jsonify({'ok': True})
 
 # ── music video backend ────────────────────────────────────────────────────────
@@ -29341,8 +29443,8 @@ async function _updCheck(force) {
   renderSettings();
 }
 
-async function _updApply(id) {
-  const r = await api('POST', '/api/update/apply', {id});
+async function _updApply(id, packages) {
+  const r = await api('POST', '/api/update/apply', packages ? {id, packages} : {id});
   if (!r || r.error) { alert('update failed to start: ' + ((r && r.error) || 'unknown error')); return; }
   if (_updPoll) clearInterval(_updPoll);
   _updPoll = setInterval(async () => {
@@ -29378,40 +29480,69 @@ function _updLogHtml(text) {
   return `<div style="max-height:260px;overflow:auto;padding:2px 4px 8px;font-size:13px;line-height:1.45">${out}</div>`;
 }
 
+function _updSub(t) {
+  return `<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin:18px 0 2px">${esc(t)}</div>`;
+}
+
+function _updStatusRow(row, st, id) {
+  if (!st || !st.state || st.state === 'idle' || st.id !== id) return '';
+  return row('status', esc(st.msg || st.state),
+    st.needs_restart ? `<button class="btn btn-filled mu-ripple" onclick="_updRestart()">restart</button>` : '');
+}
+
 function _updatesHtml(row, rowDisabled) {
   if (!window._UPD && !_updBusy) _updCheck();
   const U = window._UPD;
   const st = window._UPD_ST || {};
+  const busy = st.state === 'running';
   if (!U) return row('updates', 'checking...', '');
   if (U.error) return row('updates', esc(U.error), `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">retry</button>`);
-  let h = row('version', 'meowify ' + esc(U.current) + (U.latest ? ', latest ' + esc(U.latest) : ''),
+  const btn = (label, js) => `<button class="btn btn-filled mu-ripple" ${busy ? 'disabled' : ''} onclick="${js}">${label}</button>`;
+  const mods = {};
+  for (const x of (U.modules || [])) mods[x.id] = x;
+  let h = row('check for updates', 'latest release ' + esc(U.latest || 'unknown'),
     `<button class="btn btn-out mu-ripple" onclick="_updCheck(true)">check now</button>`);
-  if (U.changelog) {
-    h += row("what's new", 'recent releases', `<button class="btn btn-out mu-ripple" onclick="_updToggleLog()">${window._updShowLog ? 'hide' : 'show'}</button>`);
-    if (window._updShowLog) h += _updLogHtml(U.changelog);
-  }
-  if (st.state && st.state !== 'idle') {
-    h += row('status', esc(st.msg || st.state),
-      st.needs_restart ? `<button class="btn btn-filled mu-ripple" onclick="_updRestart()">restart</button>` : '');
-  }
-  const busy = st.state === 'running';
-  for (const it of (U.items || [])) {
-    let sub;
-    if (it.id === 'deps') {
-      const ps = it.packages || [];
-      sub = ps.slice(0, 4).map(p => esc(p.name) + ' ' + esc(p.current) + ' to ' + esc(p.latest)).join(', ')
-        + (ps.length > 4 ? ' and ' + (ps.length - 4) + ' more' : '');
-    } else {
-      sub = esc(it.current) + ' to ' + esc(it.latest) + (it.notes ? ', ' + esc(it.notes) : '');
-    }
-    if (it.can_apply) {
-      h += row(esc(it.name), sub,
-        `<button class="btn btn-filled mu-ripple" ${busy ? 'disabled' : ''} onclick="_updApply('${it.id}')">update</button>`);
-    } else {
-      h += rowDisabled(esc(it.name), esc(it.reason || 'cannot update here'), '');
+
+  const a = mods.app;
+  if (a) {
+    h += _updSub('meowify');
+    const title = 'meowify ' + esc(a.installed) + (a.status === 'current' ? '' : ' to ' + esc(a.latest));
+    if (a.status === 'update') h += row(title, esc(a.notes || 'new release available'), btn('update', "_updApply('app')"));
+    else if (a.status === 'blocked') h += rowDisabled(title, esc(a.reason || 'cannot update here'), '');
+    else h += row(title, 'up to date', '');
+    h += _updStatusRow(row, st, 'app');
+    if (U.changelog) {
+      h += row("what's new", 'recent releases', `<button class="btn btn-out mu-ripple" onclick="_updToggleLog()">${window._updShowLog ? 'hide' : 'show'}</button>`);
+      if (window._updShowLog) h += _updLogHtml(U.changelog);
     }
   }
-  if (!(U.items || []).length) h += row('up to date', 'nothing to update', '');
+
+  const m = mods.motionui;
+  if (m) {
+    h += _updSub('motionui');
+    let sub = 'installed ' + esc(m.installed || 'none') + ', pinned ' + esc(m.pinned || 'none');
+    if (m.upstream) sub += ', github ' + esc(m.upstream);
+    if (m.status === 'update') h += row('motionui', sub, btn('update', "_updApply('motionui')"));
+    else if (m.status === 'blocked') h += rowDisabled('motionui', esc(m.reason || 'cannot update here') + ' (' + sub + ')', '');
+    else h += row('motionui', sub + ', up to date', '');
+    h += _updStatusRow(row, st, 'motionui');
+    if (m.upstream_ahead) h += rowDisabled('newer motionui exists', esc(m.upstream) + ' is on github but no meowify release uses it yet', '');
+  }
+
+  const d = mods.deps;
+  if (d) {
+    h += _updSub('python packages');
+    const ps = d.packages || [];
+    const todo = ps.filter(p => p.latest);
+    if (!d.can_apply && todo.length) h += rowDisabled('python packages', esc(d.reason || 'cannot update here'), '');
+    if (d.can_apply && todo.length > 1) h += row('update all', todo.length + ' packages have updates', btn('update all', "_updApply('deps')"));
+    for (const p of ps) {
+      const sub = p.latest ? esc(p.installed || '?') + ' to ' + esc(p.latest) : (p.installed ? esc(p.installed) + ', up to date' : 'not installed');
+      h += (p.latest && d.can_apply) ? row(esc(p.name), sub, btn('update', `_updApply('deps', ['${p.name}'])`)) : row(esc(p.name), sub, '');
+    }
+    if (!ps.length) h += row('python packages', 'no tracked packages found', '');
+    h += _updStatusRow(row, st, 'deps');
+  }
   return h;
 }
 
