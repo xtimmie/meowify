@@ -6053,13 +6053,20 @@ def _dropbox_hash(path_or_data):
             block_hashes += hashlib.sha256(data[i:i+BLOCK]).digest()
     return hashlib.sha256(block_hashes).hexdigest()
 
-def _dbx_pull_file(dbx, remote_path, local_path):
+def _dbx_pull_file(dbx, remote_path, local_path, expect_hash=None):
     try:
-        _, res = dbx.files_download(remote_path)
         Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(local_path).write_bytes(res.content)
+        dbx.files_download_to_file(str(local_path), remote_path)
+        if expect_hash and _dropbox_hash(local_path) != expect_hash:
+            _log_dbx.warning(f'[dbx pull] hash mismatch {remote_path}, discarding')
+            Path(local_path).unlink(missing_ok=True)
+            return False
         return True
     except Exception as e:
+        try:
+            Path(local_path).unlink(missing_ok=True)
+        except Exception:
+            pass
         _log_dbx.warning(f'[dbx pull] failed {remote_path}: {e}')
         return False
 
@@ -6295,6 +6302,189 @@ def _dbx_peer_cover_names(dbx, own_device_id, peer_manifests=None):
     return {n for m in peer_manifests for n in m.get('cover_names', [])}
 
 _COVER_RESERVE = 64 * 1024 * 1024
+_DBX_MAX_ROUNDS = 8
+
+def _dbx_file_ok(p):
+    try:
+        return bool(p) and Path(p).is_file() and Path(p).stat().st_size > 0
+    except OSError:
+        return False
+
+def _dbx_playable_ids(m):
+    ids = m.get('audio_sync_ids')
+    if ids is None:
+        ids = m.get('song_sync_ids', [])
+    return ids
+
+def _dbx_playable_count(m):
+    return len(set(_dbx_playable_ids(m)))
+
+def _dbx_local_playable_count():
+    try:
+        with db() as c:
+            return c.execute("SELECT COUNT(DISTINCT sync_id) FROM songs WHERE sync_id IS NOT NULL AND audio_available=1").fetchone()[0]
+    except Exception:
+        return 0
+
+def _dbx_remote_music(dbx):
+    import dropbox as _dbxmod
+    out = {}
+    try:
+        res = dbx.files_list_folder('/meowify/music')
+        while True:
+            for e in res.entries:
+                if isinstance(e, _dbxmod.files.FileMetadata):
+                    out[e.name] = (e.content_hash, e.size)
+            if not res.has_more:
+                break
+            res = dbx.files_list_folder_continue(res.cursor)
+    except Exception as e:
+        if 'not_found' in str(e).lower():
+            return {}
+        _log_dbx.info(f'[dbx relay] music list failed: {e}')
+        return None
+    return out
+
+def _dbx_pull_wanted(dbx, results, remote, status):
+    import shutil
+    with db() as c:
+        rows = c.execute("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND file_path != '' AND audio_available=0").fetchall()
+    want = {Path(fp).name: sid for sid, fp in rows}
+    got = 0
+    for name, (rhash, rsize) in remote.items():
+        sid = want.get(name)
+        if not sid:
+            continue
+        lp = mdir() / name
+        if _dbx_file_ok(lp):
+            continue
+        try:
+            if rsize and shutil.disk_usage(str(mdir())).free < rsize + 256 * 1024 * 1024:
+                results['errors'].append('low disk space, download paused')
+                break
+        except Exception:
+            pass
+        did = f'sync-{sid}'
+        with _dl_lock:
+            _dls[did] = {'status': 'downloading', 'progress': 10, 'error': None,
+                         'song_id': sid, 'query': name, 'source': 'sync'}
+        status(f'relay: downloading {name}...')
+        tmp = lp.with_suffix(lp.suffix + '.tmp')
+        if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp, rhash):
+            tmp.replace(lp)
+            results['pulled'].append(name)
+            got += 1
+            _dl(did, status='done', progress=100)
+        else:
+            tmp.unlink(missing_ok=True)
+            _dl(did, status='error', error='pull failed')
+    return got
+
+def _dbx_plan_pushes(dbx, peers, remote):
+    peer_audio, _legacy = _dbx_peer_audio_sets(peers)
+    if not peer_audio:
+        return [], 0
+    budget, _cap = _dbx_space_budget(dbx)
+    mb = None if budget is None else max(0, budget - _COVER_RESERVE)
+    with db() as c:
+        rows = c.execute("SELECT file_path, sync_id, added_at FROM songs WHERE sync_id IS NOT NULL AND file_path IS NOT NULL AND file_path != '' AND audio_available=1").fetchall()
+    cands = []
+    seen = set()
+    for fp, sid, added in rows:
+        name = Path(fp).name
+        if name in seen:
+            continue
+        seen.add(name)
+        miss = sum(1 for s in peer_audio if sid not in s)
+        if not miss:
+            continue
+        p = mdir() / name
+        try:
+            sz = p.stat().st_size
+        except OSError:
+            continue
+        if sz <= 0:
+            continue
+        r = remote.get(name)
+        if r and r[1] == sz:
+            continue
+        cands.append((miss, added or 0, name, p, sid, sz))
+    cands.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    pending, skipped = [], 0
+    for _miss, _a, name, p, sid, sz in cands:
+        if mb is not None:
+            if sz > mb:
+                skipped += 1
+                continue
+            mb -= sz
+        pending.append((name, p, sid))
+    return pending, skipped
+
+def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=True):
+    moved = 0
+    quota_hit = False
+    waiting_push = 0
+    for _rnd in range(_DBX_MAX_ROUNDS):
+        round_moved = 0
+        peers = _dbx_read_peer_manifests(dbx, device_id)
+        if not peers:
+            break
+        remote = _dbx_remote_music(dbx)
+        if remote is None:
+            break
+        if pull_songs:
+            got = _dbx_pull_wanted(dbx, results, remote, status)
+            if got:
+                round_moved += got
+                _dbx_reconcile_availability()
+                _dbx_push_manifest(dbx, extra_song_sync_ids=pushed_ids)
+                peers = _dbx_read_peer_manifests(dbx, device_id) or peers
+        deleted, _freed = _dbx_cleanup_delivered(dbx, peers)
+        if deleted:
+            round_moved += deleted
+            remote = _dbx_remote_music(dbx)
+            if remote is None:
+                break
+        pending, skipped = _dbx_plan_pushes(dbx, peers, remote)
+        sent = 0
+        for name, fpath, sid in pending:
+            status(f'relay: uploading {name}...')
+            try:
+                _dbx_upload(dbx, fpath, f'/meowify/music/{name}')
+            except DropboxQuotaError:
+                quota_hit = True
+                break
+            except Exception as ue:
+                results['errors'].append(f'relay upload {name}: {ue}')
+                break
+            results['pushed'].append(name)
+            if sid:
+                pushed_ids.append(sid)
+            sent += 1
+        waiting_push = skipped + (len(pending) - sent)
+        if sent:
+            round_moved += sent
+            _dbx_push_manifest(dbx, extra_song_sync_ids=pushed_ids)
+        moved += round_moved
+        if quota_hit or not round_moved:
+            break
+    waiting_pull = 0
+    try:
+        have = set()
+        for m in _dbx_last_peer_manifests:
+            have |= set(_dbx_playable_ids(m))
+        with db() as c:
+            miss = c.execute("SELECT DISTINCT sync_id FROM songs WHERE sync_id IS NOT NULL AND audio_available=0").fetchall()
+        waiting_pull = sum(1 for (s,) in miss if s in have)
+    except Exception:
+        waiting_pull = 0
+    results['relay_moved'] = moved
+    if waiting_push or waiting_pull:
+        results['backlog'] = {'push': waiting_push, 'pull': waiting_pull}
+    if waiting_push:
+        results['paused'] = f'{waiting_push} songs waiting for dropbox space, continuing as devices download'
+    elif not quota_hit and 'songs waiting' in str(results.get('paused', '')):
+        results.pop('paused', None)
 
 def _dbx_reconcile_availability():
     try:
@@ -6302,7 +6492,7 @@ def _dbx_reconcile_availability():
             rows = c.execute(
                 "SELECT id, file_path, cover_path, audio_available, cover_available FROM songs").fetchall()
             for sid, fp, cp, aa, ca in rows:
-                na = 1 if fp and Path(fp).exists() else 0
+                na = 1 if _dbx_file_ok(fp) else 0
                 nc = 1 if cp and Path(cp).exists() else 0
                 if na != (aa or 0) or nc != (ca or 0):
                     c.execute("UPDATE songs SET audio_available=?, cover_available=? WHERE id=?",
@@ -6659,7 +6849,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
                                             'song_id': _sync_sid, 'query': name, 'source': 'sync'}
                 _status(f'downloading {name}...')
                 tmp = local_path.with_suffix(local_path.suffix + '.tmp')
-                if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp):
+                if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp, rhash):
                     tmp.rename(local_path)
                     results['pulled'].append(name)
                     if _sync_did:
@@ -6763,6 +6953,12 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
             results['stale_cleared'] = stale
     except Exception as e:
         results['errors'].append(f'path validate: {e}')
+
+    if (pull_songs or push_songs) and _have_peers:
+        try:
+            _dbx_relay_rounds(dbx, results, pushed_song_sync_ids, device_id, _status, pull_songs)
+        except Exception as e:
+            results['errors'].append(f'relay rounds: {e}')
 
     # ── 6. push updated manifest for this device ──────────────────────────────
     try:
@@ -7546,8 +7742,11 @@ def _dbx_apply_pref_reset(key, ts):
 
 _dbx_status_msg = ''
 
+_dbx_poll_state = {'wait': 300}
+
 def _dbx_bg_poll():
-    while not _dbx_stop.wait(300):  # every 5 min
+    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 5 min, 60s while a relay backlog is still moving
+        _dbx_poll_state['wait'] = 300
         if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
             continue
         if not _dbx_lock.acquire(blocking=False):
@@ -7556,12 +7755,14 @@ def _dbx_bg_poll():
             global _dbx_status_msg
             _dbx_status_msg = 'auto-syncing...'
             sync_lib = CFG.get('sync_library', True)
-            dbx_sync_now(push_db=sync_lib,
+            _r = dbx_sync_now(push_db=sync_lib,
                          pull_db=sync_lib,
                          push_songs=False,  # relay mode: pushes follow peer manifests (_dbx_needs_push), push_songs no longer bypasses
                          pull_songs=sync_lib,
                          sync_settings=CFG.get('sync_settings', True),
                          status_cb=lambda m: _set_dbx_status(m))
+            if isinstance(_r, dict) and _r.get('backlog') and _r.get('relay_moved'):
+                _dbx_poll_state['wait'] = 60
         except Exception as _se:
             _log_dbx.error(f'[dbx sync] unhandled error: {_se}', exc_info=True)
         finally:
@@ -7779,7 +7980,7 @@ def api_dbx_refresh_peers():
             {'device_id':   m.get('device_id', ''),
              'device_name': m.get('device_name', '?'),
              'last_seen':   m.get('last_seen', 0),
-             'song_count':  len(m.get('song_sync_ids', []))}
+             'song_count':  _dbx_playable_count(m)}
             for m in peers
         ]})
     except Exception as e:
@@ -7908,7 +8109,7 @@ def api_dbx_status():
     connected = bool(CFG.get('dropbox_refresh_token'))
     last = CFG.get('dropbox_last_sync', 0)
     peers = [{'device_id': m.get('device_id', ''), 'device_name': m.get('device_name', '?'),
-               'last_seen': m.get('last_seen', 0), 'song_count': len(m.get('song_sync_ids', []))}
+               'last_seen': m.get('last_seen', 0), 'song_count': _dbx_playable_count(m)}
              for m in _dbx_last_peer_manifests]
     with _dbx_progress_lock:
         progress = {k: {'done': v['done'], 'total': v['total'], 'items': v['items']}
@@ -7921,7 +8122,8 @@ def api_dbx_status():
         'syncing':     _dbx_sync_running,
         'db_ready':    _dbx_db_ready,
         'last_result': _dbx_sync_result,
-        'this_device': {'device_id': CFG.get('device_id', ''), 'device_name': _dbx_get_device_name()},
+        'this_device': {'device_id': CFG.get('device_id', ''), 'device_name': _dbx_get_device_name(),
+                        'song_count': _dbx_local_playable_count()},
         'peers':       peers,
         'progress':    progress,
     })
@@ -29514,7 +29716,7 @@ function renderSettings() {
               const deviceRows = [
                 me ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--color-outline-variant)">
                   <span style="font:var(--type-label-medium)">${esc(me.device_name||'this device')}</span>
-                  <span style="font:var(--type-label-small);color:var(--color-primary)">this device</span>
+                  <span style="font:var(--type-label-small);color:var(--color-primary)">${me.song_count!=null?me.song_count+' songs · ':''}this device</span>
                 </div>` : '',
                 ...peers.map(p => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--color-outline-variant)">
                   <div style="flex:1;min-width:0">
