@@ -8364,6 +8364,136 @@ def _upd_confirm_boot(host, port):
     except Exception:
         pass
 
+_ICON_PATH  = _APP_DIR / 'app.ico'
+_ICON_SIG   = _APP_DIR / 'app.ico.sig'
+_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+_ICON_HANDLES = {}
+
+def _ico_pack(pngs):
+    import struct
+    pngs = sorted(pngs, key=lambda x: x[0])
+    head = struct.pack('<HHH', 0, 1, len(pngs))
+    off = 6 + 16 * len(pngs)
+    ents, body = b'', b''
+    for sz, data in pngs:
+        w = 0 if sz >= 256 else sz
+        ents += struct.pack('<BBBBHHII', w, w, 0, 0, 1, 32, len(data), off + len(body))
+        body += data
+    return head + ents + body
+
+def _icon_set_shortcuts():
+    if sys.platform != 'win32' or not _ICON_PATH.exists():
+        return
+    ico = str(_ICON_PATH).replace("'", "''")
+    ps = ("$s=New-Object -ComObject WScript.Shell;"
+          "foreach($d in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Desktop'))){"
+          "$p=Join-Path $d 'meowify.lnk';"
+          "if(Test-Path -LiteralPath $p){$l=$s.CreateShortcut($p);$l.IconLocation='" + ico + ",0';$l.Save()}}")
+    subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
+                   creationflags=0x08000000, timeout=30, capture_output=True)
+
+def _icon_set_window():
+    if sys.platform != 'win32' or not _ICON_PATH.exists():
+        return False
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    u.FindWindowW.restype = wintypes.HWND
+    u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u.LoadImageW.restype = wintypes.HANDLE
+    u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    u.SendMessageW.restype = ctypes.c_ssize_t
+    u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    hwnd = u.FindWindowW(None, 'meowify')
+    if not hwnd:
+        return False
+    mt = _ICON_PATH.stat().st_mtime
+    for which, metric in ((1, 11), (0, 49)):
+        sz = u.GetSystemMetrics(metric)
+        key = (which, sz, mt)
+        h = _ICON_HANDLES.get(key)
+        if not h:
+            h = u.LoadImageW(None, str(_ICON_PATH), 1, sz, sz, 0x10)
+            if h:
+                _ICON_HANDLES[key] = h
+        if h:
+            u.SendMessageW(hwnd, 0x80, which, h)
+    return True
+
+def _icon_apply_linux(png):
+    try:
+        _HOME.mkdir(parents=True, exist_ok=True)
+        p = _HOME / 'app-icon.png'
+        p.write_bytes(png)
+        d = Path.home() / '.local' / 'share' / 'applications' / 'meowify.desktop'
+        if d.exists():
+            lines = d.read_text(encoding='utf-8').splitlines()
+            has = any(l.startswith('Icon=') for l in lines)
+            out = [('Icon=' + str(p)) if l.startswith('Icon=') else l for l in lines]
+            if not has:
+                out.append('Icon=' + str(p))
+            d.write_text('\n'.join(out) + '\n', encoding='utf-8')
+    except Exception:
+        pass
+
+def _icon_apply_all():
+    try:
+        _icon_set_window()
+        _icon_set_shortcuts()
+    except Exception as e:
+        _log_server.warning(f'[icon] apply failed: {e}')
+
+@app.route('/api/app-icon/status', methods=['GET'])
+def api_app_icon_status():
+    supported = (not IS_ANDROID) and sys.platform in ('win32', 'linux')
+    have = _ICON_SIG.exists() and (sys.platform != 'win32' or _ICON_PATH.exists())
+    sig = ''
+    if have:
+        try:
+            sig = _ICON_SIG.read_text(encoding='utf-8')
+        except Exception:
+            sig = ''
+    return jsonify({'supported': supported, 'exists': have, 'sig': sig})
+
+@app.route('/api/app-icon', methods=['POST'])
+def api_app_icon():
+    if IS_ANDROID or sys.platform not in ('win32', 'linux'):
+        return jsonify({'error': 'not supported here'}), 400
+    import base64
+    d = request.get_json(silent=True) or {}
+    pngs = []
+    for k, v in (d.get('sizes') or {}).items():
+        try:
+            sz = int(k)
+            raw = base64.b64decode(str(v).split(',', 1)[-1])
+            if sz in _ICON_SIZES and raw[:8] == b'\x89PNG\r\n\x1a\n':
+                pngs.append((sz, raw))
+        except Exception:
+            pass
+    if not pngs:
+        return jsonify({'error': 'no icon data'}), 400
+    try:
+        if sys.platform == 'win32':
+            tmp = _APP_DIR / 'app.ico.new'
+            tmp.write_bytes(_ico_pack(pngs))
+            os.replace(tmp, _ICON_PATH)
+            threading.Thread(target=_icon_apply_all, daemon=True).start()
+        else:
+            _icon_apply_linux(max(pngs, key=lambda x: x[0])[1])
+        _ICON_SIG.write_text(str(d.get('sig') or ''), encoding='utf-8')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+@app.route('/api/app-icon/apply', methods=['POST'])
+def api_app_icon_apply():
+    ok = False
+    try:
+        ok = _icon_set_window()
+    except Exception:
+        pass
+    return jsonify({'ok': ok})
+
 @app.route('/api/update/check', methods=['GET'])
 def api_update_check():
     return jsonify(_upd_check(force=request.args.get('force') == '1'))
@@ -29107,6 +29237,7 @@ function renderSettings() {
             onchange="saveSetting('font_override',this.value).then(()=>applyFontOverride(this.value))"
           >
         `)}
+        ${_iconSettingsHtml(row)}
         ${row('ui design', 'pick the one that looks cool :v', `
           <div class="select-wrap" style="width:160px">
             <select class="input" style="width:160px" onchange="saveSetting('ui_design',this.value).then(()=>{applyDesign(this.value);renderSettings();})">
@@ -29542,6 +29673,205 @@ async function _updApply(id, packages) {
     }
   }, 800);
 }
+
+const _ICON_DEF = {shape:'squircle', radius:22, bg:'solid', bgColor:'#2a2a2a', bgColor2:'#171717', angle:135,
+  colorMode:'custom', earColor:'#4ade80', headColor:'#4ade80', lowColor:'#4ade80',
+  style:'fill', stroke:6, strokeColor:'#ffffff', scale:72, offY:0, shadow:0, glow:0};
+const _ICON_PRESETS = {
+  'meowify green': {},
+  'theme tile': {colorMode:'theme'},
+  'transparent': {shape:'none', bg:'none'},
+  'light tile': {bgColor:'#f1f1f1', bgColor2:'#d8d8d8', earColor:'#1f9d55', headColor:'#1f9d55', lowColor:'#1f9d55'},
+  'outline': {style:'outline', stroke:7},
+  'neon': {bgColor:'#0b0b10', bgColor2:'#0b0b10', style:'outline', stroke:6, glow:70}
+};
+const _ICON_P = {
+  ear: new Path2D('M57.902,86.169C55.85,38.753 55.394,37.158 55.394,37.158C55.394,37.158 104.917,52.431 105.004,52.887C87.993,54.483 65.425,72.947 57.902,86.169Z'),
+  head: new Path2D('M64.969,143.387C64.969,143.387 69.528,73.175 128,73.175C186.472,73.175 190.803,142.703 190.803,142.703C190.803,142.703 204.937,149.086 209.268,157.749C212.687,146.579 210.408,53.799 128,53.799C45.592,53.799 43.996,143.159 47.188,157.749C52.887,148.858 64.969,143.387 64.969,143.387Z'),
+  l1: new Path2D('M89.817,146.123C46.96,138.6 46.065,178.949 46.331,180.317C44.318,186.928 53.571,228.189 96.883,211.776C97.339,211.092 96.883,211.776 89.817,146.123Z'),
+  l2: new Path2D('M94.604,146.123L103.038,211.776L114.892,204.481L107.142,147.947L94.604,146.123Z')
+};
+let _icoT = null;
+
+function _icoCfg() { return Object.assign({}, _ICON_DEF, CFG.app_icon || {}); }
+function _iconTheme() { return getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#4ade80'; }
+function _iconSig() { const o = _icoCfg(); return JSON.stringify(o) + (o.colorMode === 'theme' ? '|' + _iconTheme() : ''); }
+
+function _iconShape(c, s, o) {
+  const i = s * 0.02, w = s - i * 2;
+  c.beginPath();
+  if (o.shape === 'circle') {
+    c.arc(s / 2, s / 2, w / 2, 0, Math.PI * 2);
+  } else if (o.shape === 'squircle') {
+    const n = 5, r = w / 2;
+    for (let k = 0; k <= 96; k++) {
+      const t = k / 96 * Math.PI * 2, cs = Math.cos(t), sn = Math.sin(t);
+      const x = s / 2 + r * Math.sign(cs) * Math.pow(Math.abs(cs), 2 / n);
+      const y = s / 2 + r * Math.sign(sn) * Math.pow(Math.abs(sn), 2 / n);
+      if (k) c.lineTo(x, y); else c.moveTo(x, y);
+    }
+  } else {
+    const r = o.shape === 'square' ? 0 : Math.min(w / 2, w * o.radius / 100);
+    c.moveTo(i + r, i);
+    c.arcTo(i + w, i, i + w, i + w, r);
+    c.arcTo(i + w, i + w, i, i + w, r);
+    c.arcTo(i, i + w, i, i, r);
+    c.arcTo(i, i, i + w, i, r);
+  }
+  c.closePath();
+}
+
+function _iconDraw(cv, s, o) {
+  o = Object.assign({}, _ICON_DEF, o || {});
+  cv.width = cv.height = s;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, s, s);
+  if (o.shape !== 'none' && o.bg !== 'none') {
+    _iconShape(c, s, o);
+    if (o.bg === 'gradient') {
+      const a = o.angle * Math.PI / 180, dx = Math.cos(a) * s / 2, dy = Math.sin(a) * s / 2;
+      const g = c.createLinearGradient(s / 2 - dx, s / 2 - dy, s / 2 + dx, s / 2 + dy);
+      g.addColorStop(0, o.bgColor); g.addColorStop(1, o.bgColor2);
+      c.fillStyle = g;
+    } else {
+      c.fillStyle = o.bgColor;
+    }
+    c.fill();
+  }
+  const t = _iconTheme();
+  const cols = o.colorMode === 'theme' ? [t, t, t] : [o.earColor, o.headColor, o.lowColor];
+  const k = s * o.scale / 100 / 179;
+  const tx = (s - 164 * k) / 2, ty = (s - 179 * k) / 2 + s * o.offY / 100;
+  const parts = [
+    [0, 'ear', 0, 0], [0, 'ear', 1, 256.502302], [1, 'head', 0, 0],
+    [2, 'l1', 2, 0.256], [2, 'l2', 2, 0.256], [2, 'l1', 1, 256.246774], [2, 'l2', 1, 256.246774]
+  ];
+  const paint = (fx) => {
+    for (const [ci, key, kind, val] of parts) {
+      c.save();
+      c.setTransform(k, 0, 0, k, tx, ty);
+      c.translate(-46.33, -37.16);
+      if (kind === 1) c.transform(-1, 0, 0, 1, val, 0);
+      else if (kind === 2) c.translate(val, 0);
+      c.lineJoin = 'round';
+      c.lineWidth = o.stroke;
+      if (fx === 'shadow') {
+        c.shadowColor = 'rgba(0,0,0,0.55)'; c.shadowBlur = s * 0.09 * o.shadow / 100; c.shadowOffsetY = s * 0.025 * o.shadow / 100;
+      } else if (fx === 'glow') {
+        c.shadowColor = cols[ci]; c.shadowBlur = s * 0.14 * o.glow / 100;
+      }
+      if (o.style !== 'outline') { c.fillStyle = cols[ci]; c.fill(_ICON_P[key]); }
+      if (o.style !== 'fill') { c.strokeStyle = o.style === 'both' ? o.strokeColor : cols[ci]; c.stroke(_ICON_P[key]); }
+      c.restore();
+    }
+  };
+  if (o.shadow > 0) paint('shadow');
+  if (o.glow > 0) paint('glow');
+  paint(null);
+}
+
+function _iconRedraw() {
+  const o = _icoCfg();
+  for (const n of [96, 48, 32, 16]) {
+    const el = document.getElementById('ico-pv-' + n);
+    if (el) _iconDraw(el, n, o);
+  }
+}
+
+async function _iconExport() {
+  const o = _icoCfg(), sizes = {};
+  for (const n of [16, 24, 32, 48, 64, 128, 256]) {
+    const cv = document.createElement('canvas');
+    _iconDraw(cv, n, o);
+    sizes[n] = cv.toDataURL('image/png');
+  }
+  return api('POST', '/api/app-icon', {sizes, sig: _iconSig()});
+}
+
+async function _iconCommit() {
+  await saveSetting('app_icon', CFG.app_icon || {});
+  try { await _iconExport(); } catch (e) {}
+}
+
+function _iconSet(k, v, rerender) {
+  CFG.app_icon = Object.assign({}, CFG.app_icon || {}, {[k]: v});
+  _iconRedraw();
+  clearTimeout(_icoT);
+  _icoT = setTimeout(_iconCommit, 700);
+  if (rerender) renderSettings();
+}
+
+function _iconPreset(name) {
+  if (!_ICON_PRESETS[name]) return;
+  CFG.app_icon = Object.assign({}, _ICON_PRESETS[name]);
+  clearTimeout(_icoT);
+  _iconCommit();
+  renderSettings();
+}
+
+function _iconReset() {
+  CFG.app_icon = {};
+  clearTimeout(_icoT);
+  _iconCommit();
+  renderSettings();
+}
+
+function _iconSettingsHtml(row) {
+  if (/android/i.test(navigator.userAgent)) return '';
+  setTimeout(_iconRedraw, 0);
+  const o = _icoCfg();
+  const arrow = '<svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>';
+  const sel = (k, opts) => `<div class="select-wrap" style="width:160px"><select class="input" style="width:160px" onchange="_iconSet('${k}',this.value,true)">${opts.map(([v, l]) => `<option value="${v}" ${o[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>${arrow}</div>`;
+  const rng = (k, min, max, unit) => `<div style="display:flex;align-items:center;gap:8px"><input type="range" min="${min}" max="${max}" value="${o[k]}" class="slider" style="width:120px" oninput="_iconSet('${k}',parseInt(this.value));this.nextElementSibling.textContent=this.value+'${unit}'"><span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:36px">${o[k]}${unit}</span></div>`;
+  const col = (k) => `<input type="color" value="${o[k]}" style="width:36px;height:28px;border:none;background:none;padding:0;cursor:pointer" oninput="_iconSet('${k}',this.value)">`;
+  const lab = (t, ctl) => `<div style="display:flex;align-items:center;gap:8px"><span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:52px;text-align:right">${t}</span>${ctl}</div>`;
+  const stack = (...items) => `<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">${items.filter(Boolean).join('')}</div>`;
+  const pv = `<div style="display:flex;align-items:flex-end;gap:12px">
+    <canvas id="ico-pv-96" width="96" height="96" style="width:96px;height:96px"></canvas>
+    <canvas id="ico-pv-48" width="48" height="48" style="width:48px;height:48px"></canvas>
+    <canvas id="ico-pv-32" width="32" height="32" style="width:32px;height:32px"></canvas>
+    <canvas id="ico-pv-16" width="16" height="16" style="width:16px;height:16px"></canvas>
+  </div>`;
+  const presets = `<div class="select-wrap" style="width:160px"><select class="input" style="width:160px" onchange="_iconPreset(this.value)"><option value="">presets</option>${Object.keys(_ICON_PRESETS).map(n => `<option value="${n}">${n}</option>`).join('')}</select>${arrow}</div>`;
+  let h = row('app icon', 'used by the start menu shortcut, the taskbar and the window title bar. changes apply a moment after you stop editing, windows caches icons so the shortcut can take a bit to refresh', stack(pv, presets,
+    `<button class="btn btn-out mu-ripple" onclick="_iconReset()">reset</button>`));
+  h += row('icon shape', 'tile behind the cat', stack(
+    sel('shape', [['none', 'none'], ['circle', 'circle'], ['squircle', 'squircle'], ['rounded', 'rounded square'], ['square', 'square']]),
+    o.shape === 'rounded' ? lab('radius', rng('radius', 0, 50, '%')) : ''));
+  if (o.shape !== 'none') {
+    h += row('icon background', 'transparent, solid or a 2 color gradient', stack(
+      sel('bg', [['none', 'transparent'], ['solid', 'solid'], ['gradient', 'gradient']]),
+      o.bg === 'solid' ? lab('color', col('bgColor')) : '',
+      o.bg === 'gradient' ? lab('colors', col('bgColor') + col('bgColor2')) : '',
+      o.bg === 'gradient' ? lab('angle', rng('angle', 0, 360, 'deg')) : ''));
+  }
+  h += row('icon cat colors', 'follow the theme color or pick ears, head and lower pieces yourself', stack(
+    sel('colorMode', [['custom', 'custom'], ['theme', 'follow theme']]),
+    o.colorMode === 'custom' ? lab('ears', col('earColor')) : '',
+    o.colorMode === 'custom' ? lab('head', col('headColor')) : '',
+    o.colorMode === 'custom' ? lab('lower', col('lowColor')) : ''));
+  h += row('icon layer style', 'filled, outline only, or filled with a separate outline color', stack(
+    sel('style', [['fill', 'filled'], ['outline', 'outline'], ['both', 'filled + outline']]),
+    o.style !== 'fill' ? lab('width', rng('stroke', 1, 20, '')) : '',
+    o.style === 'both' ? lab('outline', col('strokeColor')) : ''));
+  h += row('icon size', 'cat scale and vertical offset', stack(
+    lab('scale', rng('scale', 30, 100, '%')),
+    lab('offset', rng('offY', -25, 25, '%'))));
+  h += row('icon effects', 'drop shadow and glow', stack(
+    lab('shadow', rng('shadow', 0, 100, '%')),
+    lab('glow', rng('glow', 0, 100, '%'))));
+  return h;
+}
+
+async function _iconBoot() {
+  try {
+    const st = await api('GET', '/api/app-icon/status');
+    if (!st || !st.supported) return;
+    if (!st.exists || st.sig !== _iconSig()) await _iconExport();
+    else await api('POST', '/api/app-icon/apply');
+  } catch (e) {}
+}
+window.addEventListener('load', () => setTimeout(_iconBoot, 3500));
 
 function _updRepair() {
   if (!confirm('repair the install? this re-downloads meowify, motionui and packages at your current version. your library, playlists and settings are not touched.')) return;
