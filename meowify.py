@@ -5975,6 +5975,178 @@ _dbx_lock = threading.Lock()
 _dbx_sync_thread = None
 _dbx_stop = threading.Event()
 _dbx_pkce_state = {}  # holds verifier + temp server ref during oauth flow
+_dbx_client_lock = threading.Lock()
+_dbx_client_cache = {'tok': None, 'client': None}
+_DBX_SKIPPED = object()
+_dbx_manifest_cache = {}   # device_id -> (rev, manifest)
+_dbx_actions_rev = {}      # peer_id -> rev of the action file we already applied
+_dbx_manifest_sig = {'sig': None, 't': 0}
+_dbx_dbhash_cache = {}
+_dbx_hash_cache = {}
+_dbx_reconcile_stamp = [None]
+_dbx_idle = {'cursor': None, 'stamp': None, 't': 0, 'clean': False, 'verify_t': 0}
+_DBX_HEARTBEAT = 1800
+
+def _dbx_workers():
+    try:
+        return max(1, min(8, int(CFG.get('dbx_workers', 4))))
+    except Exception:
+        return 4
+
+def _dbx_run_parallel(items, fn, workers=None, stop=None):
+    """run fn(item) on a small pool, returns [(item, value, error)] in input order.
+    error is _DBX_SKIPPED when stop was set before the item started."""
+    items = list(items)
+    workers = workers or _dbx_workers()
+    def _w(it):
+        if stop is not None and stop.is_set():
+            return (it, None, _DBX_SKIPPED)
+        try:
+            return (it, fn(it), None)
+        except Exception as e:
+            return (it, None, e)
+    if len(items) <= 1 or workers <= 1:
+        return [_w(it) for it in items]
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as ex:
+        return list(ex.map(_w, items))
+
+def _dbx_retry(fn, *a, tries=5):
+    for i in range(tries):
+        try:
+            return fn(*a)
+        except Exception as e:
+            s = str(e).lower()
+            if i < tries - 1 and ('too_many_write' in s or 'too_many_requests' in s or 'rate_limit' in s):
+                _time.sleep(0.6 * (i + 1))
+                continue
+            raise
+
+def _dbx_upload_many(dbx, items, folder, status, tag='uploading', prog=None, max_fail=3):
+    """items are (name, path, ...). returns (ok_items, error_strings, quota_error_or_None)"""
+    stop = threading.Event()
+    fails = [0]
+    lk = threading.Lock()
+    def _one(it):
+        name, fpath = it[0], it[1]
+        status(f'{tag} {name}...')
+        try:
+            _dbx_upload(dbx, fpath, f'{folder}/{name}')
+        except DropboxQuotaError:
+            stop.set()
+            raise
+        except Exception:
+            with lk:
+                fails[0] += 1
+                if fails[0] >= max_fail:
+                    stop.set()
+            if prog:
+                _dbx_prog_tick(prog, name)
+            raise
+        if prog:
+            _dbx_prog_tick(prog, name)
+        return True
+    ok, errs, quota = [], [], None
+    for it, _v, err in _dbx_run_parallel(items, _one, stop=stop):
+        if err is _DBX_SKIPPED:
+            continue
+        if err is None:
+            ok.append(it)
+        elif isinstance(err, DropboxQuotaError):
+            quota = err
+        else:
+            errs.append(f'{it[0]}: {err}')
+    return ok, errs, quota
+
+def _dbx_db_hash(p=None):
+    """dropbox hash of the main db file, cached on (mtime_ns, size) so it is only re-read when the file changed"""
+    p = Path(p or db_path())
+    if not p.exists():
+        return _dropbox_hash(b'')
+    st = p.stat()
+    sig = (st.st_mtime_ns, st.st_size)
+    c = _dbx_dbhash_cache
+    if c.get('p') == str(p) and c.get('sig') == sig:
+        return c['h']
+    h = _dropbox_hash(p)
+    c.update(p=str(p), sig=sig, h=h)
+    return h
+
+def _dbx_cached_hash(p):
+    try:
+        st = Path(p).stat()
+    except OSError:
+        return None
+    k = str(p)
+    sig = (st.st_mtime_ns, st.st_size)
+    c = _dbx_hash_cache.get(k)
+    if c and c[0] == sig:
+        return c[1]
+    h = _dropbox_hash(p)
+    _dbx_hash_cache[k] = (sig, h)
+    return h
+
+def _dbx_local_stamp():
+    out = []
+    dp = str(db_path())
+    for p in (dp, dp + '-wal'):
+        try:
+            st = os.stat(p)
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    for d in (mdir(), cdir()):
+        try:
+            out.append(os.stat(d).st_mtime_ns)
+        except OSError:
+            out.append(None)
+    out.append(CFG.get('_prefs_modified', 0))
+    return tuple(out)
+
+def _dbx_list_revs(dbx, folder, suffix=''):
+    import dropbox as _dbxmod
+    out = {}
+    res = dbx.files_list_folder(folder)
+    while True:
+        for e in res.entries:
+            if isinstance(e, _dbxmod.files.FileMetadata) and e.name.endswith(suffix):
+                out[e.name] = e.rev
+        if not res.has_more:
+            break
+        res = dbx.files_list_folder_continue(res.cursor)
+    return out
+
+def _dbx_latest_cursor(dbx):
+    try:
+        return dbx.files_list_folder_get_latest_cursor('/meowify', recursive=True).cursor
+    except Exception:
+        return None
+
+def _dbx_idle_skip(dbx):
+    """True when the last sync was clean, nothing local changed and dropbox shows no foreign changes since.
+    one cheap api call instead of a full sync. any doubt returns False so the full sync runs."""
+    s = _dbx_idle
+    if not (s['clean'] and s['cursor'] and s['stamp'] is not None):
+        return False
+    if _time.time() - s['t'] > _DBX_HEARTBEAT:
+        return False
+    if _dbx_local_stamp() != s['stamp']:
+        return False
+    own = _dbx_get_device_id().lower()
+    try:
+        cur = s['cursor']
+        while True:
+            res = dbx.files_list_folder_continue(cur)
+            for e in res.entries:
+                if own in (getattr(e, 'path_lower', '') or ''):
+                    continue
+                return False
+            cur = res.cursor
+            s['cursor'] = cur
+            if not res.has_more:
+                break
+    except Exception:
+        return False
+    return True
 
 def _dbx():
     try:
@@ -5985,18 +6157,27 @@ def _dbx():
     _log_dbx.info(f'[dbx] tok={bool(tok)} cfg_id={id(CFG)}')
     if not tok:
         return None
-    try:
-        return dropbox.Dropbox(oauth2_refresh_token=tok, app_key=_DBX_APP_KEY)
-    except Exception as e:
-        _log_dbx.warning(f'[dbx] client init failed: {e}')
-        return None
+    with _dbx_client_lock:
+        if _dbx_client_cache['client'] is not None and _dbx_client_cache['tok'] == tok:
+            return _dbx_client_cache['client']
+        try:
+            try:
+                _c = dropbox.Dropbox(oauth2_refresh_token=tok, app_key=_DBX_APP_KEY, max_retries_on_rate_limit=5)
+            except TypeError:
+                _c = dropbox.Dropbox(oauth2_refresh_token=tok, app_key=_DBX_APP_KEY)
+        except Exception as e:
+            _log_dbx.warning(f'[dbx] client init failed: {e}')
+            return None
+        _dbx_client_cache['tok'] = tok
+        _dbx_client_cache['client'] = _c
+        return _c
 
 class DropboxQuotaError(Exception):
     pass
 
 def _dbx_upload(dbx, local_path, remote_path):
     try:
-        return _dbx_upload_raw(dbx, local_path, remote_path)
+        return _dbx_retry(_dbx_upload_raw, dbx, local_path, remote_path)
     except Exception as e:
         _s = str(e).lower()
         if 'insufficient_space' in _s or 'storage_limit' in _s or 'over_quota' in _s:
@@ -6153,11 +6334,16 @@ def _dbx_push_manifest(dbx, extra_song_sync_ids=None, extra_cover_names=None):
             'song_sync_ids': song_sync_ids,
             'audio_sync_ids': audio_sync_ids,
             'cover_names':   cover_names,
-            'db_hash':       _dropbox_hash(local_db) if Path(local_db).exists() else _dropbox_hash(b''),
+            'db_hash':       _dbx_db_hash(local_db),
         }
+        _sig = (device_name, hash(frozenset(song_sync_ids)), hash(frozenset(audio_sync_ids)), hash(frozenset(cover_names)))
+        _now = _time.time()
+        if _sig == _dbx_manifest_sig['sig'] and _now - _dbx_manifest_sig['t'] < 120:
+            return manifest  # identical to what peers already see, uploaded under 2 min ago
         data = json.dumps(manifest).encode()
         dbx.files_upload(data, f'/meowify/devices/{device_id}.json',
                          mode=_dbxmod.files.WriteMode.overwrite, mute=True)
+        _dbx_manifest_sig.update(sig=_sig, t=_now)
         return manifest
     except Exception as e:
         _log_dbx.warning(f'[dbx manifest] push failed: {e}')
@@ -6279,13 +6465,33 @@ def _dbx_validate_paths(dbx=None):
 def _dbx_read_peer_manifests(dbx, own_device_id):
     """read all peer manifests in one pass, cache + return list of dicts."""
     global _dbx_last_peer_manifests
-    peers = []
-    for did in _dbx_list_device_ids(dbx):
+    try:
+        revs = _dbx_list_revs(dbx, '/meowify/devices', '.json')
+    except Exception:
+        revs = {}
+    for _k in [k for k in _dbx_manifest_cache if (k + '.json') not in revs]:
+        del _dbx_manifest_cache[_k]
+    got, todo = {}, []
+    for fn, rev in revs.items():
+        did = fn[:-5]
         if did == own_device_id:
             continue
-        m = _dbx_read_manifest(dbx, did)
-        if m:
-            peers.append(m)
+        c = _dbx_manifest_cache.get(did)
+        if c and c[0] == rev:
+            got[did] = c[1]
+        else:
+            todo.append(did)
+    def _rd(did):
+        try:
+            md, res = dbx.files_download(f'/meowify/devices/{did}.json')
+            return md.rev, json.loads(res.content.decode())
+        except Exception:
+            return None
+    for did, v, _e in _dbx_run_parallel(todo, _rd):
+        if v:
+            _dbx_manifest_cache[did] = (v[0], v[1])
+            got[did] = v[1]
+    peers = [got[d] for d in sorted(got)]
     _dbx_last_peer_manifests = peers
     return peers
 
@@ -6350,7 +6556,11 @@ def _dbx_pull_wanted(dbx, results, remote, status):
     with db() as c:
         rows = c.execute("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND file_path != '' AND audio_available=0").fetchall()
     want = {Path(fp).name: sid for sid, fp in rows}
-    got = 0
+    todo = []
+    try:
+        free = shutil.disk_usage(str(mdir())).free
+    except Exception:
+        free = None
     for name, (rhash, rsize) in remote.items():
         sid = want.get(name)
         if not sid:
@@ -6358,12 +6568,15 @@ def _dbx_pull_wanted(dbx, results, remote, status):
         lp = mdir() / name
         if _dbx_file_ok(lp):
             continue
-        try:
-            if rsize and shutil.disk_usage(str(mdir())).free < rsize + 256 * 1024 * 1024:
+        if free is not None and rsize:
+            if free < rsize + 256 * 1024 * 1024:
                 results['errors'].append('low disk space, download paused')
                 break
-        except Exception:
-            pass
+            free -= rsize
+        todo.append((name, rhash, sid, lp))
+
+    def _one(t):
+        name, rhash, sid, lp = t
         did = f'sync-{sid}'
         with _dl_lock:
             _dls[did] = {'status': 'downloading', 'progress': 10, 'error': None,
@@ -6372,12 +6585,17 @@ def _dbx_pull_wanted(dbx, results, remote, status):
         tmp = lp.with_suffix(lp.suffix + '.tmp')
         if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp, rhash):
             tmp.replace(lp)
-            results['pulled'].append(name)
-            got += 1
             _dl(did, status='done', progress=100)
-        else:
-            tmp.unlink(missing_ok=True)
-            _dl(did, status='error', error='pull failed')
+            return True
+        tmp.unlink(missing_ok=True)
+        _dl(did, status='error', error='pull failed')
+        return False
+
+    got = 0
+    for t, ok, _e in _dbx_run_parallel(todo, _one):
+        if ok:
+            results['pulled'].append(t[0])
+            got += 1
     return got
 
 def _dbx_plan_pushes(dbx, peers, remote):
@@ -6420,11 +6638,11 @@ def _dbx_plan_pushes(dbx, peers, remote):
         pending.append((name, p, sid))
     return pending, skipped
 
-def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=True):
+def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=True, run_rounds=True):
     moved = 0
     quota_hit = False
     waiting_push = 0
-    for _rnd in range(_DBX_MAX_ROUNDS):
+    for _rnd in range(_DBX_MAX_ROUNDS if run_rounds else 0):
         round_moved = 0
         peers = _dbx_read_peer_manifests(dbx, device_id)
         if not peers:
@@ -6446,21 +6664,16 @@ def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=Tr
             if remote is None:
                 break
         pending, skipped = _dbx_plan_pushes(dbx, peers, remote)
-        sent = 0
-        for name, fpath, sid in pending:
-            status(f'relay: uploading {name}...')
-            try:
-                _dbx_upload(dbx, fpath, f'/meowify/music/{name}')
-            except DropboxQuotaError:
-                quota_hit = True
-                break
-            except Exception as ue:
-                results['errors'].append(f'relay upload {name}: {ue}')
-                break
+        _ok, _errs, _qe = _dbx_upload_many(dbx, pending, '/meowify/music', status, 'relay: uploading')
+        for name, fpath, sid in _ok:
             results['pushed'].append(name)
             if sid:
                 pushed_ids.append(sid)
-            sent += 1
+        for _e in _errs:
+            results['errors'].append(f'relay upload {_e}')
+        if _qe:
+            quota_hit = True
+        sent = len(_ok)
         waiting_push = skipped + (len(pending) - sent)
         if sent:
             round_moved += sent
@@ -6487,6 +6700,15 @@ def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=Tr
         results.pop('paused', None)
 
 def _dbx_reconcile_availability():
+    # skip the full stat pass when nothing changed since the last one (stamp taken before the run,
+    # so the run's own db writes just cause one harmless extra pass)
+    _st = _dbx_local_stamp()
+    if _st == _dbx_reconcile_stamp[0]:
+        return
+    _dbx_reconcile_availability_run()
+    _dbx_reconcile_stamp[0] = _st
+
+def _dbx_reconcile_availability_run():
     try:
         with db() as c:
             rows = c.execute(
@@ -6577,24 +6799,29 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
             rows = c.execute(
                 "SELECT file_path, sync_id FROM songs WHERE sync_id IS NOT NULL AND audio_available=1").fetchall()
         have_audio = {Path(fp).name: sid for fp, sid in rows if fp}
-        for name, size in _list('/meowify/music').items():
-            sid = have_audio.get(name)
-            if sid and all(sid in s for s in peer_audio):
-                try:
-                    dbx.files_delete_v2(f'/meowify/music/{name}')
-                    deleted += 1
-                    freed += size or 0
-                except Exception as e:
-                    _log_dbx.warning(f'[dbx cleanup] delete {name}: {e}')
+        def _del_many(folder, items):
+            def _d(it):
+                _dbx_retry(dbx.files_delete_v2, f'{folder}/{it[0]}')
+                return it[1] or 0
+            n = fr = 0
+            for it, v, err in _dbx_run_parallel(items, _d):
+                if err is None:
+                    n += 1
+                    fr += v
+                elif err is not _DBX_SKIPPED:
+                    _log_dbx.warning(f'[dbx cleanup] delete {it[0]}: {err}')
+            return n, fr
+        _mdel = [(name, size) for name, size in _list('/meowify/music').items()
+                 if have_audio.get(name) and all(have_audio[name] in s for s in peer_audio)]
+        _n, _f = _del_many('/meowify/music', _mdel)
+        deleted += _n
+        freed += _f
         local_covers = {f.name for f in cdir().iterdir() if f.is_file()} if cdir().exists() else set()
-        for name, size in _list('/meowify/covers').items():
-            if name in local_covers and all(name in s for s in peer_covers):
-                try:
-                    dbx.files_delete_v2(f'/meowify/covers/{name}')
-                    deleted += 1
-                    freed += size or 0
-                except Exception as e:
-                    _log_dbx.warning(f'[dbx cleanup] delete cover {name}: {e}')
+        _cdel = [(name, size) for name, size in _list('/meowify/covers').items()
+                 if name in local_covers and all(name in s for s in peer_covers)]
+        _n, _f = _del_many('/meowify/covers', _cdel)
+        deleted += _n
+        freed += _f
     except Exception as e:
         _log_dbx.warning(f'[dbx cleanup] failed: {e}')
     if deleted:
@@ -6608,6 +6835,16 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
         return {'error': 'dropbox not connected'}
     results = {'pushed': [], 'pulled': [], 'errors': []}
     device_id = _dbx_get_device_id()
+    # idle detection state is captured BEFORE anything is read, so a change that lands
+    # mid sync is never swallowed (worst case: one extra sync)
+    _dbx_idle['clean'] = False
+    _idle_cursor = _dbx_latest_cursor(dbx)
+    _idle_stamp = _dbx_local_stamp()
+    _idle_t = _time.time()
+    if _idle_t - _dbx_idle['verify_t'] > _DBX_HEARTBEAT:
+        _dbx_actions_rev.clear()
+        _dbx_idle['verify_t'] = _idle_t
+    _dbx_reconcile_stamp[0] = None  # first reconcile of every sync always really runs
 
     def _status(msg):
         if status_cb:
@@ -6638,7 +6875,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
             remote_hash = _dbx_remote_hash(dbx, remote_db)
             _remote_db_hash_after_pull = remote_hash
             if remote_hash:
-                if _dropbox_hash(local_db) != remote_hash:
+                if _dbx_db_hash(local_db) != remote_hash:
                     _status('merging remote library...')
                     tmp = Path(local_db).parent / 'library_remote.db'
                     if _dbx_pull_file(dbx, remote_db, tmp):
@@ -6673,7 +6910,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
     # ── 2. push merged db (skip if remote was already identical) ──────────────
     if push_db:
         try:
-            local_hash_now = _dropbox_hash(local_db) if Path(local_db).exists() else _dropbox_hash(b'')
+            local_hash_now = _dbx_db_hash(local_db)
             # reuse hash from step 1 if available (saves one API round-trip)
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
                            else _dbx_remote_hash(dbx, remote_db)
@@ -6734,6 +6971,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
 
     # ── 4. music files ────────────────────────────────────────────────────────
     pushed_song_sync_ids = []
+    _music_moved = False
     if pull_songs or push_songs:
         try:
             _status('syncing music files...')
@@ -6814,33 +7052,23 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
 
             _dbx_prog_init('tracks', [n for n, _, _ in _push_pending] + [n for n, _ in _pull_pending])
 
-            _push_fail = 0
-            for name, fpath, sync_id in _push_pending:
-                _status(f'uploading {name}...')
-                try:
-                    _dbx_upload(dbx, fpath, f'/meowify/music/{name}')
-                except DropboxQuotaError as _qe:
-                    results['paused'] = 'dropbox storage full'
-                    results['errors'].append(f'upload stopped: {_qe}')
-                    break
-                except Exception as _ue:
-                    _push_fail += 1
-                    results['errors'].append(f'upload {name}: {_ue}')
-                    _dbx_prog_tick('tracks', name)
-                    if _push_fail >= 3:
-                        break
-                    continue
+            _ok, _errs, _qe = _dbx_upload_many(dbx, _push_pending, '/meowify/music', _status, 'uploading', 'tracks')
+            for name, fpath, sync_id in _ok:
                 results['pushed'].append(name)
                 if sync_id:
                     pushed_song_sync_ids.append(sync_id)
-                _dbx_prog_tick('tracks', name)
+            for _e in _errs:
+                results['errors'].append(f'upload {_e}')
+            if _qe:
+                results['paused'] = 'dropbox storage full'
+                results['errors'].append(f'upload stopped: {_qe}')
+            if _ok:
+                _music_moved = True
 
-            for name, rhash in _pull_pending:
+            def _pull_one(t):
+                name, rhash = t
                 local_path = mdir() / name
-                # tie into the same download registry manual downloads use, so
-                # the placeholder/downloading UI treats sync pulls identically -
-                # only if the song row already exists (normal case: db merge ran
-                # first in step 1), otherwise fall through with no live placeholder
+                # same download registry manual downloads use (see step 1 note), only if the song row exists
                 _sync_sid = _fname_to_sid.get(name)
                 _sync_did = f'sync-{_sync_sid}' if _sync_sid else None
                 if _sync_did:
@@ -6849,16 +7077,22 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
                                             'song_id': _sync_sid, 'query': name, 'source': 'sync'}
                 _status(f'downloading {name}...')
                 tmp = local_path.with_suffix(local_path.suffix + '.tmp')
-                if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp, rhash):
-                    tmp.rename(local_path)
-                    results['pulled'].append(name)
-                    if _sync_did:
-                        _dl(_sync_did, status='done', progress=100)
-                else:
+                try:
+                    if _dbx_pull_file(dbx, f'/meowify/music/{name}', tmp, rhash):
+                        tmp.replace(local_path)
+                        if _sync_did:
+                            _dl(_sync_did, status='done', progress=100)
+                        return True
                     tmp.unlink(missing_ok=True)
                     if _sync_did:
                         _dl(_sync_did, status='error', error='pull failed')
-                _dbx_prog_tick('tracks', name)
+                    return False
+                finally:
+                    _dbx_prog_tick('tracks', name)
+            for (name, _rh), ok, _e in _dbx_run_parallel(_pull_pending, _pull_one):
+                if ok:
+                    results['pulled'].append(name)
+                    _music_moved = True
         except Exception as e:
             results['errors'].append(f'music sync: {e}')
 
@@ -6906,7 +7140,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
                 for name, fpath in local_covers.items():
                     if not (name in _ref and _dbx_needs_push(name, _peer_covers)):
                         continue
-                    if remote_covers.get(name) == _dropbox_hash(fpath):
+                    if name in remote_covers and remote_covers[name] == _dbx_cached_hash(fpath):
                         continue  # already on dropbox and identical, skip
                     if _cb is not None:
                         _csz = fpath.stat().st_size
@@ -6924,21 +7158,24 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
 
             _dbx_prog_init('covers', [n for n, _ in _cover_push_pending] + [n for n, _ in _cover_pull_pending])
 
-            for name, fpath in _cover_push_pending:
-                try:
-                    _dbx_upload(dbx, fpath, f'/meowify/covers/{name}')
-                except DropboxQuotaError as _qe:
-                    results['paused'] = 'dropbox storage full'
-                    results['errors'].append(f'cover upload stopped: {_qe}')
-                    break
+            _cok, _cerrs, _cqe = _dbx_upload_many(dbx, _cover_push_pending, '/meowify/covers', lambda _m: None, 'uploading', 'covers')
+            for name, fpath in _cok:
                 results['pushed'].append(f'cover:{name}')
                 pushed_cover_names.append(name)
-                _dbx_prog_tick('covers', name)
+            for _e in _cerrs:
+                results['errors'].append(f'cover upload {_e}')
+            if _cqe:
+                results['paused'] = 'dropbox storage full'
+                results['errors'].append(f'cover upload stopped: {_cqe}')
 
-            for name, local_path in _cover_pull_pending:
-                _dbx_pull_file(dbx, f'/meowify/covers/{name}', local_path)
-                results['pulled'].append(f'cover:{name}')
+            def _cover_pull_one(t):
+                name, local_path = t
+                ok = _dbx_pull_file(dbx, f'/meowify/covers/{name}', local_path)
                 _dbx_prog_tick('covers', name)
+                return ok
+            for (name, _lp), ok, _e in _dbx_run_parallel(_cover_pull_pending, _cover_pull_one):
+                if ok:
+                    results['pulled'].append(f'cover:{name}')
     except Exception as e:
         results['errors'].append(f'covers: {e}')
 
@@ -6956,7 +7193,10 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
 
     if (pull_songs or push_songs) and _have_peers:
         try:
-            _dbx_relay_rounds(dbx, results, pushed_song_sync_ids, device_id, _status, pull_songs)
+            # round 0 would only repeat what step 4 just did, so skip the rounds unless step 4 moved
+            # something (space may have freed up) or left songs waiting
+            _dbx_relay_rounds(dbx, results, pushed_song_sync_ids, device_id, _status, pull_songs,
+                              run_rounds=_music_moved or bool(results.get('paused')))
         except Exception as e:
             results['errors'].append(f'relay rounds: {e}')
 
@@ -6969,6 +7209,9 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
     except Exception as e:
         results['errors'].append(f'manifest push: {e}')
 
+    _dbx_idle.update(cursor=_idle_cursor, stamp=_idle_stamp, t=_idle_t,
+                     clean=bool(_idle_cursor) and push_db and pull_db and pull_songs and sync_settings
+                           and not results['errors'] and not results.get('paused') and not results.get('backlog'))
     _status('done')
     return results
 
@@ -7571,12 +7814,25 @@ def _dbx_pull_actions(dbx, own_device_id):
     with db() as c:
         seen_ids = {r[0] for r in c.execute("SELECT id FROM sync_actions").fetchall()}
     new_actions = []
-    for peer_id in peer_ids:
+    try:
+        _arevs = _dbx_list_revs(dbx, '/meowify/actions', '.jsonl')
+    except Exception:
+        _arevs = None
+    _todo = [p for p in peer_ids if _arevs is None or _dbx_actions_rev.get(p) != _arevs.get(p + '.jsonl')]
+    def _rd(p):
         try:
-            _, res = dbx.files_download(f'/meowify/actions/{peer_id}.jsonl')
+            md, res = dbx.files_download(f'/meowify/actions/{p}.jsonl')
+            return md.rev, res.content
         except Exception:
+            return None
+    _fetched = {}
+    for p, v, _e in _dbx_run_parallel(_todo, _rd):
+        if v:
+            _fetched[p] = v
+    for peer_id in peer_ids:
+        if peer_id not in _fetched:
             continue
-        for line in res.content.decode().splitlines():
+        for line in _fetched[peer_id][1].decode().splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -7588,6 +7844,8 @@ def _dbx_pull_actions(dbx, own_device_id):
                 continue
             new_actions.append(act)
     if not new_actions:
+        for p, v in _fetched.items():
+            _dbx_actions_rev[p] = v[0]
         return []
     new_actions.sort(key=lambda a: a.get('ts', 0))
     with db() as c:
@@ -7598,6 +7856,8 @@ def _dbx_pull_actions(dbx, own_device_id):
                 (act['id'], act['device_id'], act['ts'], act['action'],
                  act['target'], act.get('target2'), act.get('payload')))
         _dbx_apply_actions(c, new_actions)
+    for p, v in _fetched.items():
+        _dbx_actions_rev[p] = v[0]  # only remembered once the rows are really in the db
     return new_actions
 
 def _dbx_apply_song_unlink_album(c, song_sync_id, action_ts=0):
@@ -7745,14 +8005,19 @@ _dbx_status_msg = ''
 _dbx_poll_state = {'wait': 300}
 
 def _dbx_bg_poll():
-    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 5 min, 60s while a relay backlog is still moving
-        _dbx_poll_state['wait'] = 300
+    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 60s cheap checks while idle state is valid, 5 min otherwise, 60s while a relay backlog moves
+        _dbx_poll_state['wait'] = 60 if _dbx_idle['clean'] else 300
         if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
             continue
+        if _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 180:
+            continue  # last sync was clean and recent, next check not due yet
         if not _dbx_lock.acquire(blocking=False):
             continue  # manual sync in progress, skip this cycle
         try:
             global _dbx_status_msg
+            _dc = _dbx()
+            if _dc is not None and _dbx_idle_skip(_dc):
+                continue  # nothing changed locally or on dropbox, skip the full sync
             _dbx_status_msg = 'auto-syncing...'
             sync_lib = CFG.get('sync_library', True)
             _r = dbx_sync_now(push_db=sync_lib,
