@@ -22189,7 +22189,15 @@ class VirtualList {
   }
 
   _relayout() {
-    for (const [i, el] of this._nodes) el.style.top = this._top(i) + 'px';
+    const d = this._drag;
+    for (const [i, el] of this._nodes) {
+      const t = this._top(i);
+      el.style.top = t + 'px';
+      if (d && t > -1000) { // numbers follow the rows while a drag reorders them (playing row keeps its icon)
+        const sn = el.querySelector('.snum-num');
+        if (sn && sn.textContent && !el.classList.contains('playing')) sn.textContent = Math.round(t / this.ROW_H) + 1;
+      }
+    }
   }
 
   _reprobe() {
@@ -25453,8 +25461,22 @@ function initReorderDrag(listEl, opts) {
     });
   }
 
+  // live numbering: every row shows the number it would have if the drag dropped right now (playing row keeps its icon, same as the commit)
+  function setNum(el, n) {
+    const sn = el.querySelector('.snum-num');
+    if (!sn || !sn.textContent || el.classList.contains('playing')) return;
+    if (el._n0 === undefined) el._n0 = sn.textContent;
+    if (sn.textContent !== String(n)) sn.textContent = n;
+  }
+
+  function renumber() {
+    rest.forEach((i, j) => setNum(rows[i], (j < slot ? j : j + group.length) + 1));
+    group.forEach((i, r) => setNum(rows[i], slot + r + 1));
+  }
+
   function layout() {
     joins();
+    renumber();
     rest.forEach((i, j) => {
       const t = (j < slot ? packed[j] : packed[j] + slotH + gap) - tops[i];
       rows[i].style.translate = Math.abs(t) < 0.5 ? '' : tr(t);
@@ -25467,6 +25489,7 @@ function initReorderDrag(listEl, opts) {
     from = rows.indexOf(target);
     if (from < 0) { rows = []; return; }
     kT = probeK(target);
+    rows.forEach(r => { r._n0 = undefined; });
     base0 = listEl.getBoundingClientRect().top;
     const rects = rows.map(r => r.getBoundingClientRect());
     tops = rects.map(r => r.top - base0);
@@ -25580,6 +25603,7 @@ function initReorderDrag(listEl, opts) {
     const order = rest.slice(0, slot).concat(group, rest.slice(slot));
     const ids = order.map(i => rows[i].dataset.id);
     // final neighbours decide the inner corners: set them now so they morph during the landing, not after it
+    if (!commit) rows.forEach(r => { if (r._n0 !== undefined) { const sn = r.querySelector('.snum-num'); if (sn) sn.textContent = r._n0; r._n0 = undefined; } });
     const fin = commit ? order : rows.map((_, i) => i);
     const finSel = k => !!(opts.isSelected && opts.isSelected(rows[fin[k]].dataset.id));
     fin.forEach((i, p) => {
@@ -25923,6 +25947,8 @@ function initVlistReorder(vl) {
     if (k !== vl._drag.slot) {
       vl._drag.slot = k;
       vl._relayout();
+      const gsn = ghost.querySelector('.snum-num');
+      if (gsn && gsn.textContent && !ghost.classList.contains('playing')) gsn.textContent = k + rankFrom + 1;
     }
   }
 
