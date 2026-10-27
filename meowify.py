@@ -79,6 +79,14 @@ if not IS_ANDROID:
         _extra_path.append(str(_APP_DIR / 'bin'))
     if _extra_path:
         os.environ['PATH'] = os.pathsep.join(_extra_path + [os.environ.get('PATH', '')])
+_AUMID = 'xtimmie.meowify' if (_APP_DIR / '.install.json').exists() else 'xtimmie.meowify.dev'
+if sys.platform == 'win32':
+    try:
+        import ctypes as _ct_aumid
+        _ct_aumid.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_AUMID)
+    except Exception:
+        pass
+
 def _subp(args, **kw):
     """subprocess.Popen without console window on windows"""
     if sys.platform == 'win32':
@@ -9060,16 +9068,130 @@ def _ico_pack(pngs):
         body += data
     return head + ents + body
 
-def _icon_set_shortcuts():
-    if sys.platform != 'win32' or not _ICON_PATH.exists() or not _INSTALL_JSON.exists():
+_IDENT_REV = 1
+
+_IDENT_CS = r'''
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct PropertyKey { public Guid fmtid; public uint pid; }
+
+[StructLayout(LayoutKind.Explicit, Size = 24)]
+public struct PropVariant {
+    [FieldOffset(0)] public ushort vt;
+    [FieldOffset(8)] public IntPtr ptr;
+}
+
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+public interface IPropertyStore {
+    uint GetCount(out uint count);
+    uint GetAt(uint index, out PropertyKey key);
+    uint GetValue(ref PropertyKey key, out PropVariant value);
+    uint SetValue(ref PropertyKey key, ref PropVariant value);
+    uint Commit();
+}
+
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("0000010B-0000-0000-C000-000000000046")]
+public interface IPersistFile {
+    void GetClassID(out Guid id);
+    [PreserveSig] int IsDirty();
+    void Load([MarshalAs(UnmanagedType.LPWStr)] string file, uint mode);
+    void Save([MarshalAs(UnmanagedType.LPWStr)] string file, [MarshalAs(UnmanagedType.Bool)] bool remember);
+    void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string file);
+    void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string file);
+}
+
+public static class LnkId {
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropVariant pv);
+    public static void Set(string path, string id) {
+        object link = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));
+        IPersistFile pf = (IPersistFile)link;
+        pf.Load(path, 2);
+        IPropertyStore ps = (IPropertyStore)link;
+        PropertyKey key = new PropertyKey();
+        key.fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
+        key.pid = 5;
+        PropVariant pv = new PropVariant();
+        pv.vt = 31;
+        pv.ptr = Marshal.StringToCoTaskMemUni(id);
+        ps.SetValue(ref key, ref pv);
+        ps.Commit();
+        pf.Save(path, true);
+        PropVariantClear(ref pv);
+    }
+}
+'''
+
+_IDENT_PS = r'''
+$ErrorActionPreference = 'Stop'
+$id = '@@ID@@'
+$ico = '@@ICO@@'
+$ws = New-Object -ComObject WScript.Shell
+$paths = @()
+foreach ($d in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+    $p = Join-Path $d 'meowify.lnk'
+    if (Test-Path -LiteralPath $p) { $paths += $p }
+}
+$pin = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+if (Test-Path -LiteralPath $pin) {
+    foreach ($f in Get-ChildItem -LiteralPath $pin -Filter '*.lnk') {
+        $l = $ws.CreateShortcut($f.FullName)
+        if ($l.Arguments -like '*launcher.pyw*') { $paths += $f.FullName }
+    }
+}
+$fail = 0
+foreach ($p in $paths) {
+    try {
+        if ($ico) { $l = $ws.CreateShortcut($p); $l.IconLocation = "$ico,0"; $l.Save() }
+        if ($id) { [LnkId]::Set($p, $id) }
+    } catch { $fail++ }
+}
+if ($fail -eq 0) { 'ident-ok' }
+'''
+
+def _icon_set_shortcuts(set_id=False):
+    if sys.platform != 'win32' or not _INSTALL_JSON.exists():
+        return False
+    import base64
+    ico = str(_ICON_PATH).replace("'", "''") if _ICON_PATH.exists() else ''
+    if not ico and not set_id:
+        return False
+    head = ("Add-Type -TypeDefinition @'\n" + _IDENT_CS + "\n'@\n") if set_id else ''
+    body = _IDENT_PS.replace('@@ID@@', _AUMID if set_id else '').replace('@@ICO@@', ico)
+    enc = base64.b64encode((head + body).encode('utf-16-le')).decode('ascii')
+    r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc],
+                       creationflags=0x08000000, timeout=90, capture_output=True)
+    return b'ident-ok' in (r.stdout or b'')
+
+def _ident_register():
+    if sys.platform != 'win32':
         return
-    ico = str(_ICON_PATH).replace("'", "''")
-    ps = ("$s=New-Object -ComObject WScript.Shell;"
-          "foreach($d in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Desktop'))){"
-          "$p=Join-Path $d 'meowify.lnk';"
-          "if(Test-Path -LiteralPath $p){$l=$s.CreateShortcut($p);$l.IconLocation='" + ico + ",0';$l.Save()}}")
-    subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
-                   creationflags=0x08000000, timeout=30, capture_output=True)
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, 'Software\\Classes\\AppUserModelId\\' + _AUMID) as k:
+            winreg.SetValueEx(k, 'DisplayName', 0, winreg.REG_SZ, 'meowify' if _INSTALL_JSON.exists() else 'meowify (dev)')
+            if _ICON_PATH.exists():
+                winreg.SetValueEx(k, 'IconUri', 0, winreg.REG_SZ, str(_ICON_PATH))
+    except Exception as e:
+        _log_server.warning(f'[ident] registry failed: {e}')
+
+def _ident_boot():
+    if sys.platform != 'win32':
+        return
+    time.sleep(8)
+    _ident_register()
+    if not _INSTALL_JSON.exists():
+        return
+    info = _upd_install_info()
+    if info.get('ident') == _IDENT_REV:
+        return
+    try:
+        if _icon_set_shortcuts(set_id=True):
+            info['ident'] = _IDENT_REV
+            _INSTALL_JSON.write_text(json.dumps(info), encoding='utf-8')
+    except Exception as e:
+        _log_server.warning(f'[ident] shortcut update failed: {e}')
 
 def _icon_find_hwnd(u):
     import ctypes
@@ -31499,6 +31621,7 @@ def main():
     port = _cached_port()
     url = f'http://{host}:{port}'
     threading.Thread(target=_upd_confirm_boot, args=(host, port), daemon=True).start()
+    threading.Thread(target=_ident_boot, daemon=True).start()
 
     if sys.platform == 'win32':
         use_webview = CFG.get('win_use_webview', True) and not no_browser
