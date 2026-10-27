@@ -11137,7 +11137,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #vc :is(.song-row,.song-row-mobile){transition:background var(--dur-2) var(--ease-out),border-radius .2s var(--ease-out)}
 .song-row.selected.sel-up,.song-row-mobile.selected.sel-up{border-top-left-radius:0;border-top-right-radius:0}
 .song-row.selected.sel-dn,.song-row-mobile.selected.sel-dn{border-bottom-left-radius:0;border-bottom-right-radius:0}
-:is(.song-row,.song-row-mobile).selected.drag-lifted,:is(.song-row,.song-row-mobile).selected.drag-drop{border-radius:var(--radius-md)}
+:is(.song-row,.song-row-mobile).selected.drag-lifted{border-radius:var(--radius-md)}
 .sthumb{
   width:44px;height:44px;border-radius:var(--radius-md);
   object-fit:cover;background:var(--color-surface-container-high);flex-shrink:0;
@@ -19715,6 +19715,7 @@ function _queueRefreshRow(i) {
 
 function _queueAfterFullRender(inner, hadSig, prevScroll) {
   _qLastQi = S.qi;
+  inner.querySelectorAll('.song-row.selected').forEach(r => _applySelJoin(r)); // plain list rows are built without joins
   const _anim = _qAddAnim; _qAddAnim = null;
   const _rem = _qRemAnim; _qRemAnim = null;
   const _fv = _qvlist;
@@ -22375,6 +22376,7 @@ class VirtualList {
     old.replaceWith(row);
     this._nodes.set(i, row);
     if (row.dataset.id) _regAdd(row.dataset.id, row);
+    if (row.classList.contains('selected')) _applySelJoin(row);
   }
 
   _remeasure() {
@@ -22436,6 +22438,7 @@ class VirtualList {
     this._inner.appendChild(row);
     this._nodes.set(i, row);
     if (row.dataset.id) _regAdd(row.dataset.id, row);
+    if (row.classList.contains('selected')) _applySelJoin(row); // custom renderers (the queue) never got joins on create
     return true;
   }
 
@@ -25432,6 +25435,14 @@ function initReorderDrag(listEl, opts) {
     if (!commit) rest.forEach(i => { rows[i].style.translate = ''; });
     const order = rest.slice(0, slot).concat(group, rest.slice(slot));
     const ids = order.map(i => rows[i].dataset.id);
+    // final neighbours decide the inner corners: set them now so they morph during the landing, not after it
+    const fin = commit ? order : rows.map((_, i) => i);
+    const finSel = k => !!(opts.isSelected && opts.isSelected(rows[fin[k]].dataset.id));
+    fin.forEach((i, p) => {
+      const me = finSel(p);
+      rows[i].classList.toggle('sel-up', me && p > 0 && finSel(p - 1));
+      rows[i].classList.toggle('sel-dn', me && p < fin.length - 1 && finSel(p + 1));
+    });
     setTimeout(async () => {
       const changed = commit && order.some((v, i) => v !== i);
       if (changed) {
@@ -25864,6 +25875,16 @@ function initVlistReorder(vl) {
     }
     // every dragged row flies to its place in the block that opens at `slot`
     const H = vl.ROW_H;
+    // final neighbours decide the inner corners: set them now so they morph during the landing, not after it
+    const _gs = new Set(group);
+    const _restSongs = commit ? vl.songs.filter((x, k) => !_gs.has(k)) : null;
+    const finalArr = commit ? _restSongs.slice(0, slot).concat(group.map(k => vl.songs[k]), _restSongs.slice(slot)) : vl.songs;
+    const joinAt = (el, f) => {
+      const sl = k => k >= 0 && k < finalArr.length && S.selected.has(finalArr[k].id);
+      const me = sl(f);
+      el.classList.toggle('sel-up', me && sl(f - 1));
+      el.classList.toggle('sel-dn', me && sl(f + 1));
+    };
     const have = new Map([[from, ghost]]);
     folls.forEach(f => have.set(f.idx, f.el));
     const vs = Math.floor((sc.scrollTop - vl._scrollerOffset) / H) - 1;
@@ -25885,7 +25906,20 @@ function initVlistReorder(vl) {
       el.classList.add('drag-drop');
       el.style.scale = '';
       el.style.translate = '0 ' + (fin * H) + 'px';
+      joinAt(el, commit ? fin : m);
     });
+    // the rows that stay: their final index decides whether they still touch a selected neighbour
+    for (const [i, el] of vl._nodes) {
+      if (_gs.has(i)) continue;
+      let f = i;
+      if (commit) {
+        let lo = 0, hi = group.length;
+        while (lo < hi) { const mm = (lo + hi) >> 1; if (group[mm] < i) lo = mm + 1; else hi = mm; }
+        const v = i - lo;
+        f = v < slot ? v : v + group.length;
+      }
+      joinAt(el, f);
+    }
     setTimeout(() => {
       inner.classList.remove('vl-drag');
       vl._drag = null;
