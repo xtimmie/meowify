@@ -17721,44 +17721,47 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   updateHighlights();updateBulkBar();
 }
 
-// queue x button: in select mode on a selected row it removes the whole selection
+// queue x button: on a selected row it removes the whole selection
 function _removeQueueRowsAt(qi, id) {
-  if (S.selectMode && S.selected.size > 1 && S.selected.has(id)) {
-    const idx = S.queue.map((s, k) => S.selected.has(s.id) ? k : -1).filter(k => k >= 0).reverse();
-    idx.forEach(k => removeFromQueue(k));
-    S.selected.clear();
-    refreshSelectionUI();
-  } else removeFromQueue(qi);
+  if (S.selectMode && S.selected.has(id)) {
+    const idx = [], ids = [];
+    S.queue.forEach((s, k) => { if (S.selected.has(s.id)) { idx.push(k); ids.push(s.id); } });
+    if (idx.length) {
+      _removeQueueMany(idx);
+      ids.forEach(x => S.selected.delete(x));
+      refreshSelectionUI();
+      return;
+    }
+  }
+  _removeQueueMany([qi]);
 }
 
-function removeFromQueue(i) {
-  const removedId = S.queue[i]?.id;
-  const _rg = _queueRemoveGhost(i); // must grab the row before the queue changes
-  S.queue.splice(i, 1);
-  if (i < S.qi) {
-    S.qi--;
-  } else if (i === S.qi) {
-    // removed the currently playing song - auto-advance to what's now at this index
-    engine._stopNxt();
-    if (S.qi < S.queue.length) {
-      S.cur = S.queue[S.qi];
-      S.isPlaying = true;
-      playSong(S.cur);
-    } else {
-      // was last in queue
-      engine.stop();
-      S.isPlaying = false; S.cur = null;
-      updatePlayerUI(null); updateHighlights(); updatePlayBtn();
-    }
-  } else if (engine.nxt && engine.nxt.songId === removedId) {
-    engine._stopNxt();
-  }
+function removeFromQueue(i) { _removeQueueMany([i]); }
+
+// removes any number of queue rows in one go: one ghost slide per row, ONE rebuild, one slide up for
+// everything below. the playback switch (when the playing song is among them) runs after the rebuild,
+// so its highlight/render calls can't rebuild the list in the middle of the animation
+function _removeQueueMany(idxs) {
+  idxs = [...new Set(idxs)].filter(k => k >= 0 && k < S.queue.length).sort((a, b) => a - b);
+  if (!idxs.length) return;
+  const rset = new Set(idxs);
+  const ids = new Set(idxs.map(k => S.queue[k].id));
+  const curRemoved = rset.has(S.qi);
+  const nxtId = engine.nxt && engine.nxt.songId;
+  const ghosts = idxs.map(k => _queueRemoveGhost(k)); // must grab the rows before the queue changes
+  const step = (ghosts.find(Boolean) || {}).step;
+  const ghosted = new Set(idxs.filter((k, j) => ghosts[j]));
+  const below = idxs.filter(k => k < S.qi).length;
+  for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
+  // when the playing row is gone this is the first survivor after it (== queue.length if there is none)
+  S.qi = S.qi - below;
   if (S.queueOpen) {
     // destroy vlist before rebuild so it doesn't reference stale indices
     const _qInner = document.getElementById('queue-inner');
     const _qScroll = _qInner ? _qInner.scrollTop : 0;
     if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
-    if (_rg) _qRemAnim = {idx: i, step: _rg.step};
+    if (step) _qRemAnim = {removed: idxs, ghosted, step};
+    _qAnimUntil = performance.now() + 520;
     renderQueueSidebar();
     _qRemAnim = null; // render consumed it, or bailed early on an empty queue
     // rebuild can clamp scrollTop to 0 on some webviews, put it back
@@ -17766,6 +17769,22 @@ function removeFromQueue(i) {
       _qInner.scrollTop = _qScroll;
       requestAnimationFrame(() => { _qInner.scrollTop = _qScroll; });
     }
+  }
+  if (curRemoved) {
+    // removed the currently playing song - auto-advance to what's now at this index
+    engine._stopNxt();
+    if (S.qi < S.queue.length) {
+      S.cur = S.queue[S.qi];
+      S.isPlaying = true;
+      playSong(S.cur);
+    } else {
+      // nothing left after it
+      engine.stop();
+      S.isPlaying = false; S.cur = null;
+      updatePlayerUI(null); updateHighlights(); updatePlayBtn();
+    }
+  } else if (nxtId && ids.has(nxtId)) {
+    engine._stopNxt();
   }
 }
 
@@ -19460,7 +19479,10 @@ let _qSig = null;    // signature of the queue content currently rendered (null 
 let _qLastQi = -1;   // queue index that was marked as playing in the last render
 
 let _qAddAnim = null; // {idx, count} of rows just added, consumed by the next full render
-let _qRemAnim = null; // {idx, step} of a row just removed, consumed by the next full render
+let _qRemAnim = null; // {removed: old indices, ghosted: Set of those that got a ghost, step} consumed by the next full render
+let _qAnimUntil = 0;  // while a remove slide runs, swapping row nodes would cut it, so row refreshes wait
+let _qAnimT = 0;
+const _qDeferRows = new Set();
 
 // clone the row about to be removed and slide it off to the right. lives in the sidebar
 // (not queue-inner) so the list rebuild can't wipe it. returns the row step for the slide-up
@@ -19496,10 +19518,18 @@ function _queueRemoveGhost(i) {
 function _queueAnimateRemove(r) {
   const inner = document.getElementById('queue-inner');
   if (!inner || !S.queueOpen) return;
-  const kf = [{transform: 'translateY(' + r.step + 'px)'}, {transform: 'translateY(0)'}];
+  const rem = r.removed;
   const o = {duration: 300, delay: 90, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards'};
-  if (_qvlist) { for (const [i, el] of _qvlist._nodes) if (i >= r.idx) el.animate(kf, o); return; }
-  inner.querySelectorAll('.song-list > .song-row').forEach((el, i) => { if (i >= r.idx) el.animate(kf, o); });
+  // a row at new index i used to sit below every removed row with (old idx - rank) <= i,
+  // so it starts that many steps lower and slides up into the gap
+  const go = (i, el) => {
+    let k = 0, shift = 0;
+    while (k < rem.length && rem[k] - k <= i) { if (r.ghosted.has(rem[k])) shift++; k++; }
+    if (!shift) return;
+    el.animate([{transform: 'translateY(' + (r.step * shift) + 'px)'}, {transform: 'translateY(0)'}], o);
+  };
+  if (_qvlist) { for (const [i, el] of _qvlist._nodes) go(i, el); return; }
+  inner.querySelectorAll('.song-list > .song-row').forEach((el, i) => go(i, el));
 }
 
 // ── swipe right on a queue row to remove it ──────────────────────────────────
@@ -19531,14 +19561,18 @@ document.addEventListener('pointermove', e => {
       list.dispatchEvent(new PointerEvent('pointercancel', {pointerId: s.id}));
       _qSwipeSynth = false;
     }
-    s.tr = s.row.style.transition;
-    s.row.style.transition = 'none';
-    s.row.style.userSelect = 'none';
+    // a selected row drags every selected row along with it
+    s.all = [s.row];
+    if (S.selectMode && S.selected.size > 1 && S.selected.has(s.row.dataset.id)) {
+      document.querySelectorAll('#queue-inner .song-row[data-id]').forEach(r => { if (r !== s.row && S.selected.has(r.dataset.id)) s.all.push(r); });
+    }
+    s.trs = s.all.map(r => r.style.transition);
+    s.all.forEach(r => { r.style.transition = 'none'; r.style.userSelect = 'none'; });
   }
   s.dx = Math.max(0, dx);
   const w = s.row.offsetWidth || 1;
-  s.row.style.transform = 'translateX(' + s.dx + 'px)';
-  s.row.style.opacity = String(Math.max(0.25, 1 - s.dx / (w * 1.1)));
+  const op = String(Math.max(0.25, 1 - s.dx / (w * 1.1)));
+  s.all.forEach(r => { r.style.transform = 'translateX(' + s.dx + 'px)'; r.style.opacity = op; });
 }, true);
 function _qSwipeEnd(e, cancelled) {
   const s = _qSwipe;
@@ -19552,11 +19586,14 @@ function _qSwipeEnd(e, cancelled) {
   const v = s.dx / Math.max(1, performance.now() - s.t0);
   const commit = !cancelled && row.isConnected && (s.dx > Math.max(90, w * 0.4) || (s.dx > 40 && v > 0.6));
   const i = parseInt(row.dataset.qi);
-  if (commit && !isNaN(i)) { removeFromQueue(i); return; }
-  row.style.transition = 'transform .22s var(--ease-out), opacity .22s var(--ease-out)';
-  row.style.transform = '';
-  row.style.opacity = '';
-  setTimeout(() => { row.style.transition = s.tr; row.style.userSelect = ''; }, 260);
+  if (commit && !isNaN(i)) { _removeQueueRowsAt(i, row.dataset.id); return; }
+  const all = s.all || [row];
+  all.forEach(r => {
+    r.style.transition = 'transform .22s var(--ease-out), opacity .22s var(--ease-out)';
+    r.style.transform = '';
+    r.style.opacity = '';
+  });
+  setTimeout(() => { all.forEach((r, k) => { r.style.transition = (s.trs && s.trs[k]) || ''; r.style.userSelect = ''; }); }, 260);
 }
 document.addEventListener('pointerup', e => _qSwipeEnd(e, false), true);
 document.addEventListener('pointercancel', e => _qSwipeEnd(e, true), true);
@@ -19623,6 +19660,17 @@ function _queueFixRowH(v) {
 
 function _queueRefreshRow(i) {
   if (i < 0 || i >= S.queue.length) return;
+  if (performance.now() < _qAnimUntil) {
+    // a slide is running, replacing the row node would cut it. do it once it's over
+    _qDeferRows.add(i);
+    if (!_qAnimT) _qAnimT = setTimeout(() => {
+      _qAnimT = 0;
+      const rs = [..._qDeferRows];
+      _qDeferRows.clear();
+      if (S.queueOpen) rs.forEach(k => _queueRefreshRow(k));
+    }, Math.max(0, _qAnimUntil - performance.now()) + 20);
+    return;
+  }
   if (_qvlist) { _qvlist.refreshRow(i); return; }
   const inner = document.getElementById('queue-inner');
   const old = inner && inner.querySelectorAll('.song-row')[i];
@@ -22082,12 +22130,17 @@ class VirtualList {
     }
   }
 
+  // while a reorder drag runs d = {from, slot, group}: group = sorted indices being dragged (hidden here,
+  // drawn as ghosts), slot = how many of the other rows stay above the dragged block
   _top(i) {
     const d = this._drag;
     if (!d) return i * this.ROW_H;
-    if (i === d.from) return -100000;
-    const v = i < d.from ? i : i - 1;
-    return (v < d.slot ? v : v + 1) * this.ROW_H;
+    const g = d.group;
+    let lo = 0, hi = g.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (g[m] < i) lo = m + 1; else hi = m; }
+    if (g[lo] === i) return -100000;
+    const v = i - lo;
+    return (v < d.slot ? v : v + g.length) * this.ROW_H;
   }
 
   _relayout() {
@@ -25651,6 +25704,8 @@ function initVlistReorder(vl) {
   let armed = null, holdTimer = null;
   let active = false, dropping = false, suppressClick = false;
   let from = -1, ghost = null, grab = 0, z = 1, y0 = 0, startScroll = 0;
+  const STACK_GAP = 5;
+  let group = [], rankFrom = 0, startSlot = 0, curY = 0, folls = [], stackAt = 0, stacked = false;
 
   function cancelHold() {
     clearTimeout(holdTimer);
@@ -25661,8 +25716,11 @@ function initVlistReorder(vl) {
   function place() {
     const n = vl.songs.length;
     const y = Math.max(0, Math.min(y0 + (lastY - downY) / z + (sc.scrollTop - startScroll), (n - 1) * vl.ROW_H));
+    curY = y;
     ghost.style.translate = '0 ' + y + 'px';
-    const k = Math.max(0, Math.min(n - 1, Math.round(y / vl.ROW_H)));
+    // followers ride in a tight stack under the dragged row
+    for (const f of folls) f.el.style.translate = '0 ' + (y + Math.min(f.rank, 3) * STACK_GAP) + 'px';
+    const k = Math.max(0, Math.min(n - group.length, Math.round(y / vl.ROW_H)));
     if (k !== vl._drag.slot) {
       vl._drag.slot = k;
       vl._relayout();
@@ -25679,6 +25737,11 @@ function initVlistReorder(vl) {
     if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
     else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
     if (v) sc.scrollTop += v;
+    // after the fly in, followers stop chasing with a transition and ride rigidly in the stack
+    if (!stacked && performance.now() >= stackAt) {
+      stacked = true;
+      folls.forEach(f => f.el.classList.add('drag-stacked'));
+    }
     place();
     raf = requestAnimationFrame(tick);
   }
@@ -25688,6 +25751,8 @@ function initVlistReorder(vl) {
     active = false;
     dropping = false;
     if (ghost) { ghost.remove(); ghost = null; }
+    folls.forEach(f => f.el.remove());
+    folls = [];
     inner.classList.remove('vl-drag');
     vl._drag = null;
     if (!vl._dead) vl._relayout();
@@ -25705,15 +25770,41 @@ function initVlistReorder(vl) {
     ghost.classList.add('drag-lifted', 'drag-anchor');
     // no count badge, same as the songlist
     ghost.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:6';
-    vl._drag = {from, slot: from};
+    // group = every selected queue row when the grabbed one is selected, else just the grabbed one
+    const gs = [];
+    if (S.selectMode && S.selected.has(target.dataset.id)) vl.songs.forEach((s, k) => { if (k === from || S.selected.has(s.id)) gs.push(k); });
+    else gs.push(from);
+    group = gs;
+    rankFrom = group.indexOf(from);
+    startSlot = from - rankFrom;
+    vl._drag = {from, slot: startSlot, group};
+    // followers: the first 3 always get a ghost, further ones only when they're on screen (they fade out in the stack)
+    folls = [];
+    let rk = 0;
+    group.forEach(m => {
+      if (m === from) return;
+      rk++;
+      const node = vl._nodes.get(m);
+      if (rk > 3 && !node) return;
+      const el = node ? node.cloneNode(true) : vl._makeRow(m);
+      if (!el) return;
+      el.classList.add('drag-lifted', 'drag-follow');
+      if (rk > 3) el.classList.add('drag-far');
+      el.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:' + Math.max(1, 5 - rk) + ';scale:' + (1.02 - Math.min(rk, 3) * 0.02) + ';translate:0 ' + (node ? m * vl.ROW_H : y0) + 'px';
+      folls.push({el, rank: rk, idx: m});
+    });
     vl._relayout();
     void inner.offsetHeight;
     inner.classList.add('vl-drag');
     inner.appendChild(ghost);
+    folls.slice().reverse().forEach(f => inner.appendChild(f.el));
     getSelection()?.removeAllRanges();
     document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid }));
     try { inner.setPointerCapture(pid); } catch (_) {}
     active = true;
+    void inner.offsetHeight; // commit the followers' start spots so they fly into the stack
+    stacked = false;
+    stackAt = performance.now() + ANIM_MS + 60;
     place();
     tick();
   }
@@ -25723,34 +25814,53 @@ function initVlistReorder(vl) {
     active = false;
     dropping = true;
     if (commit) suppressClick = true;
-    const slot = commit ? vl._drag.slot : from;
+    const slot = commit ? vl._drag.slot : startSlot;
     if (vl._drag.slot !== slot) {
       vl._drag.slot = slot;
       vl._relayout();
     }
-    ghost.classList.remove('drag-lifted', 'drag-anchor');
-    ghost.classList.add('drag-drop');
-    ghost.style.translate = '0 ' + (slot * vl.ROW_H) + 'px';
+    // every dragged row flies to its place in the block that opens at `slot`
+    const H = vl.ROW_H;
+    const have = new Map([[from, ghost]]);
+    folls.forEach(f => have.set(f.idx, f.el));
+    const vs = Math.floor((sc.scrollTop - vl._scrollerOffset) / H) - 1;
+    const ve = Math.ceil((sc.scrollTop - vl._scrollerOffset + sc.clientHeight) / H) + 1;
+    group.forEach((m, r) => {
+      const fin = slot + r;
+      let el = have.get(m);
+      if (!el) {
+        if (fin < vs || fin > ve) return;
+        el = vl._makeRow(m);
+        if (!el) return;
+        el.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:4;opacity:0;translate:0 ' + (curY + 3 * STACK_GAP) + 'px';
+        inner.appendChild(el);
+        folls.push({el, rank: 9, idx: m});
+        void el.offsetHeight;
+        el.style.opacity = '';
+      }
+      el.classList.remove('drag-lifted', 'drag-anchor', 'drag-follow', 'drag-far', 'drag-stacked');
+      el.classList.add('drag-drop');
+      el.style.scale = '';
+      el.style.translate = '0 ' + (fin * H) + 'px';
+    });
     setTimeout(() => {
       inner.classList.remove('vl-drag');
       vl._drag = null;
       if (ghost) { ghost.remove(); ghost = null; }
+      folls.forEach(f => f.el.remove());
+      folls = [];
       if (vl._dead) { dropping = false; return; }
       let changed = false;
-      if (commit && slot !== from && vl.songs === S.queue && from < S.queue.length) {
-        const arr = S.queue.slice();
-        const item = arr.splice(from, 1)[0];
-        arr.splice(slot, 0, item);
+      let arr = null;
+      if (commit && vl.songs === S.queue && group.every(k => k < S.queue.length)) {
+        // pull the whole group out and drop it as one block (in its original order) at the slot
+        const gset = new Set(group);
+        const _rest = S.queue.filter((x, k) => !gset.has(k));
+        arr = _rest.slice(0, slot).concat(group.map(k => S.queue[k]), _rest.slice(slot));
+        if (!arr.some((x, k) => x !== S.queue[k])) arr = null;
+      }
+      if (arr) {
         const _curItem = S.queue[S.qi];
-        if (S.selectMode && S.selected.has(item.id) && S.selected.size > 1) {
-          // multi select: pull every selected row out and drop them as one block where the dragged row landed
-          const _base = arr.filter(x => !S.selected.has(x.id));
-          const _c = arr.slice(0, slot).filter(x => !S.selected.has(x.id)).length;
-          const _sel = S.queue.filter(x => S.selected.has(x.id));
-          arr.length = 0;
-          arr.push(..._base.slice(0, _c), ..._sel, ..._base.slice(_c));
-        }
-        const qi = S.qi;
         S.qi = Math.max(0, arr.indexOf(_curItem));
         S.queue = arr;
         vl.songs = arr;
