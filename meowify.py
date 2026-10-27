@@ -8368,6 +8368,7 @@ _ICON_PATH  = _APP_DIR / 'app.ico'
 _ICON_SIG   = _APP_DIR / 'app.ico.sig'
 _ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 _ICON_HANDLES = {}
+_ICON_LOCK = threading.Lock()
 
 def _ico_pack(pngs):
     import struct
@@ -8392,8 +8393,9 @@ def _icon_set_shortcuts():
     subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
                    creationflags=0x08000000, timeout=30, capture_output=True)
 
-def _icon_set_window():
-    if sys.platform != 'win32' or not _ICON_PATH.exists():
+def _icon_set_window(path=None):
+    path = Path(path) if path else _ICON_PATH
+    if sys.platform != 'win32' or not path.exists():
         return False
     import ctypes
     from ctypes import wintypes
@@ -8407,17 +8409,17 @@ def _icon_set_window():
     hwnd = u.FindWindowW(None, 'meowify')
     if not hwnd:
         return False
-    mt = _ICON_PATH.stat().st_mtime
-    for which, metric in ((1, 11), (0, 49)):
-        sz = u.GetSystemMetrics(metric)
-        key = (which, sz, mt)
-        h = _ICON_HANDLES.get(key)
-        if not h:
-            h = u.LoadImageW(None, str(_ICON_PATH), 1, sz, sz, 0x10)
+    u.DestroyIcon.argtypes = [wintypes.HANDLE]
+    with _ICON_LOCK:
+        for which, metric in ((1, 11), (0, 49)):
+            sz = u.GetSystemMetrics(metric)
+            h = u.LoadImageW(None, str(path), 1, sz, sz, 0x10)
             if h:
-                _ICON_HANDLES[key] = h
-        if h:
-            u.SendMessageW(hwnd, 0x80, which, h)
+                u.SendMessageW(hwnd, 0x80, which, h)
+                old = _ICON_HANDLES.get(which)
+                _ICON_HANDLES[which] = h
+                if old:
+                    u.DestroyIcon(old)
     return True
 
 def _icon_apply_linux(png):
@@ -8473,6 +8475,15 @@ def api_app_icon():
     if not pngs:
         return jsonify({'error': 'no icon data'}), 400
     try:
+        if d.get('live') and sys.platform != 'win32':
+            return jsonify({'ok': True})
+        if d.get('live'):
+            live = _APP_DIR / 'app-live.ico'
+            tmp = _APP_DIR / 'app-live.ico.new'
+            tmp.write_bytes(_ico_pack(pngs))
+            os.replace(tmp, live)
+            _icon_set_window(live)
+            return jsonify({'ok': True})
         if sys.platform == 'win32':
             tmp = _APP_DIR / 'app.ico.new'
             tmp.write_bytes(_ico_pack(pngs))
@@ -29692,6 +29703,7 @@ const _ICON_P = {
   l2: new Path2D('M94.604,146.123L103.038,211.776L114.892,204.481L107.142,147.947L94.604,146.123Z')
 };
 let _icoT = null;
+let _icoLastSig = '';
 
 function _icoCfg() { return Object.assign({}, _ICON_DEF, CFG.app_icon || {}); }
 function _iconTheme() { return getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#4ade80'; }
@@ -29778,14 +29790,16 @@ function _iconRedraw() {
   }
 }
 
-async function _iconExport() {
+async function _iconExport(live) {
   const o = _icoCfg(), sizes = {};
-  for (const n of [16, 24, 32, 48, 64, 128, 256]) {
+  for (const n of (live ? [16, 24, 32, 48, 64] : [16, 24, 32, 48, 64, 128, 256])) {
     const cv = document.createElement('canvas');
     _iconDraw(cv, n, o);
     sizes[n] = cv.toDataURL('image/png');
   }
-  return api('POST', '/api/app-icon', {sizes, sig: _iconSig()});
+  const sig = _iconSig();
+  if (!live) _icoLastSig = sig;
+  return api('POST', '/api/app-icon', {sizes, sig, live: !!live});
 }
 
 async function _iconCommit() {
@@ -29867,11 +29881,28 @@ async function _iconBoot() {
   try {
     const st = await api('GET', '/api/app-icon/status');
     if (!st || !st.supported) return;
+    _icoLastSig = st.sig || '';
     if (!st.exists || st.sig !== _iconSig()) await _iconExport();
     else await api('POST', '/api/app-icon/apply');
   } catch (e) {}
 }
 window.addEventListener('load', () => setTimeout(_iconBoot, 3500));
+
+let _icoLiveT = null, _icoFullT = null, _icoLastTheme = '';
+document.addEventListener('mu:themechange', (ev) => {
+  if (!(ev.detail && ev.detail.tail)) return;
+  if (_icoCfg().colorMode !== 'theme') return;
+  const t = _iconTheme();
+  if (t === _icoLastTheme) return;
+  _icoLastTheme = t;
+  _iconRedraw();
+  clearTimeout(_icoLiveT);
+  _icoLiveT = setTimeout(() => { _iconExport(true).catch(() => {}); }, 400);
+  clearTimeout(_icoFullT);
+  _icoFullT = setTimeout(() => {
+    if (_iconSig() !== _icoLastSig) _iconExport().catch(() => {});
+  }, 60000);
+});
 
 function _updRepair() {
   if (!confirm('repair the install? this re-downloads meowify, motionui and packages at your current version. your library, playlists and settings are not touched.')) return;
