@@ -28,6 +28,27 @@ else:
         stream=sys.stdout,
     )
 
+    class _QuietAccess(logging.Filter):
+        _status = re.compile(r'" (\d{3}) ')
+        def filter(self, rec):
+            if rec.levelno >= logging.WARNING:
+                return True
+            msg = rec.getMessage()
+            if 'development server' in msg or 'Press CTRL+C' in msg:
+                return False
+            m = self._status.search(msg)
+            return not m or int(m.group(1)) >= 400
+
+    if os.environ.get('MEOWIFY_LOG_REQUESTS') != '1' and _log_level > logging.DEBUG:
+        logging.getLogger('werkzeug').addFilter(_QuietAccess())
+        logging.getLogger('dropbox').setLevel(logging.WARNING)
+        logging.getLogger('pywebview').addFilter(lambda r: r.levelno >= logging.WARNING)
+        try:
+            import flask.cli as _flask_cli
+            _flask_cli.show_server_banner = lambda *a, **k: None
+        except Exception:
+            pass
+
 def _get_logger(name):
     return logging.getLogger(f'meowify.{name}')
 
