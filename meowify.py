@@ -25549,8 +25549,10 @@ function initReorderDrag(listEl, opts) {
       const c = sc.getBoundingClientRect();
       const r = row.getBoundingClientRect();
       const zone = SCROLL_ZONE * kT;
+      // the queue scroller runs behind the player, the visible bottom is --bar-h higher (same value its padding uses)
+      const barB = listEl.closest('#queue-inner') ? (parseInt(getComputedStyle(sc).getPropertyValue('--bar-h')) || 0) * kT : 0;
       const toTop = r.top - c.top;
-      const toBot = c.bottom - r.bottom;
+      const toBot = c.bottom - barB - r.bottom;
       let v = 0;
       if (toTop < zone) v = -SCROLL_MAX * Math.min(1, (zone - toTop) / zone);
       else if (toBot < zone) v = SCROLL_MAX * Math.min(1, (zone - toBot) / zone);
@@ -25929,7 +25931,7 @@ function initVlistReorder(vl) {
     if (!inner.isConnected || vl._dead) { abort(); return; }
     const c = sc.getBoundingClientRect();
     const toTop = (lastY - c.top) / z;
-    const toBot = (c.bottom - lastY) / z;
+    const toBot = (c.bottom - (parseInt(getComputedStyle(sc).getPropertyValue('--bar-h')) || 0) * z - lastY) / z; // minus the player covering the bottom
     let v = 0;
     if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
     else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
