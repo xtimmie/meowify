@@ -11788,7 +11788,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #ctx,#dl-panel-float{
   position:fixed;z-index:1000;
   background:var(--color-surface-container-high);
-  border:1px solid var(--line-high);
+  border:1px solid var(--glass-border);
   border-radius:var(--radius-lg);
   box-shadow:0 8px 32px rgba(0,0,0,.55);
   padding:5px;min-width:176px;
@@ -16487,7 +16487,7 @@ function _updateMobNpSpiky() {
   if (!btn) return;
   btn.classList.toggle('playing', S.isPlaying);
 
-  const isOpt = CFG.spiky_play_btn_type === 'optimized' && CFG.spiky_play_btn !== false;
+  const isOpt = !CFG.spiky_play_btn_legacy && CFG.spiky_play_btn !== false;
   const canvas = document.getElementById('mob-np-spiky-canvas');
   const optSvg = document.getElementById('mob-np-spiky-opt-svg');
   if (canvas) canvas.style.display = isOpt ? 'none' : '';
@@ -21674,7 +21674,7 @@ function _frameRate(rate) {
     const canvas = document.getElementById('playbtn-spiky-canvas');
     if (!canvas) return;
 
-    const isOpt = !isMobile() && (CFG.spiky_play_btn !== false) && (CFG.spiky_play_btn_type === 'optimized');
+    const isOpt = !isMobile() && (CFG.spiky_play_btn !== false) && !CFG.spiky_play_btn_legacy;
     const optSvg = document.getElementById('playbtn-spiky-opt-svg');
     if (optSvg) optSvg.style.display = isOpt ? '' : 'none';
     canvas.style.display = isOpt ? 'none' : '';
@@ -21966,7 +21966,7 @@ function _spikyRotTickInner(_skipDom) {
       }
     }
     if (outersChanged || Math.abs(_spikyInnerR - _lastSpikyInner) > SPIKY_WRITE_THRESH) {
-      if (!isMobile() && CFG.spiky_play_btn !== false && CFG.spiky_play_btn_type === 'optimized') {
+      if (!isMobile() && CFG.spiky_play_btn !== false && !CFG.spiky_play_btn_legacy) {
         _updateSpikyOptSvg(!!(S.cur || engine.hasPaused));
       } else {
         updateSpikyBtn();
@@ -28982,10 +28982,11 @@ function renderSettings() {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
-        ${CFG.spiky_play_btn!==false ? row('spiky play button type', 'normal = canvas-drawn per frame; optimized = 6 CSS-animated paths with gooey filter (lower GPU cost)', `
-          <div style="display:flex;gap:6px">
-            ${['normal','optimized'].map(v=>`<button class="btn ${(CFG.spiky_play_btn_type||'normal')===v?'btn-filled':'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="saveSetting('spiky_play_btn_type','${v}').then(()=>{CFG.spiky_play_btn_type='${v}';updateSpikyBtn();renderSettings();})">${v}</button>`).join('')}
-          </div>
+        ${CFG.spiky_play_btn!==false ? row('legacy spiky play button', 'use the old canvas-drawn spiky play button instead of the optimized one (6 CSS-animated paths with gooey filter, lower GPU cost)', `
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${CFG.spiky_play_btn_legacy?'checked':''} onchange="saveSetting('spiky_play_btn_legacy',this.checked).then(()=>{updateSpikyBtn();renderSettings();})" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
         `) : ''}
         ${row('spiky volume icon', 'volume icon has cool spikes when playing', `
           <label class="switch" style="flex-shrink:0">
