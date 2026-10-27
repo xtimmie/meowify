@@ -25605,7 +25605,12 @@ function initReorderDrag(listEl, opts) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armedRow = target;
-    if ((listEl.closest('#queue-inner') ? S.qSelectMode : S.selectMode) && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
+    if ((listEl.closest('#queue-inner') ? S.qSelectMode : S.selectMode) && e.target.closest('.sel-handle')) {
+      e.preventDefault();
+      // getBoundingClientRect is zoom-patched until the pointerdown tick ends, lift measures rects so it has to wait one tick
+      setTimeout(() => { if (armedRow === target && !active) lift(target); }, 0);
+      return;
+    }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
     }
@@ -26107,7 +26112,12 @@ function initVlistReorder(vl) {
     pid = e.pointerId;
     downY = lastY = e.clientY;
     armed = target;
-    if (S.qSelectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
+    if (S.qSelectMode && e.target.closest('.sel-handle')) {
+      e.preventDefault();
+      // same as the songlist engine: wait for the zoom patched getBoundingClientRect to clear before measuring
+      setTimeout(() => { if (armed === target && !active) lift(target); }, 0);
+      return;
+    }
     if (e.pointerType !== 'mouse') {
       holdTimer = setTimeout(() => { if (armed) lift(armed); }, HOLD_MS);
     }
