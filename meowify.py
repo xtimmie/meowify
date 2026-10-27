@@ -49,7 +49,7 @@ _miniaudio = None
 
 # ── platform helpers ───────────────────────────────────────────────────────────
 IS_ANDROID = hasattr(sys, 'getandroidapilevel') or 'ANDROID_ROOT' in os.environ
-APP_VERSION = '0.1.0.1'
+APP_VERSION = '0.1.0.2'
 _APP_DIR = Path(__file__).resolve().parent
 _IN_VENV = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
 if not IS_ANDROID:
@@ -9020,8 +9020,9 @@ def _upd_confirm_boot(host, port):
     except Exception:
         pass
 
-_ICON_PATH  = _APP_DIR / 'app.ico'
-_ICON_SIG   = _APP_DIR / 'app.ico.sig'
+_ICON_DIR   = _APP_DIR if _INSTALL_JSON.exists() else _HOME
+_ICON_PATH  = _ICON_DIR / 'app.ico'
+_ICON_SIG   = _ICON_DIR / 'app.ico.sig'
 _ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 _ICON_HANDLES = {}
 _ICON_LOCK = threading.Lock()
@@ -9039,7 +9040,7 @@ def _ico_pack(pngs):
     return head + ents + body
 
 def _icon_set_shortcuts():
-    if sys.platform != 'win32' or not _ICON_PATH.exists():
+    if sys.platform != 'win32' or not _ICON_PATH.exists() or not _INSTALL_JSON.exists():
         return
     ico = str(_ICON_PATH).replace("'", "''")
     ps = ("$s=New-Object -ComObject WScript.Shell;"
@@ -9048,6 +9049,25 @@ def _icon_set_shortcuts():
           "if(Test-Path -LiteralPath $p){$l=$s.CreateShortcut($p);$l.IconLocation='" + ico + ",0';$l.Save()}}")
     subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', ps],
                    creationflags=0x08000000, timeout=30, capture_output=True)
+
+def _icon_find_hwnd(u):
+    import ctypes
+    from ctypes import wintypes
+    found = []
+    pid = os.getpid()
+    enum_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, _):
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid and u.IsWindowVisible(h):
+            buf = ctypes.create_unicode_buffer(64)
+            u.GetWindowTextW(h, buf, 64)
+            if buf.value == 'meowify':
+                found.append(h)
+                return False
+        return True
+    u.EnumWindows(enum_t(cb), 0)
+    return found[0] if found else u.FindWindowW(None, 'meowify')
 
 def _icon_set_window(path=None):
     path = Path(path) if path else _ICON_PATH
@@ -9062,7 +9082,7 @@ def _icon_set_window(path=None):
     u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
     u.SendMessageW.restype = ctypes.c_ssize_t
     u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-    hwnd = u.FindWindowW(None, 'meowify')
+    hwnd = _icon_find_hwnd(u)
     if not hwnd:
         return False
     u.DestroyIcon.argtypes = [wintypes.HANDLE]
@@ -9084,7 +9104,7 @@ def _icon_apply_linux(png):
         p = _HOME / 'app-icon.png'
         p.write_bytes(png)
         d = Path.home() / '.local' / 'share' / 'applications' / 'meowify.desktop'
-        if d.exists():
+        if d.exists() and _INSTALL_JSON.exists():
             lines = d.read_text(encoding='utf-8').splitlines()
             has = any(l.startswith('Icon=') for l in lines)
             out = [('Icon=' + str(p)) if l.startswith('Icon=') else l for l in lines]
@@ -9131,17 +9151,18 @@ def api_app_icon():
     if not pngs:
         return jsonify({'error': 'no icon data'}), 400
     try:
+        _ICON_DIR.mkdir(parents=True, exist_ok=True)
         if d.get('live') and sys.platform != 'win32':
             return jsonify({'ok': True})
         if d.get('live'):
-            live = _APP_DIR / 'app-live.ico'
-            tmp = _APP_DIR / 'app-live.ico.new'
+            live = _ICON_DIR / 'app-live.ico'
+            tmp = _ICON_DIR / 'app-live.ico.new'
             tmp.write_bytes(_ico_pack(pngs))
             os.replace(tmp, live)
             _icon_set_window(live)
             return jsonify({'ok': True})
         if sys.platform == 'win32':
-            tmp = _APP_DIR / 'app.ico.new'
+            tmp = _ICON_DIR / 'app.ico.new'
             tmp.write_bytes(_ico_pack(pngs))
             os.replace(tmp, _ICON_PATH)
             threading.Thread(target=_icon_apply_all, daemon=True).start()
