@@ -27987,7 +27987,8 @@ function _applyDesignImpl(design) {
   el.textContent = `
   body.design-glassy #app{position:relative;z-index:1}
   body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
-  body.design-glassy #main{background:rgba(0,0,0,.08)!important}
+  body.design-glassy #app:not(.mobile) #main{background:rgba(0,0,0,.08)!important}
+  body.design-glassy #app.mobile #main{background:transparent!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app.mobile .topbar{border-radius:0 0 25px 25px;background:transparent!important;box-shadow:0 20px 25px color-mix(in srgb,var(--color-surface-dim) calc(var(--vc-fade,0)*100%),transparent)!important;border-bottom:1px solid color-mix(in srgb,var(--glass-border) calc(var(--vc-fade,0)*100%),transparent)!important}
   body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
