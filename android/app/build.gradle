@@ -27,7 +27,7 @@ android {
             pip {
                 install "flask==3.0.3"
                 install "werkzeug==3.0.3"
-                install "yt-dlp==2026.6.9"
+                install "yt-dlp==2026.8.19"
                 install "mutagen==1.47.0"
                 install "ytmusicapi==1.7.2"
                 install "dropbox"
@@ -75,6 +75,7 @@ android {
     packagingOptions {
         jniLibs {
             keepDebugSymbols += ['**/*.so']
+            useLegacyPackaging true
         }
     }
 
