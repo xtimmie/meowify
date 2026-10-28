@@ -13284,7 +13284,8 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #app.mobile .prog-row { display: none; }
 #app.mobile .p-right  { display: none; }
 #app.mobile #p-left-area { cursor: pointer; flex: 1; min-width: 0; overflow: visible; }
-#app.mobile .playbtn  { width: 36px; height: 36px; }
+#app.mobile .playbtn canvas.playbtn-spiky { display: none; }
+#app.mobile .playbtn { background: #fff !important; color: #222; }
 #app.mobile .playbtn svg { width: 18px; height: 18px; }
 #app.mobile .playbtn canvas.playbtn-spiky { display: none; }
 #app.mobile .playbtn { background: #fff !important; color: #222; }
