@@ -292,6 +292,8 @@ def _patch_subp(meowify_module):
                     url = a
                 i += 1
 
+            if _audio_format and 'format' not in opts:
+                opts['format'] = 'bestaudio/best'
             if _ffmpeg_available and _audio_format:
                 pps = opts['postprocessors']
                 pps.append({
@@ -323,6 +325,19 @@ def _patch_subp(meowify_module):
                     w_file.flush()
 
         opts['progress_hooks'] = [_progress_hook]
+        opts['no_warnings'] = False
+
+        class _PipeLogger:
+            def debug(self, msg): pass
+            def info(self, msg): pass
+            def warning(self, msg):
+                try: w_file.write(str(msg) + '\n')
+                except Exception: pass
+            def error(self, msg):
+                try: w_file.write(str(msg) + '\n')
+                except Exception: pass
+
+        opts['logger'] = _PipeLogger()
 
         def run():
             try:
