@@ -4577,7 +4577,7 @@ def mu_static(fn):
     p = (Path(MOTIONUI_DIR)/fn).resolve()
     base = Path(MOTIONUI_DIR).resolve()
     if not p.exists() or not (p == base or base in p.parents): return '', 404
-    return send_file(str(p), max_age=86400)
+    return send_file(str(p), max_age=0)
 
 @app.route('/audio/<sid>')
 def audio(sid):
