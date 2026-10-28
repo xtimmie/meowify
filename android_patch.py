@@ -233,7 +233,7 @@ def _patch_subp(meowify_module):
                 'postprocessors':   [],      # filled below if ffmpeg available
             }
             if _ffmpeg_available:
-                opts['ffmpeg_location'] = _ffmpeg_path
+                opts['ffmpeg_location'] = os.path.dirname(_ffmpeg_path)
 
             _audio_format = None
             _audio_quality = None
@@ -508,6 +508,43 @@ def _patch_media_session_js(meowify_module):
 
 _server_started = False
 
+def _prepare_ffmpeg_libs():
+    import zipfile, stat, shutil
+    ff = os.environ.get("MEOWIFY_FFMPEG", "")
+    if not ff:
+        return
+    libdir = os.path.dirname(os.path.realpath(ff))
+    zpath = os.path.join(libdir, "libffmpeg.zip.so")
+    if not os.path.exists(zpath):
+        sys.__stderr__.write('[ffmpeg] libffmpeg.zip.so missing in ' + libdir + '\n')
+        sys.__stderr__.flush()
+        return
+    dest = os.path.join(os.path.dirname(os.path.dirname(ff)), "ffmpeg-pkg")
+    stamp = os.path.join(dest, ".stamp")
+    want = str(os.path.getsize(zpath))
+    have = open(stamp).read() if os.path.exists(stamp) else ""
+    if have != want:
+        shutil.rmtree(dest, ignore_errors=True)
+        os.makedirs(dest)
+        with zipfile.ZipFile(zpath) as z:
+            for info in z.infolist():
+                target = os.path.join(dest, info.filename)
+                if info.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    os.symlink(z.read(info).decode(), target)
+                else:
+                    with z.open(info) as src, open(target, 'wb') as out:
+                        shutil.copyfileobj(src, out)
+        with open(stamp, 'w') as f:
+            f.write(want)
+    libs = os.path.join(dest, "usr", "lib")
+    os.environ["LD_LIBRARY_PATH"] = libs + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+    sys.__stderr__.write('[ffmpeg] libs ready at ' + libs + '\n')
+    sys.__stderr__.flush()
+
 def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     import sys as _sys
     global _data_dir, _server_started
@@ -543,6 +580,7 @@ def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     # ffmpeg first — yt-dlp needs it in PATH before any download attempt
     if ffmpeg_path:
         os.environ["MEOWIFY_FFMPEG"] = ffmpeg_path
+    _prepare_ffmpeg_libs()
     _patch_ffmpeg()
 
     # ensure data dir is on sys.path so `import meowify` finds meowify.py
