@@ -4577,7 +4577,7 @@ def mu_static(fn):
     p = (Path(MOTIONUI_DIR)/fn).resolve()
     base = Path(MOTIONUI_DIR).resolve()
     if not p.exists() or not (p == base or base in p.parents): return '', 404
-    return send_file(str(p), max_age=0)
+    return send_file(str(p), max_age=86400)
 
 @app.route('/audio/<sid>')
 def audio(sid):
@@ -17745,7 +17745,7 @@ function _getWavyColors() {
   // invalidate only when theme hue changes - className changes on design switch,
   // theme_hue changes on color change. reading one cheap var for the key is far
   // cheaper than reading two vars + forced style recalc on every frame.
-  const key = document.body.className + '|' + (CFG.theme_hue ?? '') + '|' + (CFG.theme_sat ?? '') + '|' + (_bwSync ? 'bw' + (CFG.theme_bri ?? 1) : '');
+  const key = document.body.className + '|' + (CFG.theme_hue ?? '') + '|' + (CFG.theme_sat ?? '');
   if (_wavyColorCache && key === _wavyColorKey) return _wavyColorCache;
   const cs = getComputedStyle(document.documentElement);
   _wavyColorCache = {
@@ -31682,10 +31682,7 @@ def _get_html():
     _design = CFG.get('ui_design', 'material')
     _design_attr = f' data-mu-design="{_design}"' if _design in _mu_native else ''
     html_tag = f'<html lang="en" data-mu-hue="{hue}" data-mu-sat="{sat}" data-mu-bri="{bri}"{_design_attr}>'
-    try: _mu_ver = int((Path(MOTIONUI_DIR) / 'motionui.js').stat().st_mtime)
-    except Exception: _mu_ver = 0
-    return static.replace('<script src="/mu/motionui.js"></script>', f'<script src="/mu/motionui.js?v={_mu_ver}"></script>') \
-                 .replace('<html lang="en">', html_tag) \
+    return static.replace('<html lang="en">', html_tag) \
                  .replace('</head>', _theme_css(hue, sat, bri) + _zoom_script + '\n</head>') \
                  .replace('__BAKED_ZOOM__', str(zoom))
 
