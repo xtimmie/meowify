@@ -13046,6 +13046,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   transform:scale(.97);transition:transform var(--dur-3,.2s) ease;
 }
 #modal-overlay.open .mbox{transform:scale(1)}
+.mbox pre,.mbox code{user-select:text!important;-webkit-user-select:text!important;cursor:text}
 .mbox{
   background:var(--color-surface-container);
   border-radius:var(--radius-xl);padding:0;
@@ -25351,7 +25352,13 @@ function _showDlErrorDetail(btn) {
       <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">output</div>
       <pre style="font-family:monospace;font-size:11px;background:var(--color-surface-container-high);border-radius:var(--radius-sm);padding:8px 10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:var(--color-on-surface);margin:0;max-height:320px;overflow-y:auto">${esc(output||'(not available)')}</pre>
     </div>`;
-  showModal('error', body, `<button class="btn btn-out mu-ripple" onclick="closeModal()">close</button>`);
+  showModal('error', body, `<button class="btn btn-out mu-ripple" id="dl-err-copy">copy</button><button class="btn btn-out mu-ripple" onclick="closeModal()">close</button>`);
+  document.getElementById('dl-err-copy').onclick = function () {
+    navigator.clipboard.writeText('command:\n' + cmd + '\n\noutput:\n' + output).then(() => {
+      this.textContent = 'copied';
+      setTimeout(() => { this.textContent = 'copy'; }, 1200);
+    });
+  };
 }
 
 function _clearFinishedDls() {
