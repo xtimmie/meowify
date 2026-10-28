@@ -502,7 +502,7 @@ def _patch_media_session_js(meowify_module):
 
 _server_started = False
 
-def main_android(port: int, data_dir: str = ""):
+def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     import sys as _sys
     global _data_dir, _server_started
     if data_dir:
@@ -535,6 +535,8 @@ def main_android(port: int, data_dir: str = ""):
     _server_started = True
 
     # ffmpeg first — yt-dlp needs it in PATH before any download attempt
+    if ffmpeg_path:
+        os.environ["MEOWIFY_FFMPEG"] = ffmpeg_path
     _patch_ffmpeg()
 
     # ensure data dir is on sys.path so `import meowify` finds meowify.py
