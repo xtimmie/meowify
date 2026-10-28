@@ -17924,39 +17924,65 @@ let _coverGen = 0; // incremented on every song change - stale preload callbacks
 let _coverHueCanvas = null;
 
 // ── shared cover color extraction ────────────────────────────────────────────
-// draws imgEl into a 32×32 canvas, picks saturated pixels, returns {h,s,l,r,g,b}
-// or null if the image is too desaturated. single source of truth for both
-// bleed and hue-sync so they always produce the same color from the same image.
+// one pass over a 32×32 downscale builds a chroma-weighted hue histogram and picks
+// the winning hue family, so e.g. pink + olive tints never average into a third color.
+// both consumers read the same winning cluster, they just finish it differently:
+//   oh / h / s / l = strong accent, used by hue sync (only the hue matters there)
+//   r, g, b        = softer ambient color, used by bleed (keeps the cover's natural depth)
+// returns null when the cover is basically grayscale
+const _COVER_HUE_BINS = 24;
 function _extractCoverColor(imgEl) {
   if (!_coverHueCanvas) _coverHueCanvas = document.createElement('canvas');
   const c = _coverHueCanvas; c.width = 32; c.height = 32;
   const ctx2 = c.getContext('2d', { willReadFrequently: true });
   ctx2.drawImage(imgEl, 0, 0, 32, 32);
   const d = ctx2.getImageData(0, 0, 32, 32).data;
-  // weight pixels by saturation so vivid colors dominate over muddy midtones
-  let rS=0,gS=0,bS=0,wS=0;
+  const N = _COVER_HUE_BINS;
+  const bw = new Float32Array(N), br = new Float32Array(N), bg = new Float32Array(N), bb = new Float32Array(N);
+  let total = 0;
   for (let i=0;i<d.length;i+=4) {
-    const r=d[i],g=d[i+1],b=d[i+2];
-    const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-    if (!mx) continue;
-    const sv = (mx-mn)/mx; // HSV saturation
-    if (sv < 0.15) continue;
-    const w = sv * sv; // square-weight: vivid pixels count much more
-    rS+=r*w; gS+=g*w; bS+=b*w; wS+=w;
+    if (d[i+3] < 128) continue;
+    const pr=d[i], pg=d[i+1], pb=d[i+2];
+    const mx=Math.max(pr,pg,pb), mn=Math.min(pr,pg,pb);
+    // chroma instead of hsv sat: near-black pixels with a faint tint score ~0 and stop voting
+    const ch = (mx-mn)/255;
+    if (ch < 0.1) continue;
+    const w = ch*ch;
+    let hh;
+    if (mx===pr) hh=((pg-pb)/(mx-mn)+(pg<pb?6:0))/6;
+    else if (mx===pg) hh=((pb-pr)/(mx-mn)+2)/6;
+    else hh=((pr-pg)/(mx-mn)+4)/6;
+    const k = Math.min(N-1, Math.floor(hh*N));
+    bw[k]+=w; br[k]+=pr*w; bg[k]+=pg*w; bb[k]+=pb*w; total+=w;
   }
-  if (wS < 1) return null;
-  // boost saturation so the extracted color reads strongly
-  let r=rS/wS, g=gS/wS, b=bS/wS;
-  const avg=(r+g+b)/3, boost=3.0;
-  r=Math.min(255,Math.max(0,avg+(r-avg)*boost));
-  g=Math.min(255,Math.max(0,avg+(g-avg)*boost));
-  b=Math.min(255,Math.max(0,avg+(b-avg)*boost));
-  // convert to HSL
-  const rn=r/255,gn=g/255,bn=b/255;
+  if (total < 1.5) return null;
+  // smoothed score so a hue sitting on a bin edge doesn't get split and lose
+  let best=0, bestScore=-1;
+  for (let k=0;k<N;k++) {
+    const sc = bw[k] + 0.5*(bw[(k+N-1)%N] + bw[(k+1)%N]);
+    if (sc > bestScore) { bestScore=sc; best=k; }
+  }
+  // average the winning bin with its two neighbours (still one hue family)
+  let rS=0,gS=0,bS=0,wS=0;
+  for (const k of [(best+N-1)%N, best, (best+1)%N]) { rS+=br[k]; gS+=bg[k]; bS+=bb[k]; wS+=bw[k]; }
+  const r0=rS/wS, g0=gS/wS, b0=bS/wS;
+  const boostRgb = (k) => {
+    const avg=(r0+g0+b0)/3;
+    return [r0,g0,b0].map(v => Math.min(255,Math.max(0,avg+(v-avg)*k)));
+  };
+  // accent (hue sync): strong boost so the theme color reads clearly
+  const [ar,ag,ab] = boostRgb(1.8);
+  // ambient (bleed): gentle boost, then lift very dark clusters so the glow stays visible
+  let [r,g,b] = boostRgb(1.35);
+  const amx = Math.max(r,g,b);
+  if (amx < 120) { const lift = 120/amx; r=Math.min(255,r*lift); g=Math.min(255,g*lift); b=Math.min(255,b*lift); }
+  // accent -> HSL
+  const rn=ar/255,gn=ag/255,bn=ab/255;
   const mx2=Math.max(rn,gn,bn),mn2=Math.min(rn,gn,bn),d2=mx2-mn2;
   let h=0; const l=(mx2+mn2)/2, s=d2===0?0:(l>0.5?d2/(2-mx2-mn2):d2/(mx2+mn2));
   if (d2>0){if(mx2===rn)h=((gn-bn)/d2+( gn<bn?6:0))/6;else if(mx2===gn)h=((bn-rn)/d2+2)/6;else h=((rn-gn)/d2+4)/6;}
-  const _ok = _rgb2oklab(r, g, b);
+  // accent -> oklab hue (what hue sync actually feeds the theme)
+  const _ok = _rgb2oklab(ar, ag, ab);
   let oh = Math.atan2(_ok[2], _ok[1]) * 180 / Math.PI;
   if (oh < 0) oh += 360;
   return {h:h*360, oh, s:s*100, l:l*100, r, g, b};
