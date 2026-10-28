@@ -11927,6 +11927,15 @@ html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
 .sb-l{min-width:0}
 .sb-n{font:var(--type-body-medium)}
 .sb-s{font:var(--type-body-small);color:var(--color-on-surface-variant)}
+.lgp{position:relative;height:176px;border-radius:18px;overflow:hidden;margin:6px 0 12px;isolation:isolate;border:1px solid var(--line-container)}
+.lgp-bg{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.4) 1px,transparent 1px) 0 0/22px 22px,linear-gradient(rgba(255,255,255,.4) 1px,transparent 1px) 0 0/22px 22px,linear-gradient(135deg,var(--color-primary),var(--color-tertiary) 55%,var(--color-secondary))}
+.lgp-bg::after{content:'refraction';position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;font:800 40px/1 system-ui,sans-serif;letter-spacing:-1px;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.35)}
+.lgp-g{position:absolute;background:var(--glass-bg-mid);border:1px solid var(--glass-border);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel)}
+.lgp-pill{left:14px;top:18px;width:170px;height:58px;border-radius:29px}
+.lgp-card{right:14px;top:46px;width:170px;height:104px;border-radius:24px}
+.lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
+.lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
+.lg-chip.on{background:color-mix(in oklch,var(--color-primary) 22%,transparent);border-color:var(--color-primary);color:var(--color-primary)}
 html.nb-player #player,
 html.nb-nav #mobile-nav,
 html.nb-topbar .topbar,
@@ -28079,10 +28088,103 @@ function blurSettingsHtml(sq) {
 }
 applyBlurPrefs();
 
+var LG_PARTS = [
+  ['player',    'player bar',                'bottom player',                           '#player'],
+  ['nav',       'mobile nav',                'bottom navigation, mobile',               '#mobile-nav'],
+  ['topbar',    'topbar',                    'title and search bar',                    '.topbar'],
+  ['sidebar',   'left sidebar',              'navigation sidebar, desktop',             '#sidebar'],
+  ['rsidebars', 'queue, lyrics, now playing','right sidebars and mobile sheets',        '.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar'],
+  ['ctx',       'context menu & downloads',  'song menu drawer, download panel',        '#ctx,#dl-panel-float'],
+  ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
+];
+var _LG_LS = 'meowify_lg';
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1 };
+function _lgPrefs() { try { return Object.assign({}, _LG_DEF, JSON.parse(localStorage.getItem(_LG_LS))); } catch { return Object.assign({}, _LG_DEF); } }
+function _lgSave(s) { try { localStorage.setItem(_LG_LS, JSON.stringify(s)); } catch {} }
+function _lgFmt(u, v) {
+  v = +v;
+  return u === 'px' ? Math.round(v) + 'px' : u === '%' ? Math.round(v) + '%' : u === 'f100' ? Math.round(v * 100) + '%'
+    : u === 'area' ? (v ? Math.round(v / 1000) + 'k px²' : 'never') : u === 'q' ? (v > 0 ? '+' : '') + Math.round(v * 100) : String(+v.toFixed(2));
+}
+function applyLG() {
+  const L = window.MU && MU.liquidGlass; if (!L || !LG_PARTS) return;
+  const s = _lgPrefs();
+  MU.setGlass({ sat: s.sat, bright: s.br, contrast: s.ct });
+  L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q });
+  const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
+  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: sel, enabled: on && !s.off.includes(k) });
+  L.enable(on);
+}
+function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
+function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
+function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s); applyLG(); renderSettings(); }
+function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
+function lgReset() { try { localStorage.removeItem(_LG_LS); } catch {} applyLG(); renderSettings(); }
+document.addEventListener('mu:designchange', () => setTimeout(applyLG, 80));
+if (window.MU) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyLG, { once: true }); else applyLG(); }
+function lgSettingsHtml(sq) {
+  if (sq && !'liquid glass displacement refraction saturate brightness contrast glass'.includes(sq)) return '';
+  const L = window.MU && MU.liquidGlass; if (!L) return '';
+  const s = _lgPrefs(), p = Object.assign({}, L.defaults, L.looks[s.look], s.p);
+  const sw = (checked, onchange) => `
+    <label class="switch" style="flex-shrink:0">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()">
+      <div class="switch-track"><div class="switch-thumb"></div></div>
+    </label>`;
+  const line = (name, sub, ctrl, cls = '') => `
+    <div class="sb-line ${cls}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>${ctrl}</div>`;
+  const sl = (name, sub, min, max, step, val, unit, fn) => line(name, sub, `<div style="display:flex;align-items:center;gap:8px">
+    <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_lgFmt('${unit}',+this.value);${fn}">
+    <span class="sb-meta" style="min-width:52px;text-align:right">${_lgFmt(unit, val)}</span></div>`);
+  const off = s.on ? '' : 'off';
+  const chips = Object.keys(L.looks).map(k => `<button class="lg-chip ${s.look === k ? 'on' : ''}" onclick="lgLook('${k}')">${k}</button>`).join('');
+  const profSel = `<select class="input" style="width:130px" onchange="lgSetP('profile',this.value)">${['squircle', 'convex', 'concave', 'lip'].map(o => `<option value="${o}" ${p.profile === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  let parts = '';
+  for (const [k, label, sub] of LG_PARTS) parts += line(label, sub, sw(!s.off.includes(k), `lgPart('${k}',!this.checked)`), off);
+  setTimeout(() => { try { MU.liquidGlass.mountPreviews(); } catch {} }, 0);
+  return `
+    <details class="set-blur" ${window._lgOpen ? 'open' : ''} ontoggle="window._lgOpen=this.open;if(this.open)setTimeout(()=>MU.liquidGlass.mountPreviews(),0)">
+      <summary>
+        <div class="set-title-cell"><div class="set-lbl">liquid glass</div><div class="set-sub">refracts whatever is behind glass panels, chromium only and heavier on the gpu, off by default</div></div>
+        <span class="sb-meta">${!L.supported ? 'unsupported' : s.on ? 'on' : 'off'}</span>
+        <svg class="sb-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="sb-body">
+        ${line('enable refraction', L.supported ? 'applies to the panels switched on below, blur and opacity above still apply on top' : 'this webview has no svg backdrop filters', sw(s.on && L.supported, `lgSet('on',this.checked);renderSettings()`), L.supported ? '' : 'off')}
+        <div class="lgp"><div class="lgp-bg"></div><div class="lgp-g lgp-pill" data-lg-preview></div><div class="lgp-g lgp-card" data-lg-preview></div></div>
+        <div class="sb-grp">look</div>
+        <div class="lg-chips">${chips}</div>
+        <div class="sb-grp">performance</div>
+        ${sl('fast ↔ pretty', 'silently nudges the values below, 0 is exactly what you picked. fast also skips huge panels', -1, 1, .05, s.q, 'q', "lgSet('q',+this.value)")}
+        ${sl('map resolution', 'lower is faster but blockier', .2, 1, .05, p.mapRes, 'f100', "lgSetP('mapRes',+this.value)")}
+        ${sl('skip panels bigger than', 'big panels cost the most gpu, never = no limit', 0, 2000000, 10000, p.maxArea, 'area', "lgSetP('maxArea',+this.value)")}
+        <div class="sb-grp">shape</div>
+        ${line('profile', 'how the glass edge is curved', profSel)}
+        ${sl('strength', p.relScale ? 'percent of the panel half size' : 'how far the backdrop is pushed', 0, p.relScale ? 150 : 200, 1, p.scale, p.relScale ? '%' : 'px', "lgSetP('scale',+this.value)")}
+        ${sl('strength cap', 'strongest push in px when strength is relative', 10, 200, 1, p.maxScale, 'px', "lgSetP('maxScale',+this.value)")}
+        ${sl('edge width', p.relBevel ? 'percent of the panel half size' : 'width of the curved edge', 4, p.relBevel ? 100 : 300, 1, p.bevel, p.relBevel ? '%' : 'px', "lgSetP('bevel',+this.value)")}
+        ${sl('edge width cap', 'widest edge in px when edge width is relative', 20, 300, 1, p.maxBevel, 'px', "lgSetP('maxBevel',+this.value)")}
+        ${sl('glass thickness', 'thicker glass bends more', .2, 4, .05, p.thick, 'x', "lgSetP('thick',+this.value)")}
+        ${sl('refractive index', 'higher bends light harder', 1.05, 2.5, .05, p.ior, 'x', "lgSetP('ior',+this.value)")}
+        ${sl('edge curve', 'below 1 pushes the effect inward, above 1 hugs the border', .3, 3, .05, p.edgePow, 'x', "lgSetP('edgePow',+this.value)")}
+        ${line('strength relative to panel size', 'same look on small and big panels', sw(p.relScale, "lgSetP('relScale',this.checked,true)"))}
+        ${line('edge width relative to panel size', 'same look on small and big panels', sw(p.relBevel, "lgSetP('relBevel',this.checked,true)"))}
+        ${line('invert direction', 'flip the refraction', sw(p.invert, "lgSetP('invert',this.checked)"))}
+        <div class="sb-grp">glass filter</div>
+        ${sl('saturation', 'color boost behind glass', .5, 2.5, .05, s.sat, 'f100', "lgSet('sat',+this.value)")}
+        ${sl('brightness', 'lighter or darker backdrop', .5, 1.5, .05, s.br, 'f100', "lgSet('br',+this.value)")}
+        ${sl('contrast', 'punchier or flatter backdrop', .5, 1.5, .05, s.ct, 'f100', "lgSet('ct',+this.value)")}
+        <div class="sb-grp">panels</div>
+        ${parts}
+        <div class="sb-line"><div class="sb-l"><div class="sb-n">reset liquid glass</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="lgReset()">reset</button></div>
+      </div>
+    </details>`;
+}
 function applyGlass(c = CFG) {
   MU.setGlass({ alpha: c.glass_alpha ?? 1, blur: c.glass_blur ?? 1 });
   document.documentElement.style.setProperty('--nb-s0', Math.max(0, Math.min(1, (c.glass_alpha ?? 1) - 1))); // mirror of root --glass-s for the unblurred boost
   document.body.classList.toggle('rs-full', !!c.rs_full_height);
+  applyLG();
 }
 function applyDesign(design) {
   _applyDesignImpl(design);
@@ -30280,6 +30382,7 @@ function renderSettings() {
             </div>
           </div>
         `) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
