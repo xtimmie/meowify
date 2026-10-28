@@ -234,6 +234,14 @@ def save_cfg(c):
 CFG = load_cfg()
 _log_server.info(f'[cfg] path={_SCFG} token={bool(CFG.get("dropbox_refresh_token"))}')
 
+def _mu_dir_ok(p):
+    try: return all((Path(p).expanduser() / f).exists() for f in _MU_REQUIRED)
+    except Exception: return False
+
+# debug override for the motionui location (settings > debug), empty = automatic lookup
+if CFG.get('motionui_path_override') and _mu_dir_ok(CFG['motionui_path_override']):
+    MOTIONUI_DIR, MU_MISSING = str(Path(CFG['motionui_path_override']).expanduser()), False
+
 def ddir():    return Path(CFG["data_dir"])
 def mdir():    return ddir() / "music"
 def cdir():    return ddir() / "covers"
@@ -8671,6 +8679,27 @@ def api_get_cfg():
     c.pop('dropbox_refresh_token', None)
     c['_platform'] = sys.platform
     return jsonify(c)
+
+@app.route('/api/debug/motionui-path', methods=['GET', 'POST'])
+def api_debug_motionui_path():
+    global MOTIONUI_DIR, MU_MISSING, _HTML_STATIC_CACHE
+    if request.method == 'POST':
+        raw = ((request.get_json(silent=True) or {}).get('path') or '').strip()
+        if raw:
+            p = Path(raw).expanduser()
+            missing = [f for f in sorted(_MU_REQUIRED) if not (p / f).exists()]
+            if missing:
+                return jsonify({'ok': False, 'error': 'missing ' + ', '.join(missing) + ' in ' + str(p)}), 400
+            new_dir, new_missing = str(p), False
+        else:
+            new_dir, new_missing = motionui_dir()
+        with _html_cache_lock:
+            MOTIONUI_DIR, MU_MISSING = new_dir, new_missing
+            _HTML_STATIC_CACHE = None
+        with _cfg_lock:
+            CFG['motionui_path_override'] = raw
+            save_cfg(CFG)
+    return jsonify({'ok': True, 'dir': MOTIONUI_DIR, 'missing': MU_MISSING, 'override': CFG.get('motionui_path_override', '')})
 
 @app.route('/api/restart', methods=['POST'])
 def api_restart():
