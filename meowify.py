@@ -234,14 +234,6 @@ def save_cfg(c):
 CFG = load_cfg()
 _log_server.info(f'[cfg] path={_SCFG} token={bool(CFG.get("dropbox_refresh_token"))}')
 
-def _mu_dir_ok(p):
-    try: return all((Path(p).expanduser() / f).exists() for f in _MU_REQUIRED)
-    except Exception: return False
-
-# debug override for the motionui location (settings > debug), empty = automatic lookup
-if CFG.get('motionui_path_override') and _mu_dir_ok(CFG['motionui_path_override']):
-    MOTIONUI_DIR, MU_MISSING = str(Path(CFG['motionui_path_override']).expanduser()), False
-
 def ddir():    return Path(CFG["data_dir"])
 def mdir():    return ddir() / "music"
 def cdir():    return ddir() / "covers"
@@ -8680,27 +8672,6 @@ def api_get_cfg():
     c['_platform'] = sys.platform
     return jsonify(c)
 
-@app.route('/api/debug/motionui-path', methods=['GET', 'POST'])
-def api_debug_motionui_path():
-    global MOTIONUI_DIR, MU_MISSING, _HTML_STATIC_CACHE
-    if request.method == 'POST':
-        raw = ((request.get_json(silent=True) or {}).get('path') or '').strip()
-        if raw:
-            p = Path(raw).expanduser()
-            missing = [f for f in sorted(_MU_REQUIRED) if not (p / f).exists()]
-            if missing:
-                return jsonify({'ok': False, 'error': 'missing ' + ', '.join(missing) + ' in ' + str(p)}), 400
-            new_dir, new_missing = str(p), False
-        else:
-            new_dir, new_missing = motionui_dir()
-        with _html_cache_lock:
-            MOTIONUI_DIR, MU_MISSING = new_dir, new_missing
-            _HTML_STATIC_CACHE = None
-        with _cfg_lock:
-            CFG['motionui_path_override'] = raw
-            save_cfg(CFG)
-    return jsonify({'ok': True, 'dir': MOTIONUI_DIR, 'missing': MU_MISSING, 'override': CFG.get('motionui_path_override', '')})
-
 @app.route('/api/restart', methods=['POST'])
 def api_restart():
     """restart the meowify process (used after settings that require restart)"""
@@ -13284,11 +13255,9 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #app.mobile .prog-row { display: none; }
 #app.mobile .p-right  { display: none; }
 #app.mobile #p-left-area { cursor: pointer; flex: 1; min-width: 0; overflow: visible; }
-#app.mobile .playbtn canvas.playbtn-spiky { display: none; }
-#app.mobile .playbtn { background: #fff !important; color: #222; }
+#app.mobile .playbtn  { width: 36px; height: 36px; background: #fff !important; color: #222; }
 #app.mobile .playbtn svg { width: 18px; height: 18px; }
 #app.mobile .playbtn canvas.playbtn-spiky { display: none; }
-#app.mobile .playbtn { background: #fff !important; color: #222; }
 #app.mobile .cbtn                         { width: 30px; height: 30px; font-size: 14px; }
 #app.mobile #nowplaying-sidebar .cbtn     { width: 45px; height: 45px; font-size: 14px; }
 #app.mobile #nowplaying-sidebar .mob-np-controls .cbtn svg { width: 22px; height: 22px; }
@@ -30550,13 +30519,8 @@ function renderSettings() {
       `) : ''}
 
       ${_sectionMatch('updates') ? section('updates', _updatesHtml(row, rowDisabled)) : ''}
-
-      ${_sectionMatch('debug') ? section('debug', `
-        ${row('motionui location', 'folder containing motionui.js, theme.css and components.css, applies instantly by reloading the page, empty = automatic lookup', `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:8px;align-items:center"><input class="input" id="mu-path-in" type="text" autocomplete="off" value="${(CFG.motionui_path_override || '').replace(/"/g, '&quot;')}" placeholder="automatic" style="width:260px;padding:10px 14px"><button class="btn btn-out mu-ripple" onclick="_muPathApply(false)">apply</button><button class="btn btn-out mu-ripple" onclick="_muPathApply(true)">reset</button></div><div id="mu-path-cur" style="font:var(--type-label-small);color:var(--color-on-surface-variant);word-break:break-all;text-align:right"></div><div id="mu-path-msg" style="font:var(--type-label-small);color:var(--color-error);text-align:right"></div></div>`)}
-      `) : ''}
     </div>`;
   requestAnimationFrame(() => { const w = document.getElementById('eq-sliders-wrap'); if (w && window.MU) MU.init(w); });
-  if (document.getElementById('mu-path-cur')) _muPathRefresh();
   if (_existingSearchBar) {
     const panel = _settingsTarget.querySelector('.set-panel');
     if (panel) panel.insertBefore(_existingSearchBar, panel.firstChild);
@@ -30577,32 +30541,6 @@ const _SET_PC_SECTIONS = [
 ];
 
 _SET_PC_SECTIONS.push({ id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
-
-_SET_PC_SECTIONS.push({ id: 'debug', label: 'debug', icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M8 6l-5 6 5 6M16 6l5 6-5 6"/>' });
-
-async function _muPathRefresh() {
-  const el = document.getElementById('mu-path-cur');
-  if (!el) return;
-  try {
-    const j = await (await fetch('/api/debug/motionui-path')).json();
-    el.textContent = 'active: ' + j.dir + (j.missing ? ' (files missing)' : '');
-  } catch (e) { el.textContent = ''; }
-}
-
-async function _muPathApply(reset) {
-  const inp = document.getElementById('mu-path-in');
-  const msg = document.getElementById('mu-path-msg');
-  const path = reset ? '' : (inp?.value || '').trim();
-  try {
-    const r = await fetch('/api/debug/motionui-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
-    const j = await r.json();
-    if (!r.ok || !j.ok) { if (msg) msg.textContent = j.error || 'failed'; return; }
-    CFG.motionui_path_override = path;
-    if (msg) msg.textContent = '';
-    await fetch('/mu/motionui.js', { cache: 'reload' }).catch(() => {});
-    location.reload();
-  } catch (e) { if (msg) msg.textContent = String(e); }
-}
 
 function openSettingsPopup() {
   if (isMobile()) { setView('settings'); return; }
