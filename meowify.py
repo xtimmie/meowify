@@ -3495,7 +3495,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
     _last_ydl_cmd = []
     _last_ydl_out = ''
 
-    _ANDROID_CLIENTS = ['android_vr', 'tv_simply', 'web_embedded', 'mweb']
+    _ANDROID_CLIENTS = [None, 'android_vr', 'mweb']
 
     def ydl(target, _no_yt_args=False):
         nonlocal _last_ydl_out
@@ -3520,8 +3520,8 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         _sr = _prof.get('sleep_requests')
         if _sr:
             _cmd += ['--sleep-requests', str(_sr)]
-        if IS_ANDROID and not _no_yt_args:
-            _cmd += ['--extractor-args', 'youtube:player_client=' + (_client or 'android_vr')]
+        if IS_ANDROID and not _no_yt_args and _client:
+            _cmd += ['--extractor-args', 'youtube:player_client=' + _client]
         _cmd += ['-o', str(tmp/'%(id)s.%(ext)s'), target]
         _last_ydl_cmd = _cmd
         p = _subp(_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
@@ -20677,7 +20677,7 @@ function _makeQueueRow(s, i) {
   el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
-  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:96%;min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center">' +
       '<span class=\"snum-num\">' + (isCur ? (S.isPlaying ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="3,2 21,12 3,22"/></svg>' : (i + 1)) : i + 1) + '</span>' +
