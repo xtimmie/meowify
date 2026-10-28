@@ -31682,7 +31682,10 @@ def _get_html():
     _design = CFG.get('ui_design', 'material')
     _design_attr = f' data-mu-design="{_design}"' if _design in _mu_native else ''
     html_tag = f'<html lang="en" data-mu-hue="{hue}" data-mu-sat="{sat}" data-mu-bri="{bri}"{_design_attr}>'
-    return static.replace('<html lang="en">', html_tag) \
+    try: _mu_ver = int((Path(MOTIONUI_DIR) / 'motionui.js').stat().st_mtime)
+    except Exception: _mu_ver = 0
+    return static.replace('<script src="/mu/motionui.js"></script>', f'<script src="/mu/motionui.js?v={_mu_ver}"></script>') \
+                 .replace('<html lang="en">', html_tag) \
                  .replace('</head>', _theme_css(hue, sat, bri) + _zoom_script + '\n</head>') \
                  .replace('__BAKED_ZOOM__', str(zoom))
 
