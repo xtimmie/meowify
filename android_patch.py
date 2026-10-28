@@ -540,6 +540,18 @@ def _prepare_ffmpeg_libs():
                         shutil.copyfileobj(src, out)
         with open(stamp, 'w') as f:
             f.write(want)
+    xz = os.path.join(libdir, "libffextra.zip.so")
+    xstamp = os.path.join(dest, ".extra_stamp")
+    if os.path.exists(xz):
+        xwant = str(os.path.getsize(xz))
+        if not os.path.exists(xstamp) or open(xstamp).read() != xwant:
+            with zipfile.ZipFile(xz) as z:
+                z.extractall(dest)
+            with open(xstamp, 'w') as f:
+                f.write(xwant)
+    else:
+        sys.__stderr__.write('[ffmpeg] libffextra.zip.so missing in ' + libdir + '\n')
+        sys.__stderr__.flush()
     libs = os.path.join(dest, "usr", "lib")
     os.environ["LD_LIBRARY_PATH"] = libs + ":" + os.environ.get("LD_LIBRARY_PATH", "")
     sys.__stderr__.write('[ffmpeg] libs ready at ' + libs + '\n')
