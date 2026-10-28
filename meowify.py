@@ -17924,13 +17924,20 @@ let _coverGen = 0; // incremented on every song change - stale preload callbacks
 let _coverHueCanvas = null;
 
 // ── shared cover color extraction ────────────────────────────────────────────
-// one pass over a 32×32 downscale builds a chroma-weighted hue histogram and picks
-// the winning hue family, so e.g. pink + olive tints never average into a third color.
-// both consumers read the same winning cluster, they just finish it differently:
-//   oh / h / s / l = strong accent, used by hue sync (only the hue matters there)
-//   r, g, b        = softer ambient color, used by bleed (keeps the cover's natural depth)
-// returns null when the cover is basically grayscale
+// one pass over a 32×32 downscale builds chroma-weighted hue histograms and classifies the cover:
+//   'color' a strong dominant hue family (pink + olive tints never average into a third color)
+//   'faint' no strong color but one consistent faint hue (tinted bw, not random noise)
+//   'bw'    basically grayscale: no hue worth using
+// every kind returns the same shape, consumers just finish it differently:
+//   oh / h / s / l = accent, used by hue sync (only the hue matters there)
+//   r, g, b, ba    = ambient color + alpha, used by bleed
 const _COVER_HUE_BINS = 24;
+const _BW_HUE = 285;          // theme hue (slider degrees) used for true bw covers
+const _BW_SAT_ANCHOR = 50;    // sat that looks right at the anchor brightness
+const _BW_BRI_ANCHOR = 1.5;   // anchor brightness (150%)
+const _BW_SAT_EXP = 1.0;      // 1 = sat scales linearly with bri (constant chroma/lightness), tweak if surfaces feel off
+var _bwSync = false;          // true while a bw cover is driving the theme (hue sync on)
+
 function _extractCoverColor(imgEl) {
   if (!_coverHueCanvas) _coverHueCanvas = document.createElement('canvas');
   const c = _coverHueCanvas; c.width = 32; c.height = 32;
@@ -17938,40 +17945,59 @@ function _extractCoverColor(imgEl) {
   ctx2.drawImage(imgEl, 0, 0, 32, 32);
   const d = ctx2.getImageData(0, 0, 32, 32).data;
   const N = _COVER_HUE_BINS;
-  const bw = new Float32Array(N), br = new Float32Array(N), bg = new Float32Array(N), bb = new Float32Array(N);
-  let total = 0;
+  const mk = () => ({ w:new Float32Array(N), r:new Float32Array(N), g:new Float32Array(N), b:new Float32Array(N), tot:0, n:0 });
+  const S1 = mk(), S2 = mk(); // strong (chroma² weighted) / faint (chroma weighted)
+  let lum = 0, np = 0;
   for (let i=0;i<d.length;i+=4) {
     if (d[i+3] < 128) continue;
     const pr=d[i], pg=d[i+1], pb=d[i+2];
     const mx=Math.max(pr,pg,pb), mn=Math.min(pr,pg,pb);
+    np++; lum += 0.2126*pr + 0.7152*pg + 0.0722*pb;
     // chroma instead of hsv sat: near-black pixels with a faint tint score ~0 and stop voting
     const ch = (mx-mn)/255;
-    if (ch < 0.1) continue;
-    const w = ch*ch;
+    if (ch < 0.03) continue;
     let hh;
     if (mx===pr) hh=((pg-pb)/(mx-mn)+(pg<pb?6:0))/6;
     else if (mx===pg) hh=((pb-pr)/(mx-mn)+2)/6;
     else hh=((pr-pg)/(mx-mn)+4)/6;
     const k = Math.min(N-1, Math.floor(hh*N));
-    bw[k]+=w; br[k]+=pr*w; bg[k]+=pg*w; bb[k]+=pb*w; total+=w;
+    S2.w[k]+=ch; S2.r[k]+=pr*ch; S2.g[k]+=pg*ch; S2.b[k]+=pb*ch; S2.tot+=ch; S2.n++;
+    if (ch >= 0.1) {
+      const w = ch*ch;
+      S1.w[k]+=w; S1.r[k]+=pr*w; S1.g[k]+=pg*w; S1.b[k]+=pb*w; S1.tot+=w;
+    }
   }
-  if (total < 1.5) return null;
-  // smoothed score so a hue sitting on a bin edge doesn't get split and lose
-  let best=0, bestScore=-1;
-  for (let k=0;k<N;k++) {
-    const sc = bw[k] + 0.5*(bw[(k+N-1)%N] + bw[(k+1)%N]);
-    if (sc > bestScore) { bestScore=sc; best=k; }
-  }
-  // average the winning bin with its two neighbours (still one hue family)
-  let rS=0,gS=0,bS=0,wS=0;
-  for (const k of [(best+N-1)%N, best, (best+1)%N]) { rS+=br[k]; gS+=bg[k]; bS+=bb[k]; wS+=bw[k]; }
-  const r0=rS/wS, g0=gS/wS, b0=bS/wS;
-  const boostRgb = (k) => {
-    const avg=(r0+g0+b0)/3;
-    return [r0,g0,b0].map(v => Math.min(255,Math.max(0,avg+(v-avg)*k)));
+  // winning hue family of a histogram: smoothed so a hue on a bin edge doesnt get split, then
+  // averaged over the winning bin + its two neighbours. share = how concentrated the hue is
+  const pick = (S) => {
+    let best=0, bs=-1;
+    for (let k=0;k<N;k++) {
+      const sc = S.w[k] + 0.5*(S.w[(k+N-1)%N] + S.w[(k+1)%N]);
+      if (sc > bs) { bs=sc; best=k; }
+    }
+    let rS=0,gS=0,bS=0,wS=0;
+    for (const k of [(best+N-1)%N, best, (best+1)%N]) { rS+=S.r[k]; gS+=S.g[k]; bS+=S.b[k]; wS+=S.w[k]; }
+    return { r:rS/wS, g:gS/wS, b:bS/wS, share:wS/S.tot };
   };
-  // accent (hue sync): strong boost so the theme color reads clearly
-  const [ar,ag,ab] = boostRgb(1.8);
+  let src = null, kind = 'bw';
+  if (S1.tot >= 1.5) { src = pick(S1); kind = 'color'; }
+  else if (S2.tot > 0 && S2.n >= np*0.1) {
+    // faint tint: needs enough pixels AND one consistent hue (random color noise spreads over all bins)
+    const p = pick(S2);
+    if (p.share >= 0.6) { src = p; kind = 'faint'; }
+  }
+  if (!src) {
+    // true bw: neutral glow whose brightness follows the cover's average lightness
+    const luma = np ? lum/np : 0;
+    const gv = Math.round(60 + 0.75*luma);
+    return { kind:'bw', h:_BW_HUE, oh:_BW_HUE, s:0, l:luma/2.55, r:gv, g:gv, b:gv, ba:0.22 };
+  }
+  const boostRgb = (k) => {
+    const avg=(src.r+src.g+src.b)/3;
+    return [src.r,src.g,src.b].map(v => Math.min(255,Math.max(0,avg+(v-avg)*k)));
+  };
+  // accent (hue sync): strong boost, faint tints need way more so their hue is readable
+  const [ar,ag,ab] = boostRgb(kind==='faint' ? 4 : 1.8);
   // ambient (bleed): gentle boost, then lift very dark clusters so the glow stays visible
   let [r,g,b] = boostRgb(1.35);
   const amx = Math.max(r,g,b);
@@ -17985,7 +18011,48 @@ function _extractCoverColor(imgEl) {
   const _ok = _rgb2oklab(ar, ag, ab);
   let oh = Math.atan2(_ok[2], _ok[1]) * 180 / Math.PI;
   if (oh < 0) oh += 360;
-  return {h:h*360, oh, s:s*100, l:l*100, r, g, b};
+  return { kind, h:h*360, oh, s:s*100, l:l*100, r, g, b, ba: kind==='faint' ? 0.26 : 0.34 };
+}
+
+// bw cover sync saturation. motionui scales oklch lightness by bri but NOT chroma, so the same
+// sat looks more colorful at lower bri (chroma/lightness goes up). holding that ratio constant
+// means sat scales with bri, anchored at sat 50 @ bri 150%
+function _bwEffSat(bri) {
+  const b = Math.max(0.5, bri ?? 1.0);
+  return Math.min(200, _BW_SAT_ANCHOR * Math.pow(b / _BW_BRI_ANCHOR, _BW_SAT_EXP));
+}
+
+// the hue the user set themselves, even while sync is overwriting CFG.theme_hue
+function _manualHue() {
+  return CFG.cover_art_hue_sync ? (CFG._hue_before_sync ?? CFG.theme_hue ?? 145) : (CFG.theme_hue ?? 145);
+}
+
+// bleed color for songs without a cover: same tone/chroma family as the themes primary
+function _themeBleedColor() {
+  const rad = _manualHue() * Math.PI / 180;
+  const sat = CFG.theme_sat ?? 50, bri = CFG.theme_bri ?? 1.0;
+  const L = Math.min(0.9, 0.78 * bri);
+  const C = Math.min(0.28, 0.16 * sat / 50);
+  const [r,g,b] = _oklab2rgb(L, C*Math.cos(rad), C*Math.sin(rad));
+  return { kind:'theme', r, g, b, ba:0.34 };
+}
+
+// sat slider greyed out + showing the applied value while a bw cover drives the theme,
+// CFG.theme_sat is never touched so the old value is back the moment bw mode ends
+function _updateSatSliderDisabled() {
+  const slider = document.getElementById('sat-slider');
+  const lbl = document.getElementById('sat-lbl');
+  const v = _bwSync ? Math.round(_bwEffSat(CFG.theme_bri ?? 1.0)) : (CFG.theme_sat ?? 50);
+  if (slider) {
+    slider.disabled = _bwSync;
+    slider.style.opacity = _bwSync ? '0.38' : '';
+    slider.style.pointerEvents = _bwSync ? 'none' : '';
+    slider.value = v;
+  }
+  if (lbl) {
+    lbl.style.opacity = _bwSync ? '0.38' : '';
+    lbl.textContent = v + '%';
+  }
 }
 
 // ── oklab helpers for perceptually uniform color interpolation ────────────────
@@ -18014,24 +18081,24 @@ function _oklab2rgb(L,a,bb){
 // per-element bleed state {L,a,b,raf} in oklab space
 const _bleedState = new WeakMap();
 
-function _animateBleed(el, tR, tG, tB, dur = 950) {
+function _animateBleed(el, tR, tG, tB, dur = 950, tA = 0.34) {
   const [tL,ta,tb] = _rgb2oklab(tR,tG,tB);
   let state = _bleedState.get(el);
-  if (!state) { state={L:tL,a:ta,b:tb,raf:null}; _bleedState.set(el,state); }
+  if (!state) { state={L:tL,a:ta,b:tb,A:tA,raf:null}; _bleedState.set(el,state); }
   if (state.raf) cancelAnimationFrame(state.raf);
   const DUR = dur;
   const start = performance.now();
-  const sL=state.L, sa=state.a, sb=state.b;
+  const sL=state.L, sa=state.a, sb=state.b, sA=state.A ?? 0.34;
   function step(now) {
     const t = Math.min(1,(now-start)/DUR);
     if (t < 1 && now - (state.lw || 0) < 33) { state.raf = requestAnimationFrame(step); return; }
     state.lw = now;
     // ease-in-out cubic for a more organic feel
     const e = t<0.5?4*t*t*t:(t-1)*(2*t-2)*(2*t-2)+1;
-    const cL=sL+(tL-sL)*e, ca=sa+(ta-sa)*e, cb=sb+(tb-sb)*e;
-    state.L=cL; state.a=ca; state.b=cb;
+    const cL=sL+(tL-sL)*e, ca=sa+(ta-sa)*e, cb=sb+(tb-sb)*e, cA=sA+(tA-sA)*e;
+    state.L=cL; state.a=ca; state.b=cb; state.A=cA;
     const [r,g,b]=_oklab2rgb(cL,ca,cb);
-    el.style.setProperty('--cov-bleed-rgba',`rgba(${r},${g},${b},0.34)`);
+    el.style.setProperty('--cov-bleed-rgba',`rgba(${r},${g},${b},${cA.toFixed(3)})`);
     if (t<1) state.raf=requestAnimationFrame(step);
     else state.raf=null;
   }
@@ -18055,14 +18122,9 @@ function applyBleed(containerEl, imgEl) {
   }
   const _doApply = (img) => {
     try {
-      const col = _extractCoverColor(img);
-      if (!col) {
-        containerEl.style.removeProperty('--cov-bleed-rgba');
-        const st=_bleedState.get(containerEl);
-        if (st?.raf){cancelAnimationFrame(st.raf);st.raf=null;}
-        return;
-      }
-      _animateBleed(containerEl, col.r, col.g, col.b);
+      // no cover -> glow from the users own theme instead of nothing
+      const col = (img ? _extractCoverColor(img) : null) || _themeBleedColor();
+      _animateBleed(containerEl, col.r, col.g, col.b, 950, col.ba);
     } catch(e) { containerEl.style.removeProperty('--cov-bleed-rgba'); }
   };
   if (typeof imgEl === 'string') {
@@ -18121,12 +18183,16 @@ function _applyBleedColor(containerEl, col, fadeMs) {
     const sb = document.getElementById('main');
     if (sb) _applyBleedColor(sb, col, fadeMs);
   }
-  _animateBleed(containerEl, col.r, col.g, col.b, fadeMs);
+  _animateBleed(containerEl, col.r, col.g, col.b, fadeMs, col.ba);
 }
 
 // push a cover color's hue into the theme (and the hue slider when settings is open)
+// col null = no cover: back to the users own hue/sat. bw col = fixed bw hue + brightness-adapted low sat
 function _applyCoverHue(col, fadeMs) {
-  const h = Math.round(col.oh);
+  // sync was already on at launch -> theme_hue still holds the manual hue right now, keep it
+  if (CFG._hue_before_sync === undefined) CFG._hue_before_sync = CFG.theme_hue ?? 145;
+  const h = col ? Math.round(col.oh) : Math.round(CFG._hue_before_sync);
+  _bwSync = !!col && col.kind === 'bw';
   // sat/bri sliders call applyTheme(CFG.theme_hue, ...), so keep it on the synced hue
   CFG.theme_hue = h;
   applyTheme(h, CFG.theme_sat ?? 50, CFG.theme_bri ?? 1.0, false, fadeMs);
@@ -18134,19 +18200,15 @@ function _applyCoverHue(col, fadeMs) {
   const lbl = document.getElementById('hue-lbl');
   if (slider) slider.value = h;
   if (lbl) lbl.textContent = h + 'deg';
+  _updateSatSliderDisabled();
 }
 
+// col null = no cover (or unreadable one): theme falls back to the users own hue/sat
 function _applyCoverColor(col, fadeMs) {
-  if (CFG.cover_art_hue_sync && col) _applyCoverHue(col, fadeMs);
+  if (CFG.cover_art_hue_sync) _applyCoverHue(col, fadeMs);
   if (CFG.cover_art_bleed) {
     const pl = document.getElementById('player');
-    if (pl) {
-      if (col) _applyBleedColor(pl, col, fadeMs);
-      else {
-        pl.style.removeProperty('--cov-bleed-rgba');
-        document.getElementById('main')?.style.removeProperty('--cov-bleed-rgba');
-      }
-    }
+    if (pl) _applyBleedColor(pl, col || _themeBleedColor(), fadeMs);
   }
 }
 
@@ -18160,7 +18222,6 @@ function _onSongColorChange(song) {
   }
   _colorPredict = null;
   _colorSongId = song.id;
-  if (!song.cover_path) return;
   _coverColorForSong(song).then(col => {
     if (S.cur?.id !== song.id || _colorSongId !== song.id) return;
     _applyCoverColor(col, COLOR_FADE_ABRUPT_MS);
@@ -18194,7 +18255,6 @@ function _colorPredictTick(t, d) {
   if (!next || next.id === S.cur.id) return;
   const pred = { fromId: S.cur.id, toId: next.id };
   _colorPredict = pred; _colorSongId = next.id;
-  if (!next.cover_path) return;
   _coverColorForSong(next).then(col => {
     if (_colorPredict !== pred) return;
     _applyCoverColor(col, COLOR_FADE_PREDICT_MS);
@@ -18203,8 +18263,7 @@ function _colorPredictTick(t, d) {
 
 function _extractAndApplyHue(img) {
   try {
-    const col = _extractCoverColor(img);
-    if (col) _applyCoverHue(col);
+    _applyCoverHue(_extractCoverColor(img));
   } catch(e) { /* tainted canvas in some envs */ }
 }
 
@@ -18226,6 +18285,7 @@ function _onHueSyncToggle(enabled) {
   } else {
     saveSetting('cover_art_hue_sync', false).then(() => {
       CFG.cover_art_hue_sync = false;
+      _bwSync = false;
       // restore the hue that was set before sync was enabled
       const restored = CFG._hue_before_sync ?? CFG.theme_hue ?? 145;
       CFG.theme_hue = restored;
@@ -18252,6 +18312,7 @@ function _updateHueSliderDisabled() {
     if (!synced) lbl.textContent = (CFG.theme_hue ?? 145) + 'deg';
   }
   if (row) row.style.opacity = synced ? '0.55' : '';
+  _updateSatSliderDisabled();
 }
 
 function updatePlayerUI(song) {
@@ -28499,14 +28560,15 @@ let _themeTransT = null;
 // _noFade=true → bypass MU's hue animation (used by slider drag).
 function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
   const h = (hue == null || hue === '') ? 145 : parseFloat(hue);
-  const s = (sat == null || sat === '') ? 50  : parseFloat(sat);
   const b = (bri == null || bri === '') ? 1.0 : parseFloat(bri);
+  // bw cover sync overrides sat with a brightness-adapted low value (CFG.theme_sat itself is untouched)
+  const s = _bwSync ? _bwEffSat(b) : ((sat == null || sat === '') ? 50  : parseFloat(sat));
   if (_noFade) {
     MU.setPalette({ hue: h, sat: s, bri: b });
   } else {
-    // sat/bri apply immediately; only hue gets animated arc transition
-    MU.setPalette({ sat: s, bri: b });
-    MU.setHue(h, _fadeMs || true);
+    // bri applies immediately; hue and sat share one animated transition so they dont desync
+    MU.setPalette({ bri: b });
+    MU.setHue(h, _fadeMs || true, s);
   }
   _wavyColorCache = null;
   _mnwLastPrimary = '';
@@ -28514,6 +28576,7 @@ function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
   _repaintWavyColors();
   updateSpikyBtn();
   _updateMobNpSpiky();
+  _updateSatSliderDisabled();
 }
 
 // mu:themechange fires on every applyTokens call, including each rAF frame
@@ -28608,7 +28671,7 @@ async function loadData() {
       S.eq.forEach((g,i) => engine.setEQBand(i, g));
     }
     if (cfg.theme_hue !== undefined && (_chg('theme_hue') || _chg('theme_sat') || _chg('theme_bri'))) {
-      MU.setPalette({ hue: cfg.theme_hue, sat: cfg.theme_sat ?? 50, bri: cfg.theme_bri ?? 1.0 });
+      MU.setPalette({ hue: cfg.theme_hue, sat: _bwSync ? _bwEffSat(cfg.theme_bri ?? 1.0) : (cfg.theme_sat ?? 50), bri: cfg.theme_bri ?? 1.0 });
       _repaintWavyColors(); updateSpikyBtn(); _updateMobNpSpiky();
     }
     if (_chg('glass_alpha') || _chg('glass_blur') || _chg('rs_full_height')) applyGlass(cfg);
@@ -30134,10 +30197,10 @@ function renderSettings() {
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:24px;text-align:right">sat</span>
-              <input type="range" min="0" max="200" value="${CFG.theme_sat ?? 50}" class="slider" style="width:120px;"
+              <input type="range" min="0" max="200" value="${_bwSync ? Math.round(_bwEffSat(CFG.theme_bri ?? 1.0)) : (CFG.theme_sat ?? 50)}" id="sat-slider" class="slider" style="width:120px;${_bwSync ? 'opacity:0.38;pointer-events:none;' : ''}" ${_bwSync ? 'disabled' : ''}
                 class="slider" oninput="CFG.theme_sat=parseInt(this.value);document.getElementById('sat-lbl').textContent=this.value+'%';applyTheme(CFG.theme_hue??145,CFG.theme_sat,CFG.theme_bri??1.0,true)"
                 onpointerup="saveSetting('theme_sat',CFG.theme_sat)">
-              <span id="sat-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px">${CFG.theme_sat ?? 50}%</span>
+              <span id="sat-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px;${_bwSync ? 'opacity:0.38;' : ''}">${_bwSync ? Math.round(_bwEffSat(CFG.theme_bri ?? 1.0)) : (CFG.theme_sat ?? 50)}%</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:24px;text-align:right">bri</span>
