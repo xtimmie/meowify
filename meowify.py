@@ -87,8 +87,19 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
+def _ytdlp_inject(args):
+    if IS_ANDROID or not isinstance(args, (list, tuple)) or not args or args[0] != 'yt-dlp':
+        return args
+    extra = []
+    for rt in ('deno', 'node', 'bun'):
+        if shutil.which(rt):
+            extra += ['--js-runtimes', rt]
+    extra += ['--remote-components', 'ejs:github']
+    return [args[0]] + extra + list(args[1:])
+
 def _subp(args, **kw):
     """subprocess.Popen without console window on windows"""
+    args = _ytdlp_inject(args)
     if sys.platform == 'win32':
         kw.setdefault('creationflags', subprocess.CREATE_NO_WINDOW)
     return subprocess.Popen(args, **kw)
@@ -139,6 +150,7 @@ def _fix_enc(s):
 
 def _subrun(args, **kw):
     """subprocess.run without console window on windows"""
+    args = _ytdlp_inject(args)
     if sys.platform == 'win32':
         kw.setdefault('creationflags', subprocess.CREATE_NO_WINDOW)
     return subprocess.run(args, **kw)
@@ -3493,8 +3505,6 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         _sr = _prof.get('sleep_requests')
         if _sr:
             _cmd += ['--sleep-requests', str(_sr)]
-        if not _no_yt_args:
-            _cmd += ['--extractor-args', 'youtube:player_client=mweb']
         _cmd += ['-o', str(tmp/'%(id)s.%(ext)s'), target]
         _last_ydl_cmd = _cmd
         p = _subp(_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
