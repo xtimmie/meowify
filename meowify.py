@@ -11929,12 +11929,11 @@ html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
 .sb-s{font:var(--type-body-small);color:var(--color-on-surface-variant)}
 .lgp{position:relative;height:200px;border-radius:18px;overflow:hidden;margin:6px 0 12px;isolation:isolate;container-type:inline-size;border:1px solid var(--line-container);background:repeating-linear-gradient(135deg,var(--color-primary) 0 16px,#0c0c0c 16px 32px)}
 .lgp-t{position:absolute;left:0;right:0;top:50%;translate:0 -50%;text-align:center;font:900 clamp(34px,13cqw,64px)/1 system-ui,sans-serif;letter-spacing:-1px;color:#fff;white-space:nowrap;text-shadow:0 2px 10px rgba(0,0,0,.4);pointer-events:none}
-.lgp-g{position:absolute;left:0;background:color-mix(in oklch,var(--glass-bg-mid) 40%,transparent);border:1px solid var(--glass-border);corner-shape:squircle;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);animation:lgp-x 7s ease-in-out infinite alternate,lgp-y 4.6s ease-in-out infinite alternate}
-.lgp-pill{top:30px;width:150px;height:56px;border-radius:28px;animation-delay:-3s,-1s}
-.lgp-card{top:70px;width:210px;height:116px;border-radius:30px;animation-direction:alternate-reverse,alternate}
-@keyframes lgp-x{from{transform:translateX(10px)}to{transform:translateX(calc(100cqw - 100% - 10px))}}
-@keyframes lgp-y{from{translate:0 -6px}to{translate:0 10px}}
-@media (prefers-reduced-motion:reduce){.lgp-g{animation:none}.lgp-pill{left:12px}.lgp-card{left:calc(50% - 105px)}}
+.lgp-g{position:absolute;background:color-mix(in oklch,var(--glass-bg-mid) 40%,transparent);border:1px solid var(--glass-border);corner-shape:squircle;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.lgp-g:active{cursor:grabbing}
+.lgp-pill{left:14px;top:30px;width:150px;height:56px;border-radius:28px}
+.lgp-card{left:calc(50% - 60px);top:74px;width:210px;height:116px;border-radius:30px}
+html.lg-pad body.design-glassy #app:not(.mobile) #player{--lg-pad:72px;bottom:calc(-1 * var(--lg-pad));height:calc(88px + var(--lg-pad));padding-bottom:var(--lg-pad)}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
 .lg-chip.on{background:color-mix(in oklch,var(--color-primary) 22%,transparent);border-color:var(--color-primary);color:var(--color-primary)}
@@ -28117,12 +28116,27 @@ function applyLG() {
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: sel, enabled: on && !s.off.includes(k) });
   L.enable(on);
+  document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
 function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s); applyLG(); renderSettings(); }
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
 function lgReset() { try { localStorage.removeItem(_LG_LS); } catch {} applyLG(); renderSettings(); }
+window._lgPos = window._lgPos || {};
+function _lgPosStyle(i) { const q = window._lgPos[i]; return q ? `style="left:${q[0]}px;top:${q[1]}px"` : ''; }
+function _lgDrag(e, i) {
+  const el = e.currentTarget, br = el.parentElement.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const ox = e.clientX - er.left, oy = e.clientY - er.top;
+  el.setPointerCapture(e.pointerId); e.preventDefault();
+  const mv = ev => {
+    const x = Math.max(-er.width * .3, Math.min(br.width - er.width * .7, ev.clientX - br.left - ox - 1));
+    const y = Math.max(-er.height * .3, Math.min(br.height - er.height * .7, ev.clientY - br.top - oy - 1));
+    el.style.left = x + 'px'; el.style.top = y + 'px'; window._lgPos[i] = [Math.round(x), Math.round(y)];
+  };
+  const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+  el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+}
 document.addEventListener('mu:designchange', () => setTimeout(applyLG, 80));
 if (window.MU) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyLG, { once: true }); else applyLG(); }
 function lgSettingsHtml(sq) {
@@ -28154,7 +28168,7 @@ function lgSettingsHtml(sq) {
       </summary>
       <div class="sb-body">
         ${line('enable refraction', L.supported ? 'applies to the panels switched on below, blur and opacity above still apply on top' : 'this webview has no svg backdrop filters', sw(s.on && L.supported, `lgSet('on',this.checked);renderSettings()`), L.supported ? '' : 'off')}
-        <div class="lgp"><div class="lgp-t">LIQUID GLASS</div><div class="lgp-g lgp-pill" data-lg-preview></div><div class="lgp-g lgp-card" data-lg-preview></div></div>
+        <div class="lgp"><div class="lgp-t">LIQUID GLASS</div><div class="lgp-g lgp-pill" data-lg-preview ${_lgPosStyle(0)} onpointerdown="_lgDrag(event,0)"></div><div class="lgp-g lgp-card" data-lg-preview ${_lgPosStyle(1)} onpointerdown="_lgDrag(event,1)"></div></div>
         <div class="sb-grp">look</div>
         <div class="lg-chips">${chips}</div>
         <div class="sb-grp">performance</div>
