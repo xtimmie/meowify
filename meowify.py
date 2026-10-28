@@ -11927,12 +11927,14 @@ html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
 .sb-l{min-width:0}
 .sb-n{font:var(--type-body-medium)}
 .sb-s{font:var(--type-body-small);color:var(--color-on-surface-variant)}
-.lgp{position:relative;height:176px;border-radius:18px;overflow:hidden;margin:6px 0 12px;isolation:isolate;border:1px solid var(--line-container)}
-.lgp-bg{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.4) 1px,transparent 1px) 0 0/22px 22px,linear-gradient(rgba(255,255,255,.4) 1px,transparent 1px) 0 0/22px 22px,linear-gradient(135deg,var(--color-primary),var(--color-tertiary) 55%,var(--color-secondary))}
-.lgp-bg::after{content:'refraction';position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;font:800 40px/1 system-ui,sans-serif;letter-spacing:-1px;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.35)}
-.lgp-g{position:absolute;background:var(--glass-bg-mid);border:1px solid var(--glass-border);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel)}
-.lgp-pill{left:14px;top:18px;width:170px;height:58px;border-radius:29px}
-.lgp-card{right:14px;top:46px;width:170px;height:104px;border-radius:24px}
+.lgp{position:relative;height:200px;border-radius:18px;overflow:hidden;margin:6px 0 12px;isolation:isolate;container-type:inline-size;border:1px solid var(--line-container);background:repeating-linear-gradient(135deg,var(--color-primary) 0 16px,#0c0c0c 16px 32px)}
+.lgp-t{position:absolute;left:0;right:0;top:50%;translate:0 -50%;text-align:center;font:900 clamp(34px,13cqw,64px)/1 system-ui,sans-serif;letter-spacing:-1px;color:#fff;white-space:nowrap;text-shadow:0 2px 10px rgba(0,0,0,.4);pointer-events:none}
+.lgp-g{position:absolute;left:0;background:color-mix(in oklch,var(--glass-bg-mid) 40%,transparent);border:1px solid var(--glass-border);corner-shape:squircle;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);animation:lgp-x 7s ease-in-out infinite alternate,lgp-y 4.6s ease-in-out infinite alternate}
+.lgp-pill{top:30px;width:150px;height:56px;border-radius:28px;animation-delay:-3s,-1s}
+.lgp-card{top:70px;width:210px;height:116px;border-radius:30px;animation-direction:alternate-reverse,alternate}
+@keyframes lgp-x{from{transform:translateX(10px)}to{transform:translateX(calc(100cqw - 100% - 10px))}}
+@keyframes lgp-y{from{translate:0 -6px}to{translate:0 10px}}
+@media (prefers-reduced-motion:reduce){.lgp-g{animation:none}.lgp-pill{left:12px}.lgp-card{left:calc(50% - 105px)}}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
 .lg-chip.on{background:color-mix(in oklch,var(--color-primary) 22%,transparent);border-color:var(--color-primary);color:var(--color-primary)}
@@ -28152,7 +28154,7 @@ function lgSettingsHtml(sq) {
       </summary>
       <div class="sb-body">
         ${line('enable refraction', L.supported ? 'applies to the panels switched on below, blur and opacity above still apply on top' : 'this webview has no svg backdrop filters', sw(s.on && L.supported, `lgSet('on',this.checked);renderSettings()`), L.supported ? '' : 'off')}
-        <div class="lgp"><div class="lgp-bg"></div><div class="lgp-g lgp-pill" data-lg-preview></div><div class="lgp-g lgp-card" data-lg-preview></div></div>
+        <div class="lgp"><div class="lgp-t">LIQUID GLASS</div><div class="lgp-g lgp-pill" data-lg-preview></div><div class="lgp-g lgp-card" data-lg-preview></div></div>
         <div class="sb-grp">look</div>
         <div class="lg-chips">${chips}</div>
         <div class="sb-grp">performance</div>
