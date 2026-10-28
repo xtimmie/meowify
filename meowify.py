@@ -3505,6 +3505,8 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         _sr = _prof.get('sleep_requests')
         if _sr:
             _cmd += ['--sleep-requests', str(_sr)]
+        if IS_ANDROID and not _no_yt_args:
+            _cmd += ['--extractor-args', 'youtube:player_client=mweb']
         _cmd += ['-o', str(tmp/'%(id)s.%(ext)s'), target]
         _last_ydl_cmd = _cmd
         p = _subp(_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
