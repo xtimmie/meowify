@@ -341,6 +341,7 @@ def _patch_subp(meowify_module):
 
         def run():
             try:
+                w_file.write(f'[shim] ffmpeg_available={_ffmpeg_available} path={_ffmpeg_path!r} postprocessors={[p["key"] for p in opts["postprocessors"]]}\n')
                 if url:
                     with _ytdlp_mod.YoutubeDL(opts) as ydl:
                         rc = ydl.download([url])
