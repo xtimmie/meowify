@@ -3495,7 +3495,22 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
     _last_ydl_cmd = []
     _last_ydl_out = ''
 
+    _ANDROID_CLIENTS = ['android_vr', 'tv_simply', 'web_embedded', 'mweb']
+
     def ydl(target, _no_yt_args=False):
+        nonlocal _last_ydl_out
+        if not IS_ANDROID or _no_yt_args:
+            return _ydl_once(target, _no_yt_args)
+        logs = []
+        for _c in _ANDROID_CLIENTS:
+            out, rc = _ydl_once(target, _no_yt_args, _c)
+            logs.append(f'[meowify] client {_c} rc={rc}\n' + out)
+            if rc == 0 or not any(s in out for s in ('403', 'Requested format is not available', 'Sign in')):
+                break
+        _last_ydl_out = '\n'.join(logs)
+        return _last_ydl_out, rc
+
+    def _ydl_once(target, _no_yt_args=False, _client=None):
         nonlocal _last_ydl_cmd, _last_ydl_out
         _cmd = ['yt-dlp', '--no-playlist', '-x',
                 '--audio-format', fmt, '--audio-quality', quality,
@@ -3506,7 +3521,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         if _sr:
             _cmd += ['--sleep-requests', str(_sr)]
         if IS_ANDROID and not _no_yt_args:
-            _cmd += ['--extractor-args', 'youtube:player_client=android_vr']
+            _cmd += ['--extractor-args', 'youtube:player_client=' + (_client or 'android_vr')]
         _cmd += ['-o', str(tmp/'%(id)s.%(ext)s'), target]
         _last_ydl_cmd = _cmd
         p = _subp(_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
