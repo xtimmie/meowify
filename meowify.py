@@ -27484,6 +27484,30 @@ function _syncModalDividers() {
   box?.querySelector('.mtitle')?.classList.toggle('mbody-scrolled', !atTop);
   box?.querySelector('.macts')?.classList.toggle('mbody-more', !atBot);
 }
+function _flattenModalScroll(root, includeSelf) {
+  const els = [...root.querySelectorAll('*')];
+  if (includeSelf) els.unshift(root);
+  els.forEach(el => {
+    if (/^(TEXTAREA|SELECT|INPUT)$/.test(el.tagName)) return;
+    const cs = getComputedStyle(el);
+    if (!/(auto|scroll)/.test(cs.overflowY + ' ' + cs.overflowX)) return;
+    el.style.setProperty('overflow', 'visible', 'important');
+    el.style.setProperty('max-height', 'none', 'important');
+  });
+}
+function _watchModalScroll(ov) {
+  const b = ov.querySelector('#mbody');
+  if (!b) return;
+  if (ov._mbObs) ov._mbObs.disconnect();
+  _flattenModalScroll(b);
+  ov._mbObs = new MutationObserver(muts => {
+    muts.forEach(m => m.addedNodes.forEach(n => {
+      if (n.nodeType === 1) _flattenModalScroll(n, true);
+    }));
+    _syncModalDividers();
+  });
+  ov._mbObs.observe(b, {childList: true, subtree: true});
+}
 function showModal(title, body, acts) {
   let ov = document.getElementById('modal-overlay');
   if (!ov) {
@@ -27500,6 +27524,7 @@ function showModal(title, body, acts) {
     <div id="mbody">${body}</div>
     <div class="macts" id="macts">${acts}</div>
   </div>`;
+  _watchModalScroll(ov);
   requestAnimationFrame(() => {
     ov.classList.add('open');
     const b = document.getElementById('mbody');
