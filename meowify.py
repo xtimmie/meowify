@@ -28564,6 +28564,7 @@ function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
   // bw cover sync overrides sat with a brightness-adapted low value (CFG.theme_sat itself is untouched)
   const s = _bwSync ? _bwEffSat(b) : ((sat == null || sat === '') ? 50  : parseFloat(sat));
   if (_noFade) {
+    clearTimeout(applyTheme._satT);
     MU.setPalette({ hue: h, sat: s, bri: b });
   } else {
     // bri applies immediately; hue and sat share one animated transition so they dont desync
