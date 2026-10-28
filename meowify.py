@@ -28570,9 +28570,6 @@ function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
     // bri applies immediately; hue and sat share one animated transition so they dont desync
     MU.setPalette({ bri: b });
     MU.setHue(h, _fadeMs || true, s);
-    // same call the slider makes, once the animation is done, so the real sat always lands
-    clearTimeout(applyTheme._satT);
-    applyTheme._satT = setTimeout(() => MU.setPalette({ sat: s }), (typeof _fadeMs === 'number' ? _fadeMs : 700) + 80);
   }
   _wavyColorCache = null;
   _mnwLastPrimary = '';
