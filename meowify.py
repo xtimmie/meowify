@@ -28109,7 +28109,8 @@ function _lgFmt(u, v) {
 function applyLG() {
   const L = window.MU && MU.liquidGlass; if (!L || !LG_PARTS) return;
   const s = _lgPrefs();
-  MU.setGlass({ sat: s.sat, bright: s.br, contrast: s.ct });
+  const _sig = s.sat + '|' + s.br + '|' + s.ct;
+  if (_sig !== window._lgSig) { window._lgSig = _sig; MU.setGlass({ sat: s.sat, bright: s.br, contrast: s.ct }); }
   L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q });
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: sel, enabled: on && !s.off.includes(k) });
