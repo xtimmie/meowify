@@ -3795,7 +3795,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         if not outs:
             _dl(did, status='error', error='no audio produced',
                 _error_cmd=' '.join(_last_ydl_cmd),
-                _error_output=_last_ydl_out[-8000:])
+                _error_output='files in tmp: ' + ', '.join(f.name for f in tmp.iterdir()) + '\n' + _last_ydl_out[-8000:])
             _delete_placeholder(sid); return
 
         src_file = outs[0]
