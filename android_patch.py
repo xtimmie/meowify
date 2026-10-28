@@ -345,7 +345,7 @@ def _patch_subp(meowify_module):
                 for _probe in dict.fromkeys([_ffmpeg_path, os.path.realpath(_ffmpeg_path)]):
                     try:
                         _pr = subprocess.run([_probe, '-version'], capture_output=True, text=True, timeout=10)
-                        w_file.write(f'[shim] probe {_probe} rc={_pr.returncode} out={(_pr.stdout or _pr.stderr)[:80]!r}\n')
+                        w_file.write(f'[shim] probe {_probe} rc={_pr.returncode} out={(_pr.stdout or _pr.stderr)[:700]!r} ld={os.environ.get("LD_LIBRARY_PATH")!r}\n')
                     except Exception as _pe:
                         w_file.write(f'[shim] probe {_probe} failed: {_pe!r}\n')
                 if url:
