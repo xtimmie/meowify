@@ -17745,7 +17745,7 @@ function _getWavyColors() {
   // invalidate only when theme hue changes - className changes on design switch,
   // theme_hue changes on color change. reading one cheap var for the key is far
   // cheaper than reading two vars + forced style recalc on every frame.
-  const key = document.body.className + '|' + (CFG.theme_hue ?? '') + '|' + (CFG.theme_sat ?? '');
+  const key = document.body.className + '|' + (CFG.theme_hue ?? '') + '|' + (CFG.theme_sat ?? '') + '|' + (_bwSync ? 'bw' + (CFG.theme_bri ?? 1) : '');
   if (_wavyColorCache && key === _wavyColorKey) return _wavyColorCache;
   const cs = getComputedStyle(document.documentElement);
   _wavyColorCache = {
