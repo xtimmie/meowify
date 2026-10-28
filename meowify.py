@@ -11615,6 +11615,12 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
   font:var(--type-label-large);font-variation-settings:var(--fv-label);
   color:var(--color-on-surface);flex-shrink:0;
 }
+.qs-hdr{gap:8px}
+.qs-hdr>div:first-child{flex:0 1 auto;min-width:0}
+.qs-hdr>div:first-child>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qs-hdr>div:first-child>.cbtn{flex-shrink:0}
+.qs-hdr>div:last-child{flex-shrink:0}
+#qs-count{white-space:nowrap}
 /* lyrics panel */
 .lyrics-sidebar{
   width:320px;flex-shrink:0;
