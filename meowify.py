@@ -242,13 +242,31 @@ def _mu_dir_ok(p):
     except Exception: return False
 
 # debug override for the motionui location (settings > debug), empty = automatic lookup
+def _mu_candidates(raw):
+    # relative paths depend on launch cwd, so try cwd and the meowify.py folder
+    p = Path(_mu_clean(raw)).expanduser()
+    if p.is_absolute(): return [p]
+    return [Path.cwd() / p, Path(__file__).parent / p]
+
+def _mu_find_override(raw, tries=1, delay=0.5):
+    for i in range(tries):
+        for p in _mu_candidates(raw):
+            try:
+                if all((p / f).exists() for f in _MU_REQUIRED): return p.resolve()
+            except Exception:
+                pass
+        if i < tries - 1: time.sleep(delay)
+    return None
+
 _mu_ov = _mu_clean(CFG.get('motionui_path_override'))
 if _mu_ov:
-    if _mu_dir_ok(_mu_ov):
-        MOTIONUI_DIR, MU_MISSING = str(Path(_mu_ov).expanduser().resolve()), False
+    _mu_hit = _mu_find_override(_mu_ov, tries=4)
+    if _mu_hit:
+        MOTIONUI_DIR, MU_MISSING = str(_mu_hit), False
         _log_server.info(f'[motionui] using override {MOTIONUI_DIR}')
     else:
-        _log_server.warning(f'[motionui] override {_mu_ov!r} is missing motionui.js/components.css/theme.css, falling back to automatic lookup ({MOTIONUI_DIR})')
+        _mu_why = '; '.join(f"{c}: missing {sorted(f for f in _MU_REQUIRED if not (c / f).exists())}" for c in _mu_candidates(_mu_ov))
+        _log_server.warning(f'[motionui] override {_mu_ov!r} not usable ({_mu_why}), falling back to automatic lookup ({MOTIONUI_DIR})')
 
 def ddir():    return Path(CFG["data_dir"])
 def mdir():    return ddir() / "music"
@@ -8696,7 +8714,7 @@ def api_debug_motionui_path():
     if request.method == 'POST':
         raw = _mu_clean((request.get_json(silent=True) or {}).get('path'))
         if raw:
-            p = Path(raw).expanduser()
+            p = _mu_find_override(raw) or _mu_candidates(raw)[0]
             missing = [f for f in sorted(_MU_REQUIRED) if not (p / f).exists()]
             if missing:
                 return jsonify({'ok': False, 'error': 'missing ' + ', '.join(missing) + ' in ' + str(p)}), 400
