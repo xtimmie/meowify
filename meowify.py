@@ -11858,7 +11858,8 @@ body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 var(--vc-px) var(--bar-h)}
 body.design-glassy #app:not(.mobile) .list-header::before{content:none}
-body.design-glassy #app:not(.mobile) .list-header{margin:0 calc(var(--vc-px) * -1);padding-left:calc(var(--vc-px) + 8px);padding-right:calc(var(--vc-px) + 8px);width:auto;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
+body.design-glassy #app:not(.mobile) .list-header{--pe:24px;top:calc(var(--pe) * -1);margin:calc(var(--pe) * -1) calc((var(--vc-px) + var(--pe)) * -1) 0;padding:calc(6px + var(--pe)) calc(var(--vc-px) + 8px + var(--pe)) 6px;width:auto;clip-path:inset(var(--pe) var(--pe) 0 var(--pe));backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
+body.design-glassy #app:not(.mobile) .song-table{overflow-x:clip;overflow-clip-margin:var(--vc-px)}
 body.design-glassy #app:not(.mobile) .list-header.pinned{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative;isolation:isolate}
@@ -22508,7 +22509,7 @@ function _initListHeaderPin() {
       const hdr = e.target.nextElementSibling;
       if (hdr && hdr.classList.contains('list-header')) {
         hdr.classList.toggle('pinned', !e.isIntersecting);
-        if (window.MU && MU.liquidGlass && MU.liquidGlass.enabled) MU.liquidGlass.enable(true);
+        _pinLG(hdr);
         vc.parentElement.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--sbw', (vc.offsetWidth - vc.clientWidth) + 'px');
@@ -28399,7 +28400,7 @@ var LG_PARTS = [
   ['nav',       'mobile nav',                'bottom navigation, mobile',               '#mobile-nav'],
   ['lens',      'mobile nav pill',           'active tab highlight, refracts the page', '.mob-lens'],
   ['topbar',    'topbar',                    'title and search bar',                    '.topbar'],
-  ['pinned',    'pinned list header',        'sticks while scrolling lists',            '.list-header.pinned'],
+  ['pinned',    'pinned list header',        'sticks while scrolling lists',            ''],
   ['sidebar',   'left sidebar',              'navigation sidebar, desktop',             '#sidebar'],
   ['rsidebars', 'queue, lyrics, now playing','right sidebars and mobile sheets',        '.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar'],
   ['ctx',       'context menu & downloads',  'song menu drawer, download panel',        '#ctx,#dl-panel-float'],
@@ -28414,6 +28415,13 @@ function _lgFmt(u, v) {
   return u === 'px' ? Math.round(v) + 'px' : u === '%' ? Math.round(v) + '%' : u === 'f100' ? Math.round(v * 100) + '%'
     : u === 'area' ? (v ? Math.round(v / 1000) + 'k px²' : 'never') : u === 'q' ? (v > 0 ? '+' : '') + Math.round(v * 100) : String(+v.toFixed(2));
 }
+var PIN_LG = { relBevel: false, bevel: 16, relScale: false, scale: 35 };
+function _pinLG(hdr) {
+  const L = window.MU && MU.liquidGlass, s = _lgPrefs();
+  const want = !!(L && L.supported && s.on && !s.off.includes('pinned') && document.documentElement.dataset.muDesign === 'glassy' && hdr.classList.contains('pinned'));
+  if (want && !hdr._lg) hdr._lg = L.attach(hdr, { params: PIN_LG });
+  else if (!want && hdr._lg) { hdr._lg.detach(); hdr._lg = null; }
+}
 function applyLG() {
   const L = window.MU && MU.liquidGlass; if (!L || !LG_PARTS) return;
   const s = _lgPrefs();
@@ -28424,6 +28432,7 @@ function applyLG() {
   const lensOn = on && !s.off.includes('lens');
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn : on && !s.off.includes(k) });
   L.enable(on);
+  document.querySelectorAll('.list-header').forEach(_pinLG);
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
   document.documentElement.classList.toggle('lg-lens', lensOn);
   document.documentElement.classList.toggle('lg-lens-slide', lensOn && !!s.slide);
