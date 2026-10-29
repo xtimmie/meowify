@@ -11623,7 +11623,7 @@ body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .ly
 #vc{flex:1;overflow:auto;padding:0 var(--vc-px) var(--bar-h)}
 body.design-glassy #app:not(.mobile) .list-header::before{content:none}
 body.design-glassy #app:not(.mobile) .list-header{margin:0 calc(var(--vc-px) * -1);padding-left:calc(var(--vc-px) + 8px);padding-right:calc(var(--vc-px) + 8px);width:auto;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);transition:backdrop-filter 180ms var(--ease-out),-webkit-backdrop-filter 180ms var(--ease-out)}
-body.design-glassy #app:not(.mobile) .list-header.pinned{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+body.design-glassy #app:not(.mobile) .list-header.pinned{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative;isolation:isolate}
 body.design-glassy #app:not(.mobile) #vc-wrap::after{content:"";position:absolute;inset:0;border-radius:inherit;corner-shape:inherit;pointer-events:none;z-index:30;transition:box-shadow var(--dur-8) var(--ease-spring-soft)}
@@ -22251,6 +22251,7 @@ function _initListHeaderPin() {
       const hdr = e.target.nextElementSibling;
       if (hdr && hdr.classList.contains('list-header')) {
         hdr.classList.toggle('pinned', !e.isIntersecting);
+        if (window.MU && MU.liquidGlass && MU.liquidGlass.enabled) MU.liquidGlass.enable(true);
         vc.parentElement.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--pin-h', hdr.offsetHeight + 'px');
         vc.style.setProperty('--sbw', (vc.offsetWidth - vc.clientWidth) + 'px');
@@ -28141,6 +28142,7 @@ var LG_PARTS = [
   ['nav',       'mobile nav',                'bottom navigation, mobile',               '#mobile-nav'],
   ['lens',      'mobile nav pill',           'active tab highlight, refracts the page', '.mob-lens'],
   ['topbar',    'topbar',                    'title and search bar',                    '.topbar'],
+  ['pinned',    'pinned list header',        'sticks while scrolling lists',            '.list-header.pinned'],
   ['sidebar',   'left sidebar',              'navigation sidebar, desktop',             '#sidebar'],
   ['rsidebars', 'queue, lyrics, now playing','right sidebars and mobile sheets',        '.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar'],
   ['ctx',       'context menu & downloads',  'song menu drawer, download panel',        '#ctx,#dl-panel-float'],
