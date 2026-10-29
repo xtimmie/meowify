@@ -234,13 +234,21 @@ def save_cfg(c):
 CFG = load_cfg()
 _log_server.info(f'[cfg] path={_SCFG} token={bool(CFG.get("dropbox_refresh_token"))}')
 
+def _mu_clean(p):
+    return str(p or '').strip().strip('"\'').strip()
+
 def _mu_dir_ok(p):
-    try: return all((Path(p).expanduser() / f).exists() for f in _MU_REQUIRED)
+    try: return all((Path(_mu_clean(p)).expanduser() / f).exists() for f in _MU_REQUIRED)
     except Exception: return False
 
 # debug override for the motionui location (settings > debug), empty = automatic lookup
-if CFG.get('motionui_path_override') and _mu_dir_ok(CFG['motionui_path_override']):
-    MOTIONUI_DIR, MU_MISSING = str(Path(CFG['motionui_path_override']).expanduser()), False
+_mu_ov = _mu_clean(CFG.get('motionui_path_override'))
+if _mu_ov:
+    if _mu_dir_ok(_mu_ov):
+        MOTIONUI_DIR, MU_MISSING = str(Path(_mu_ov).expanduser().resolve()), False
+        _log_server.info(f'[motionui] using override {MOTIONUI_DIR}')
+    else:
+        _log_server.warning(f'[motionui] override {_mu_ov!r} is missing motionui.js/components.css/theme.css, falling back to automatic lookup ({MOTIONUI_DIR})')
 
 def ddir():    return Path(CFG["data_dir"])
 def mdir():    return ddir() / "music"
@@ -4586,7 +4594,7 @@ def mu_static(fn):
     p = (Path(MOTIONUI_DIR)/fn).resolve()
     base = Path(MOTIONUI_DIR).resolve()
     if not p.exists() or not (p == base or base in p.parents): return '', 404
-    return send_file(str(p), max_age=86400)
+    return send_file(str(p), max_age=0, conditional=True)
 
 @app.route('/audio/<sid>')
 def audio(sid):
@@ -8686,7 +8694,7 @@ def api_get_cfg():
 def api_debug_motionui_path():
     global MOTIONUI_DIR, MU_MISSING, _HTML_STATIC_CACHE
     if request.method == 'POST':
-        raw = ((request.get_json(silent=True) or {}).get('path') or '').strip()
+        raw = _mu_clean((request.get_json(silent=True) or {}).get('path'))
         if raw:
             p = Path(raw).expanduser()
             missing = [f for f in sorted(_MU_REQUIRED) if not (p / f).exists()]
