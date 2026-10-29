@@ -28034,7 +28034,36 @@ function applyFontOverride(val) {
   el.textContent = `body, body * { font-family: ${val} !important; }`;
 }
 
-// ── per-device blur controls (localStorage, applied as html.nb-<part> classes) ──
+// ── per-device prefs: localStorage is the fast cache, settings.json (dev_prefs_<desktop|mobile>) is the backup that survives wiped webview storage ──
+const _DP_KEY = 'dev_prefs_' + (/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent) ? 'mobile' : 'desktop');
+function _dpCfg() { try { return CFG; } catch { return null; } } // CFG is a later let, guard the early calls
+const DevPrefs = {
+  _t: 0,
+  _srv() { const c = _dpCfg(); return (c && c[_DP_KEY]) || {}; },
+  _ls(n) { try { const v = localStorage.getItem('meowify_' + n); return v == null ? undefined : JSON.parse(v); } catch { return undefined; } },
+  _flush() {
+    clearTimeout(this._t);
+    this._t = setTimeout(() => { try { const c = _dpCfg(); if (c && typeof saveSetting === 'function') Promise.resolve(saveSetting(_DP_KEY, c[_DP_KEY])).catch(() => {}); } catch {} }, 500);
+  },
+  get(n) {
+    const l = this._ls(n), s = this._srv()[n], c = _dpCfg();
+    if (l !== undefined) {
+      // one time migration, local value exists but the server copy doesnt yet
+      if (s === undefined && c && c.data_dir) { c[_DP_KEY] = { ...this._srv(), [n]: l }; this._flush(); }
+      return l;
+    }
+    return s === undefined ? null : s;
+  },
+  set(n, v) {
+    try { localStorage.setItem('meowify_' + n, JSON.stringify(v)); } catch {}
+    const c = _dpCfg(); if (c) { c[_DP_KEY] = { ...this._srv(), [n]: v }; this._flush(); }
+  },
+  del(n) {
+    try { localStorage.removeItem('meowify_' + n); } catch {}
+    const c = _dpCfg(); if (c) { const o = { ...this._srv() }; delete o[n]; c[_DP_KEY] = o; this._flush(); }
+  },
+};
+// ── per-device blur controls (applied as html.nb-<part> classes) ──
 // [key, label, sub, group] - grouped in the settings module in this order
 const BLUR_PARTS = [
   ['player',    'player bar',                'bottom player · glassy only', 'panels'],
@@ -28052,7 +28081,7 @@ const BLUR_PARTS = [
   ['goo',       'spiky button goo',          'svg blur filter on the spiky play button', 'other'],
 ];
 const _BLUR_LS = 'meowify_blur';
-function _blurPrefs() { try { return JSON.parse(localStorage.getItem(_BLUR_LS)) || {}; } catch { return {}; } }
+function _blurPrefs() { const v = DevPrefs.get('blur'); return v && typeof v === 'object' ? v : {}; }
 function applyBlurPrefs() {
   const { all, off = [], solid = .5 } = _blurPrefs(), root = document.documentElement;
   root.style.setProperty('--nb-solid', solid);
@@ -28061,7 +28090,7 @@ function applyBlurPrefs() {
 }
 function setBlurSolid(v) {
   const p = _blurPrefs(); p.solid = v;
-  try { localStorage.setItem(_BLUR_LS, JSON.stringify(p)); } catch {}
+  DevPrefs.set('blur', p);
   applyBlurPrefs();
 }
 document.addEventListener('mu:designchange', () => { applyBlurPrefs(); renderSettings(); });
@@ -28069,7 +28098,7 @@ function setBlurPref(k, off) { // k = 'all' or a part key, off = true to disable
   const p = _blurPrefs();
   p.off = (p.off || []).filter(x => x !== k);
   if (k === 'all') p.all = off; else if (off) p.off.push(k);
-  try { localStorage.setItem(_BLUR_LS, JSON.stringify(p)); } catch {}
+  DevPrefs.set('blur', p);
   applyBlurPrefs();
 }
 function blurSettingsHtml(sq) {
@@ -28118,8 +28147,8 @@ var LG_PARTS = [
 ];
 var _LG_LS = 'meowify_lg';
 var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, slide: false };
-function _lgPrefs() { try { return Object.assign({}, _LG_DEF, JSON.parse(localStorage.getItem(_LG_LS))); } catch { return Object.assign({}, _LG_DEF); } }
-function _lgSave(s) { try { localStorage.setItem(_LG_LS, JSON.stringify(s)); } catch {} }
+function _lgPrefs() { const v = DevPrefs.get('lg'); return Object.assign({}, _LG_DEF, v && typeof v === 'object' ? v : {}); }
+function _lgSave(s) { DevPrefs.set('lg', s); }
 function _lgFmt(u, v) {
   v = +v;
   return u === 'px' ? Math.round(v) + 'px' : u === '%' ? Math.round(v) + '%' : u === 'f100' ? Math.round(v * 100) + '%'
@@ -28144,7 +28173,7 @@ function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
 function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s); applyLG(); renderSettings(); }
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
-function lgReset() { try { localStorage.removeItem(_LG_LS); } catch {} applyLG(); renderSettings(); }
+function lgReset() { DevPrefs.del('lg'); applyLG(); renderSettings(); }
 // mobile nav lens: one glass pill per tab (pop mode) + one shared pill (slide mode), positioned over the tabs, sitting inside the nav under the icons
 // slide mode feel, tweak here. spring: higher stiffness = faster, lower damping = more wobble (damping ~ 2*sqrt(stiffness) is no overshoot at all)
 var LENS_FX = {
@@ -31364,6 +31393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // same truthy-error-object guard as loadData() above
   if (cfg && !cfg.error) {
     CFG = cfg;
+    try { applyBlurPrefs(); applyLG(); } catch {} // per-device prefs may only exist in the server copy (wiped webview storage)
     if(cfg.hiddenCols){S.hiddenCols={};for(const[v,arr]of Object.entries(cfg.hiddenCols))S.hiddenCols[v]=new Set(arr);}
     S.gapless = !!cfg.gapless;
     document.getElementById('glbl').classList.toggle('on', S.gapless);
@@ -32066,7 +32096,11 @@ def main():
                     _log_server.error('failed to start server'); sys.exit(1)
                 webview.settings['OPEN_DEVTOOLS_IN_DEBUG'] = False
                 webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
-                webview.start(debug=True)
+                try:
+                    # default private mode wipes localStorage on every exit
+                    webview.start(debug=True, private_mode=False, storage_path=str(_HOME / 'webview'))
+                except TypeError:
+                    webview.start(debug=True)
                 return
             except ImportError:
                 pass
