@@ -30497,6 +30497,14 @@ function renderSettings() {
 
   const _isMob = isMobile();
   const _pcPopup = !_isMob && window._settingsPopupOpen;
+  const _SUBS = { active: null };
+  const _navChev = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+  const _setHead = (title, fn) => `<div class="set-head"><button class="set-back mu-ripple" aria-label="back" onclick="${fn}"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button><div class="set-head-title">${esc(title)}</div></div>`;
+  const subRow = (id, title, sub, bodyFn) => {
+    if (_sq) return bodyFn();
+    if (window._settingsSub === id && window._settingsSection !== '_search') { _SUBS.active = { id, title, html: bodyFn() }; return ''; }
+    return `<div class="set-nav mu-ripple" onclick="setSettingsSub('${id}')"><div class="set-title-cell"><div class="set-lbl">${title}</div>${sub ? `<div class="set-sub">${sub}</div>` : ''}</div>${_navChev}</div>`;
+  };
 
   // ── mobile: section list nav ──────────────────────────────────────────────
   if (_isMob && !window._settingsSection) {
@@ -30524,7 +30532,7 @@ function renderSettings() {
       </div>`).join('');
     const vc = document.getElementById('vc');
     vc.innerHTML = `
-      <div class="set-panel" style="max-width:640px">
+      <div class="set-panel ${(() => { const d = window._setDir; window._setDir = null; return d === 'back' ? 'set-anim-back' : d === 'fwd' ? 'set-anim-fwd' : ''; })()}" style="max-width:640px">
         <div class="set-section ui-panel" style="margin-bottom:0;overflow:hidden">${listItems}</div>
       </div>`;
     if (window.MU) MU.init(vc);
@@ -30542,11 +30550,7 @@ function renderSettings() {
       <input id="set-pc-search-input" type="text" placeholder="search all settings..." value="${esc(S.globalSearch)}" oninput="onSettingsPopupSearch(this.value)">
     </div>` : '';
 
-  const _backBtn = _isMob ? `
-    <button class="set-mob-back mu-ripple" onclick="setSettingsSection(null)">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-      settings
-    </button>` : '';
+  const _backBtn = _isMob ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
 
   const _pcCloseBtn = _pcPopup ? `
     <button class="set-pc-close mu-ripple" onclick="closeSettingsPopup()">
@@ -30558,7 +30562,7 @@ function renderSettings() {
 
   const _existingSearchBar = _pcSearchMode ? _settingsTarget.querySelector('.set-pc-search-bar') : null;
 
-  _settingsTarget.innerHTML = `
+  let _setHtml = `
     <div class="set-panel" style="max-width:640px">
       ${_backBtn}
       ${_pcCloseBtn}
@@ -30717,6 +30721,7 @@ function renderSettings() {
       </div>` : ''}
 
       ${_sectionMatch('appearance') ? section('appearance', `
+        ${subRow('theme', 'theme & font', 'hue, saturation, brightness, cover art colors and font', () => `
         ${row('theme', 'hue · saturation · brightness', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
             <div style="display:flex;align-items:center;gap:8px">
@@ -30757,7 +30762,8 @@ function renderSettings() {
             onchange="saveSetting('font_override',this.value).then(()=>applyFontOverride(this.value))"
           >
         `)}
-        ${_iconSettingsHtml(row)}
+      `)}
+        ${/android/i.test(navigator.userAgent) ? '' : subRow('icon', 'app icon', 'start menu, taskbar and title bar icon', () => _iconSettingsHtml(row))}
         ${row('ui design', 'pick the one that looks cool :v', `
           <div class="select-wrap" style="width:160px">
             <select class="input" style="width:160px" onchange="saveSetting('ui_design',this.value).then(()=>{applyDesign(this.value);renderSettings();})">
@@ -30767,6 +30773,7 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
+        ${subRow('glass', 'glass & blur', 'panel opacity, blur strength and liquid glass refraction', () => `
         ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength (opacity doesnt work well lol)', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
             <div style="display:flex;align-items:center;gap:8px">
@@ -30787,6 +30794,7 @@ function renderSettings() {
         `) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
+      `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
@@ -30809,6 +30817,7 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
+        ${subRow('player', 'seekbar & buttons', 'wavy seekbar, audio scrubbing, spiky play button and volume icon', () => `
         ${row('wavy seekbar', 'yayy thats a cool wave', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.wavy_seekbar?'checked':''} onchange="saveSetting('wavy_seekbar',this.checked).then(()=>initWavySeekbar())" onclick="event.stopPropagation()">
@@ -30839,6 +30848,7 @@ function renderSettings() {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
+      `)}
         ${CFG._platform === 'win32' ? row('window mode', 'webview - built-in chromium window,<br>system browser - uses your existing browser as a lightweight app window', `
           <div style="display:flex;gap:6px">
             ${[['webview','webview'],['system browser','system browser']].map(([v,label])=>`<button class="btn ${(CFG.win_use_webview!==false?'webview':'system browser')===v?'btn-filled':'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="_setWinMode('${v}')">${label}</button>`).join('')}
@@ -31059,6 +31069,19 @@ function renderSettings() {
         ${row('motionui location', 'folder containing motionui.js, theme.css and components.css, applies instantly by reloading the page, empty = automatic lookup', `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:8px;align-items:center"><input class="input" id="mu-path-in" type="text" autocomplete="off" value="${(CFG.motionui_path_override || '').replace(/"/g, '&quot;')}" placeholder="automatic" style="width:260px;padding:10px 14px"><button class="btn btn-out mu-ripple" onclick="_muPathApply(false)">apply</button><button class="btn btn-out mu-ripple" onclick="_muPathApply(true)">reset</button></div><div id="mu-path-cur" style="font:var(--type-label-small);color:var(--color-on-surface-variant);word-break:break-all;text-align:right"></div><div id="mu-path-msg" style="font:var(--type-label-small);color:var(--color-error);text-align:right"></div></div>`)}
       `) : ''}
     </div>`;
+  if (window._settingsSub && !_SUBS.active) window._settingsSub = null;
+  if (_SUBS.active) {
+    _setHtml = `
+    <div class="set-panel set-sub-page" style="max-width:640px">
+      ${_pcCloseBtn}
+      ${_setHead(_SUBS.active.title, 'closeSettingsSub()')}
+      <div class="set-section ui-panel"><div style="padding:6px 20px 8px">${_SUBS.active.html}</div></div>
+    </div>`;
+  }
+  _settingsTarget.innerHTML = _setHtml;
+  const _navDir = window._setDir; window._setDir = null;
+  if (_navDir) { const _pn = _settingsTarget.querySelector('.set-panel'); if (_pn) _pn.classList.add(_navDir === 'back' ? 'set-anim-back' : 'set-anim-fwd'); }
+  if (window.MU) MU.init(_settingsTarget);
   requestAnimationFrame(() => { const w = document.getElementById('eq-sliders-wrap'); if (w && window.MU) MU.init(w); });
   if (document.getElementById('mu-path-cur')) _muPathRefresh();
   if (_existingSearchBar) {
@@ -31136,6 +31159,7 @@ function closeSettingsPopup() {
 
 function setSettingsPopupSection(id) {
   window._settingsSection = id;
+  window._settingsSub = null;
   if (id !== '_search') S.globalSearch = '';
   renderSettingsPopupShell();
   if (id === 'dropbox sync') { refreshDbxStatus().then(_startDbxTabPoll); } else { _stopDbxTabPoll(); }
@@ -31388,7 +31412,7 @@ function _iconSettingsHtml(row) {
     <canvas id="ico-pv-16" width="16" height="16" style="width:16px;height:16px"></canvas>
   </div>`;
   const presets = `<div class="select-wrap" style="width:160px"><select class="input" style="width:160px" onchange="_iconPreset(this.value)"><option value="">presets</option>${Object.keys(_ICON_PRESETS).map(n => `<option value="${n}">${n}</option>`).join('')}</select>${arrow}</div>`;
-  let h = row('app icon', 'used by the start menu shortcut, the taskbar and the window title bar. changes apply a moment after you stop editing, windows caches icons so the shortcut can take a bit to refresh', stack(pv, presets,
+  let h = `<div class="set-pin">${pv}</div>` + row('app icon', 'changes apply a moment after you stop editing, windows caches icons so the shortcut can take a bit to refresh', stack(presets,
     `<button class="btn btn-out mu-ripple" onclick="_iconReset()">reset</button>`));
   h += row('icon shape', 'tile behind the cat', stack(
     sel('shape', [['none', 'none'], ['circle', 'circle'], ['squircle', 'squircle'], ['rounded', 'rounded square'], ['square', 'square']]),
@@ -31547,13 +31571,33 @@ function _updatesHtml(row, rowDisabled) {
   return h;
 }
 
+function _setScroller() {
+  return (window._settingsPopupOpen && !isMobile()) ? document.getElementById('set-pc-content') : document.getElementById('vc');
+}
+
+function setSettingsSub(id) {
+  const sc = _setScroller();
+  window._setScroll = sc ? sc.scrollTop : 0;
+  window._settingsSub = id;
+  window._setDir = 'fwd';
+  renderSettings();
+  if (sc) sc.scrollTop = 0;
+}
+
+function closeSettingsSub() {
+  const sc = _setScroller();
+  window._settingsSub = null;
+  window._setDir = 'back';
+  renderSettings();
+  if (sc) sc.scrollTop = window._setScroll || 0;
+}
+
 function setSettingsSection(id) {
   window._settingsSection = id;
-  if (id) {
-    document.getElementById('vtitle').textContent = id;
-  } else {
-    document.getElementById('vtitle').textContent = 'settings';
-  }
+  window._settingsSub = null;
+  window._setDir = id ? 'fwd' : 'back';
+  const _vt = document.getElementById('vtitle');
+  if (_vt) _vt.textContent = 'settings';
   renderSettings();
   if (id === 'dropbox sync') { refreshDbxStatus().then(_startDbxTabPoll); } else { _stopDbxTabPoll(); }
 }
