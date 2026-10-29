@@ -8708,6 +8708,14 @@ def api_restart():
     """restart the meowify process (used after settings that require restart)"""
     def _do_restart():
         time.sleep(0.4)
+        if IS_ANDROID:
+            # no execv on android (chaquopy can't re-init): kotlin relaunches the process
+            try:
+                from java import jclass
+                jclass('com.xtim.meowify.ServerService').restartApp()
+            except Exception as e:
+                _log_server.error(f'android restart failed: {e}')
+            return
         try:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception:
@@ -8724,6 +8732,11 @@ _UPD_STATE    = {'state': 'idle', 'msg': '', 'needs_restart': False, 'id': ''}
 _UPD_CACHE    = {'t': 0.0, 'data': None}
 _upd_lock     = threading.Lock()
 _INSTALL_JSON = _APP_DIR / '.install.json'
+# android ota: new code/deps are staged in this dir (see ServerService.kt prepareOta)
+_OTA_DIR      = Path(os.environ['MEOWIFY_OTA_DIR']) if IS_ANDROID and os.environ.get('MEOWIFY_OTA_DIR') else None
+_BRIDGE_LEVEL = int(os.environ.get('MEOWIFY_BRIDGE', '0') or 0)
+_UPD_FILES_AND = ('meowify.py', 'android_patch.py')
+_UPD_ANDROID_PKGS = {'yt-dlp', 'ytmusicapi', 'mutagen', 'langdetect'}   # pure-python leaf packages only
 
 def _upd_ver(v):
     try:
@@ -8744,13 +8757,15 @@ def _upd_py():
 
 def _upd_install_info():
     try:
-        return json.loads(_INSTALL_JSON.read_text(encoding='utf-8'))
+        return json.loads(((_OTA_DIR / '.install.json') if _OTA_DIR else _INSTALL_JSON).read_text(encoding='utf-8'))
     except Exception:
         return {}
 
 def _upd_can_apply():
     if IS_ANDROID:
-        return False, 'updates on android come with the apk for now'
+        if _OTA_DIR is None:
+            return False, 'ota is not available in this build'
+        return True, ''
     if not _INSTALL_JSON.exists():
         return False, 'running from a source checkout, update it with git'
     if not _IN_VENV:
@@ -8868,6 +8883,13 @@ def _upd_check(force=False):
     need_py = man.get('min_python')
     if ok and need_py and tuple(sys.version_info[:2]) < _upd_ver(need_py)[:2]:
         app_ok, reason = False, f'needs python {need_py}'
+    if IS_ANDROID and app_ok:
+        if not (man.get('files') or {}).get('android_patch.py'):
+            app_ok, reason = False, 'this release has no android files'
+        else:
+            nb = (man.get('android') or {}).get('min_bridge')
+            if nb and _BRIDGE_LEVEL < int(nb):
+                app_ok, reason = False, 'needs a newer apk first'
     out['modules'].append({'id': 'app', 'name': 'meowify', 'installed': cur, 'latest': man.get('version'),
                            'notes': man.get('notes', ''), 'can_apply': bool(newer and app_ok),
                            'reason': reason if newer else '',
@@ -8887,7 +8909,12 @@ def _upd_check(force=False):
         else:
             mu.update(status='update', can_apply=True)
     out['modules'].append(mu)
-    if _IN_VENV and not IS_ANDROID:
+    if IS_ANDROID:
+        try:
+            out['modules'].append(_upd_android_deps_module(ok, why))
+        except Exception:
+            pass
+    elif _IN_VENV and not IS_ANDROID:
         try:
             pk = _upd_pkg_list()
         except Exception:
@@ -9083,9 +9110,215 @@ def _upd_do_repair():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+# ── android ota ────────────────────────────────────────────────────────────────
+# no venv/pip on android: updates are staged into _OTA_DIR and picked up on the next start.
+# layout: meowify.py android_patch.py motionui/ site/ .install.json .booting
+# ServerService.prepareOta() validates it and rolls it back if the new boot never confirms.
+
+def _upd_and_arm():
+    """must run before any file in the overlay changes: an interrupted update then rolls back"""
+    _OTA_DIR.mkdir(parents=True, exist_ok=True)
+    (_OTA_DIR / '.booting').write_text('pending', encoding='utf-8')
+
+def _upd_and_save_info(info):
+    (_OTA_DIR / '.install.json').write_text(json.dumps(info), encoding='utf-8')
+
+def _upd_and_swap_dir(src, dest):
+    dest = Path(dest)
+    old = dest.with_name(dest.name + '.old')
+    shutil.rmtree(old, ignore_errors=True)
+    if dest.exists():
+        os.replace(dest, old)
+    shutil.copytree(src, dest)
+    shutil.rmtree(old, ignore_errors=True)
+
+def _upd_and_do_motionui():
+    import tempfile
+    _upd_set('running', 'checking release...')
+    man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    tag = man.get('motionui')
+    if not tag:
+        raise RuntimeError('the latest release does not pin a motionui version')
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-upd-'))
+    try:
+        _upd_set('running', f'downloading motionui {tag}...')
+        src = _upd_fetch_motionui(tag, tmp)
+        _upd_set('running', 'installing motionui...')
+        _upd_and_arm()
+        _upd_and_swap_dir(src, _OTA_DIR / 'motionui')
+        (_OTA_DIR / 'motionui' / '.tag').write_text(str(tag), encoding='utf-8')
+        info = _upd_install_info()
+        info['motionui'] = tag
+        _upd_and_save_info(info)
+        _upd_set('done', f'motionui updated to {tag}, restart to apply', True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def _upd_and_do_app():
+    import tempfile
+    _upd_set('running', 'checking release...')
+    man = json.loads(_upd_get(_UPD_MANIFEST).decode('utf-8'))
+    tag = man.get('tag') or ('v' + str(man.get('version')))
+    nb = (man.get('android') or {}).get('min_bridge')
+    if nb and _BRIDGE_LEVEL < int(nb):
+        raise RuntimeError('this release needs a newer apk')
+    base = f'https://github.com/{_UPD_REPO}/releases/download/{tag}/'
+    info = _upd_install_info()
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-upd-'))
+    try:
+        for name in _UPD_FILES_AND:
+            want = (man.get('files') or {}).get(name)
+            if not want:
+                raise RuntimeError(f'manifest has no hash for {name}')
+            _upd_set('running', f'downloading {name}...')
+            p = tmp / name
+            p.write_bytes(_upd_get(base + name, timeout=120))
+            if _upd_sha(p) != want.lower():
+                raise RuntimeError(f'{name} failed the hash check')
+            compile(p.read_text(encoding='utf-8'), name, 'exec')
+        mu_tag = man.get('motionui')
+        mu_new = None
+        if mu_tag and mu_tag != _upd_mu_installed(info):
+            _upd_set('running', f'downloading motionui {mu_tag}...')
+            mu_new = _upd_fetch_motionui(mu_tag, tmp)
+        _upd_set('running', 'installing update...')
+        _upd_and_arm()
+        if mu_new is not None:
+            _upd_and_swap_dir(mu_new, _OTA_DIR / 'motionui')
+            (_OTA_DIR / 'motionui' / '.tag').write_text(str(mu_tag), encoding='utf-8')
+        for name in _UPD_FILES_AND:
+            staged = _OTA_DIR / (name + '.new')
+            shutil.copy2(tmp / name, staged)
+            os.replace(staged, _OTA_DIR / name)
+        info.update(version=man.get('version'), tag=tag, motionui=mu_tag or info.get('motionui'))
+        _upd_and_save_info(info)
+        _upd_set('done', f"updated to {man.get('version')}, restart to apply", True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def _upd_and_installed(name):
+    pk = (_upd_install_info().get('pkgs') or {}).get(name)
+    if pk:
+        return pk
+    try:
+        from importlib import metadata as _md
+        return _md.version(name)
+    except Exception:
+        return None
+
+def _upd_and_latest(name):
+    meta = json.loads(_upd_get(f'https://pypi.org/pypi/{name}/json', timeout=15).decode('utf-8'))
+    whl = next((f for f in meta.get('urls', [])
+                if f.get('packagetype') == 'bdist_wheel' and f.get('filename', '').endswith('-none-any.whl')), None)
+    return meta['info']['version'], whl, meta['info'].get('requires_dist') or [], meta['info'].get('requires_python')
+
+def _upd_and_blockers(requires_dist, requires_python):
+    """why a release can't be applied over the bundled environment ('' = fine)"""
+    from importlib import metadata as _md
+    m = re.match(r'\s*>=\s*(\d+)\.(\d+)', requires_python or '')
+    if m and tuple(sys.version_info[:2]) < (int(m.group(1)), int(m.group(2))):
+        return f'needs python {m.group(1)}.{m.group(2)}'
+    for r in requires_dist:
+        marker = r.split(';', 1)[1] if ';' in r else ''
+        if any(k in marker for k in ('extra', 'platform', 'os_name')):
+            continue
+        dm = re.match(r'\s*([A-Za-z0-9_.\-]+)', r)
+        if not dm:
+            continue
+        try:
+            _md.version(dm.group(1))
+        except Exception:
+            return f'needs {dm.group(1)}, which ships with the next apk'
+    return ''
+
+def _upd_android_deps_module(ok, why):
+    pk = []
+    for n in sorted(_UPD_ANDROID_PKGS):
+        inst = _upd_and_installed(n)
+        try:
+            ver, whl, req, rp = _upd_and_latest(n)
+        except Exception:
+            pk.append({'name': n, 'installed': inst, 'latest': None})
+            continue
+        blocked = '' if whl else 'no pure-python wheel'
+        blocked = blocked or _upd_and_blockers(req, rp)
+        newer = inst is None or _upd_ver(ver) > _upd_ver(inst)
+        pk.append({'name': n, 'installed': inst, 'latest': ver if (newer and not blocked) else None, 'note': blocked})
+    todo = any(p['latest'] for p in pk)
+    return {'id': 'deps', 'name': 'python packages', 'packages': pk, 'can_apply': bool(ok and todo),
+            'reason': '' if ok else why, 'status': 'update' if todo else 'current'}
+
+def _upd_and_do_deps(names=None):
+    import tempfile, zipfile
+    _upd_set('running', 'checking packages...')
+    want = {str(n).lower().replace('_', '-') for n in names} if names else None
+    info = _upd_install_info()
+    pkgs = dict(info.get('pkgs') or {})
+    site = _OTA_DIR / 'site'
+    tmp = Path(tempfile.mkdtemp(prefix='meowify-upd-'))
+    todo = []
+    try:
+        for n in sorted(_UPD_ANDROID_PKGS):
+            if want is not None and n not in want:
+                continue
+            inst = _upd_and_installed(n)
+            ver, whl, req, rp = _upd_and_latest(n)
+            if not whl or _upd_and_blockers(req, rp):
+                continue
+            if inst is not None and _upd_ver(ver) <= _upd_ver(inst):
+                continue
+            _upd_set('running', f'downloading {n} {ver}...')
+            wp = tmp / whl['filename']
+            wp.write_bytes(_upd_get(whl['url'], timeout=180))
+            if _upd_sha(wp) != whl['digests']['sha256'].lower():
+                raise RuntimeError(f'{n} failed the hash check')
+            stage = tmp / ('x-' + n)
+            with zipfile.ZipFile(wp) as z:
+                for member in z.namelist():
+                    if member.split('/', 1)[0].endswith('.data') or member.startswith('/') or '..' in member.split('/'):
+                        continue
+                    z.extract(member, stage)
+            todo.append((n, ver, stage))
+        if not todo:
+            _upd_set('done', 'packages are already up to date', False)
+            return
+        _upd_set('running', 'installing packages...')
+        _upd_and_arm()
+        site.mkdir(parents=True, exist_ok=True)
+        for n, ver, stage in todo:
+            norm = n.replace('-', '_').lower()
+            for old in site.glob('*.dist-info'):
+                if old.name.lower().split('-')[0] == norm:
+                    shutil.rmtree(old, ignore_errors=True)
+            for item in stage.iterdir():
+                target = site / item.name
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.exists():
+                    target.unlink()
+                shutil.move(str(item), str(target))
+            pkgs[n] = ver
+        info['pkgs'] = pkgs
+        _upd_and_save_info(info)
+        _upd_set('done', 'packages updated, restart to use them', True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+def _upd_android_run(kind, names=None):
+    if kind == 'app':
+        _upd_and_do_app()
+    elif kind == 'motionui':
+        _upd_and_do_motionui()
+    elif kind == 'deps':
+        _upd_and_do_deps(names)
+    else:
+        raise RuntimeError('not available on android')
+
 def _upd_run(kind, names=None):
     try:
-        if kind == 'app':
+        if IS_ANDROID:
+            _upd_android_run(kind, names)
+        elif kind == 'app':
             _upd_do_app()
         elif kind == 'motionui':
             _upd_do_motionui()
