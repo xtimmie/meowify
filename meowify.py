@@ -11858,8 +11858,7 @@ body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 var(--vc-px) var(--bar-h)}
 body.design-glassy #app:not(.mobile) .list-header::before{content:none}
-body.design-glassy #app:not(.mobile) .list-header{--pe:24px;top:calc(var(--pe) * -1);margin:calc(var(--pe) * -1) calc((var(--vc-px) + var(--pe)) * -1) 0;padding:calc(6px + var(--pe)) calc(var(--vc-px) + 8px + var(--pe)) 6px;width:auto;clip-path:inset(var(--pe) var(--pe) 0 var(--pe));backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
-body.design-glassy #app:not(.mobile) .song-table{overflow-x:clip;overflow-clip-margin:var(--vc-px)}
+body.design-glassy #app:not(.mobile) .list-header{--pe:24px;top:calc(var(--pe) * -1);margin:calc(var(--pe) * -1) calc(var(--vc-px) * -1) 0;padding:calc(6px + var(--pe)) calc(var(--vc-px) + 8px) 6px;width:auto;clip-path:inset(var(--pe) 0 0 0);backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
 body.design-glassy #app:not(.mobile) .list-header.pinned{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative;isolation:isolate}
