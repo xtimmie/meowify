@@ -9982,7 +9982,11 @@ _mv_find_gen_lock = threading.Lock()
 
 # ── mv stream url precompute pool ─────────────────────────────────────────────
 _mv_warmup_pool  = ThreadPoolExecutor(max_workers=6, thread_name_prefix='meowify-mv-warm')
+# startup bulk prewarm gets its own single worker so on-demand warms (song open / next song)
+# never wait behind the bulk queue
+_mv_bg_pool      = ThreadPoolExecutor(max_workers=1, thread_name_prefix='meowify-mv-bg')
 atexit.register(lambda: _mv_warmup_pool.shutdown(wait=False, cancel_futures=True))
+atexit.register(lambda: _mv_bg_pool.shutdown(wait=False, cancel_futures=True))
 _mv_warming      = set()   # video_ids currently being warmed
 _mv_warming_lock = threading.Lock()
 # video_id -> {'path': str, 'done': bool, 'size': int}
@@ -10089,8 +10093,9 @@ def _mv_startup_prewarm():
         if not rows:
             return
         _log_mv.info(f'[mv warm] startup: {len(rows)} songs with known MV - submitting background warm')
+        time.sleep(10)  # let startup + first ui interactions settle before the bulk warm begins
         for sid, vid, off in rows:
-            _mv_warmup_pool.submit(_mv_warm_stream_url, str(sid), vid, off)
+            _mv_bg_pool.submit(_mv_warm_stream_url, str(sid), vid, off)
     except Exception as e:
         _log_mv.warning(f'[mv warm] startup prewarm error: {e}')
 
@@ -31879,6 +31884,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       updatePlayBtn(); // set mediaSession to 'paused' so OS controls appear immediately
       
+      // kick the mv pipeline for the restored song in bg so the first open after restart is already warm
+      // deferred + idle so it never competes with startup paint / audio init
+      if (CFG.music_video) {
+        const _mvRestoreSong = song;
+        const _mvKick = () => { if (S.cur?.id === _mvRestoreSong.id) prefetchMvForSong(S.cur); };
+        setTimeout(() => { window.requestIdleCallback ? requestIdleCallback(_mvKick, {timeout: 4000}) : _mvKick(); }, 2500);
+      }
       // set src so pywebview/chromium sees this as a media page, but defer play()
       // until first user interaction to satisfy autoplay policy
       syncMediaAudio(song, true, S._restoredPosition);
