@@ -9982,11 +9982,7 @@ _mv_find_gen_lock = threading.Lock()
 
 # ── mv stream url precompute pool ─────────────────────────────────────────────
 _mv_warmup_pool  = ThreadPoolExecutor(max_workers=6, thread_name_prefix='meowify-mv-warm')
-# startup bulk prewarm gets its own single worker so on-demand warms (song open / next song)
-# never wait behind the bulk queue
-_mv_bg_pool      = ThreadPoolExecutor(max_workers=1, thread_name_prefix='meowify-mv-bg')
 atexit.register(lambda: _mv_warmup_pool.shutdown(wait=False, cancel_futures=True))
-atexit.register(lambda: _mv_bg_pool.shutdown(wait=False, cancel_futures=True))
 _mv_warming      = set()   # video_ids currently being warmed
 _mv_warming_lock = threading.Lock()
 # video_id -> {'path': str, 'done': bool, 'size': int}
@@ -10093,9 +10089,8 @@ def _mv_startup_prewarm():
         if not rows:
             return
         _log_mv.info(f'[mv warm] startup: {len(rows)} songs with known MV - submitting background warm')
-        time.sleep(10)  # let startup + first ui interactions settle before the bulk warm begins
         for sid, vid, off in rows:
-            _mv_bg_pool.submit(_mv_warm_stream_url, str(sid), vid, off)
+            _mv_warmup_pool.submit(_mv_warm_stream_url, str(sid), vid, off)
     except Exception as e:
         _log_mv.warning(f'[mv warm] startup prewarm error: {e}')
 
@@ -19637,10 +19632,83 @@ function _prebuildQueue() {
   if (!isMobile() || S.queueOpen || _qvlist || _qSig || !S.queue.length || (S.shuffle && S.shuffleMode === 'chaos')) return;
   try { renderQueueSidebar(); } catch (e) { console.warn('queue prebuild failed', e); }
 }
-window.addEventListener('load', () => [3000, 8000].forEach(ms => setTimeout(() => {
-  const idle = window.requestIdleCallback || (f => setTimeout(f, 50));
-  idle(() => { _prerenderNowPlaying(); idle(_prebuildQueue); });
-}, ms)));
+// ── sheet warmup ──────────────────────────────────────────────────────────────
+// closed mobile sheets sit off-screen (translateY 110%) so the browser never rasters them or decodes their
+// images until the first slide-in, which is the lag on first open after a restart.
+// warmup = build dom, add handle zone, decode covers, then park the sheet on-screen at ~0 opacity for 2 frames
+// so tiles get rastered. any pointerdown aborts it before a click can land
+let _sheetWarmEl = null, _lastTouchAt = 0, _warmNpSong = null, _warmTries = 0, _warmPending = false;
+const _warmDone = {np: false, q: false};
+document.addEventListener('pointerdown', () => { _lastTouchAt = Date.now(); _sheetWarmEnd(); }, {passive: true, capture: true});
+
+function _sheetWarmEnd() {
+  const el = _sheetWarmEl;
+  if (!el) return;
+  _sheetWarmEl = null;
+  el.style.removeProperty('transform');
+  void el.offsetHeight; // commit the reset while transition is still off so it does not animate back
+  el.style.removeProperty('transition');
+  el.style.removeProperty('opacity');
+}
+function _sheetRasterWarm(el, done) {
+  if (!el || _sheetWarmEl) { if (done) done(false); return; }
+  _sheetWarmEl = el;
+  el.style.setProperty('transition', 'none', 'important');
+  el.style.setProperty('opacity', '0.01');
+  el.style.setProperty('transform', 'translateY(0)', 'important');
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const ok = _sheetWarmEl === el; // false when a pointerdown aborted it
+    if (ok) _sheetWarmEnd();
+    if (done) done(ok);
+  }));
+}
+// same handle zone _initMobSheetDrag inserts on first open, done early so the open has no layout shift
+function _ensureSheetHandle(el) {
+  if (!el || el.querySelector('.mob-sheet-handle-zone')) return;
+  const zone = document.createElement('div');
+  zone.className = 'mob-sheet-handle-zone';
+  const pip = document.createElement('div');
+  pip.className = 'mob-sheet-handle';
+  zone.appendChild(pip);
+  el.insertBefore(zone, el.firstChild);
+}
+function _scheduleSheetWarm(ms) {
+  if (_warmPending) return;
+  _warmPending = true;
+  setTimeout(() => {
+    const idle = window.requestIdleCallback || (f => setTimeout(f, 50));
+    idle(() => { _warmPending = false; _warmSheetsStep(); }, {timeout: 3000});
+  }, ms);
+}
+function _warmSheetsStep() {
+  if (!isMobile()) return;
+  const npEl = document.getElementById('nowplaying-sidebar');
+  const qEl  = document.getElementById('queue-sidebar');
+  if (!npEl || !qEl) return;
+  const busy = !S.cur || document.visibilityState !== 'visible' || S.nowPlayingOpen || S.queueOpen || S.lyricsOpen
+    || _sheetWarmEl || Date.now() - _lastTouchAt < 800;
+  if (busy) { if (++_warmTries <= 12) _scheduleSheetWarm(1500); return; }
+  try {
+    if (_warmNpSong !== S.cur.id) { renderNowPlaying(true); _warmNpSong = S.cur.id; _warmDone.np = false; }
+    _ensureSheetHandle(npEl);
+    npEl.querySelectorAll('img').forEach(i => { if (i.decode) i.decode().catch(() => {}); });
+    _prebuildQueue();
+    _ensureSheetHandle(qEl);
+  } catch (e) { console.warn('sheet warm failed', e); return; }
+  if (!_warmDone.np) {
+    _sheetRasterWarm(npEl, ok => {
+      _warmDone.np = ok;
+      if (ok) _scheduleSheetWarm(400);
+      else if (++_warmTries <= 12) _scheduleSheetWarm(1500);
+    });
+  } else if (!_warmDone.q && (_qvlist || _qSig)) {
+    _sheetRasterWarm(qEl, ok => {
+      _warmDone.q = ok;
+      if (!ok && ++_warmTries <= 12) _scheduleSheetWarm(1500);
+    });
+  }
+}
+window.addEventListener('load', () => [3000, 8000].forEach(ms => setTimeout(() => _scheduleSheetWarm(0), ms)));
 
 function _mobNpCtrlsStale() {
   if (!isMobile() || !document.getElementById('mob-np-bplay')) return false;
@@ -31884,13 +31952,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       updatePlayBtn(); // set mediaSession to 'paused' so OS controls appear immediately
       
-      // kick the mv pipeline for the restored song in bg so the first open after restart is already warm
-      // deferred + idle so it never competes with startup paint / audio init
-      if (CFG.music_video) {
-        const _mvRestoreSong = song;
-        const _mvKick = () => { if (S.cur?.id === _mvRestoreSong.id) prefetchMvForSong(S.cur); };
-        setTimeout(() => { window.requestIdleCallback ? requestIdleCallback(_mvKick, {timeout: 4000}) : _mvKick(); }, 2500);
-      }
       // set src so pywebview/chromium sees this as a media page, but defer play()
       // until first user interaction to satisfy autoplay policy
       syncMediaAudio(song, true, S._restoredPosition);
