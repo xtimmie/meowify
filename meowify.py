@@ -28308,6 +28308,7 @@ function lgSettingsHtml(sq) {
         ${sl('glass thickness', 'thicker glass bends more', .2, 4, .05, p.thick, 'x', "lgSetP('thick',+this.value)")}
         ${sl('refractive index', 'higher bends light harder', 1.05, 2.5, .05, p.ior, 'x', "lgSetP('ior',+this.value)")}
         ${sl('edge curve', 'below 1 pushes the effect inward, above 1 hugs the border', .3, 3, .05, p.edgePow, 'x', "lgSetP('edgePow',+this.value)")}
+        ${sl('seam smoothing', 'softens the crease where opposite edges meet, the middle line and the diagonals, 0 is off', 0, 1, .05, p.soft, 'f100', "lgSetP('soft',+this.value)")}
         ${line('strength relative to panel size', 'same look on small and big panels', sw(p.relScale, "lgSetP('relScale',this.checked,true)"))}
         ${line('edge width relative to panel size', 'same look on small and big panels', sw(p.relBevel, "lgSetP('relBevel',this.checked,true)"))}
         ${line('invert direction', 'flip the refraction', sw(p.invert, "lgSetP('invert',this.checked)"))}
