@@ -11934,6 +11934,17 @@ html.nb-goo :is(#spiky-opt-group,#mob-spiky-opt-group){filter:none!important}
 .lgp-pill{left:14px;top:30px;width:150px;height:56px;border-radius:28px}
 .lgp-card{left:calc(50% - 60px);top:74px;width:210px;height:116px;border-radius:30px}
 html.lg-pad body.design-glassy #app:not(.mobile) #player{--lg-pad:72px;bottom:calc(-1 * var(--lg-pad));height:calc(88px + var(--lg-pad));padding-bottom:var(--lg-pad)}
+.mob-nav-glass,.mob-lens{display:none}
+html.lg-lens body.design-glassy #app.mobile #mobile-nav{background:none!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+html.lg-lens body.design-glassy #app.mobile .mob-nav-glass{display:block;position:absolute;inset:0;z-index:-2;pointer-events:none;border-radius:41px 41px 0 0;background:var(--glass-bg-mid);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--lg-pad:10px}
+html.lg-lens body.design-glassy .mob-tab::before{display:none}
+html.lg-lens body.design-glassy #app.mobile .mob-lens{display:block;position:absolute;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--s:.8;scale:var(--s);opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s,--s .15s}
+html.lg-lens body.design-glassy #app.mobile .mob-lens.on{--s:1;opacity:1;visibility:visible;transition:opacity .1s,visibility 0s;animation:tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy)}
+html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens:not(.mob-lens-slide){display:none}
+html.lg-lens:not(.lg-lens-slide) body.design-glassy #app.mobile .mob-lens-slide{display:none}
+html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;transition:opacity .15s,visibility 0s,translate calc(var(--dur-3,.3s) * 1.5) var(--ease-spring-bouncy,cubic-bezier(.34,1.56,.64,1))}
+html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s,translate calc(var(--dur-3,.3s) * 1.5) var(--ease-spring-bouncy,cubic-bezier(.34,1.56,.64,1))}
+html.nb-nav .mob-nav-glass,html.nb-nav .mob-lens{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
 .lg-chip.on{background:color-mix(in oklch,var(--color-primary) 22%,transparent);border-color:var(--color-primary);color:var(--color-primary)}
@@ -13921,6 +13932,12 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
     </div>
   </div>
   <div id="mobile-nav" class="ui-topbar">
+    <div class="mob-nav-glass"></div>
+    <div class="mob-lens" data-for="mnt-lib"></div>
+    <div class="mob-lens" data-for="mnt-add"></div>
+    <div class="mob-lens" data-for="mnt-pls"></div>
+    <div class="mob-lens" data-for="mnt-cfg"></div>
+    <div class="mob-lens mob-lens-slide"></div>
     <button class="mob-tab ui-tab-btn active" id="mnt-lib" onclick="setMobileTab('library')">
       <span class="mob-tab-icon ni" id="mobile-nb-lib"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="22" height="22">
         <path d="M12.6,15.1c-9,-4.2 -11,6.9 -3.1,6.9c3.5,0 5.5,-1.8 5.5,-5c0,-.1 0,-9.4 0,-11.2c0,0 2.4,.5 3.8,4c3.2,-5.4 -6.3,-9.8 -6.3,-6.7c0,2.8 .1,8.7 .1,12.1Z" fill="currentColor"/>
@@ -28092,6 +28109,7 @@ applyBlurPrefs();
 var LG_PARTS = [
   ['player',    'player bar',                'bottom player',                           '#player'],
   ['nav',       'mobile nav',                'bottom navigation, mobile',               '#mobile-nav'],
+  ['lens',      'mobile nav pill',           'active tab highlight, refracts the page', '.mob-lens'],
   ['topbar',    'topbar',                    'title and search bar',                    '.topbar'],
   ['sidebar',   'left sidebar',              'navigation sidebar, desktop',             '#sidebar'],
   ['rsidebars', 'queue, lyrics, now playing','right sidebars and mobile sheets',        '.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar'],
@@ -28099,7 +28117,7 @@ var LG_PARTS = [
   ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
 ];
 var _LG_LS = 'meowify_lg';
-var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1 };
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, slide: false };
 function _lgPrefs() { try { return Object.assign({}, _LG_DEF, JSON.parse(localStorage.getItem(_LG_LS))); } catch { return Object.assign({}, _LG_DEF); } }
 function _lgSave(s) { try { localStorage.setItem(_LG_LS, JSON.stringify(s)); } catch {} }
 function _lgFmt(u, v) {
@@ -28114,15 +28132,47 @@ function applyLG() {
   if (_sig !== window._lgSig) { window._lgSig = _sig; MU.setGlass({ sat: s.sat, bright: s.br, contrast: s.ct }); }
   L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q });
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
-  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: sel, enabled: on && !s.off.includes(k) });
+  const lensOn = on && !s.off.includes('lens');
+  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn : on && !s.off.includes(k) });
   L.enable(on);
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
+  document.documentElement.classList.toggle('lg-lens', lensOn);
+  document.documentElement.classList.toggle('lg-lens-slide', lensOn && !!s.slide);
+  if (lensOn) { _lensInit(); if (window._lensGo) _lensGo(); }
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
 function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s); applyLG(); renderSettings(); }
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
 function lgReset() { try { localStorage.removeItem(_LG_LS); } catch {} applyLG(); renderSettings(); }
+// mobile nav lens: one glass pill per tab (pop mode) + one shared pill (slide mode), positioned over the tabs, sitting inside the nav under the icons
+function lensLayout() {
+  const nav = document.getElementById('mobile-nav');
+  if (!nav || !document.documentElement.classList.contains('lg-lens')) return;
+  const nr = nav.getBoundingClientRect(), ox = nr.left + nav.clientLeft, oy = nr.top + nav.clientTop, py = 4;
+  let act = null;
+  const place = (l, r) => { const st = l.style; st.top = (r.top - oy + py) + 'px'; st.width = r.width + 'px'; st.height = Math.max(0, r.height - 2 * py) + 'px'; };
+  nav.querySelectorAll('.mob-tab').forEach(t => {
+    const r = t.getBoundingClientRect(), on = t.classList.contains('active'), l = nav.querySelector('.mob-lens[data-for="' + t.id + '"]');
+    if (on) act = r;
+    if (!l) return;
+    place(l, r); l.style.left = (r.left - ox) + 'px'; l.classList.toggle('on', on);
+  });
+  const sl = nav.querySelector('.mob-lens-slide');
+  if (sl && act) { place(sl, act); sl.style.translate = (act.left - ox) + 'px 0'; }
+  if (sl) sl.classList.toggle('on', !!act);
+}
+function _lensInit() {
+  const nav = document.getElementById('mobile-nav');
+  if (!nav || nav._lensInit) return; nav._lensInit = 1;
+  let q = 0;
+  const go = () => { if (q) return; q = requestAnimationFrame(() => { q = 0; lensLayout(); }); };
+  window._lensGo = go;
+  new ResizeObserver(go).observe(nav);
+  const mo = new MutationObserver(go);
+  nav.querySelectorAll('.mob-tab').forEach(t => mo.observe(t, { attributes: true, attributeFilter: ['class'] }));
+  go();
+}
 window._lgPos = window._lgPos || {};
 function _lgPosStyle(i) { const q = window._lgPos[i]; return q ? `style="left:${q[0]}px;top:${q[1]}px"` : ''; }
 function _lgDrag(e, i) {
@@ -28193,6 +28243,7 @@ function lgSettingsHtml(sq) {
         ${sl('contrast', 'punchier or flatter backdrop', .5, 1.5, .05, s.ct, 'f100', "lgSet('ct',+this.value)")}
         <div class="sb-grp">panels</div>
         ${parts}
+        ${line('mobile nav pill slides', 'the highlight slides between tabs instead of popping in', sw(!!s.slide, "lgSet('slide',this.checked)"), off)}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset liquid glass</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="lgReset()">reset</button></div>
       </div>
     </details>`;
