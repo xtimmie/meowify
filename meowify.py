@@ -14994,6 +14994,7 @@ function _precoverSongs(songs, limit) {
 
 // AUDIO ENGINE - gapless via Web Audio API
 // ═══════════════════════════════════════════════
+const _AE_ANDROID = /Android/i.test(navigator.userAgent);
 class AudioEngine {
   constructor() {
     this.ctx = null; this.gain = null;
@@ -15253,7 +15254,7 @@ class AudioEngine {
         this.cur?.songId, this.nxt?.songId, this._pausedId, this._stream?.songId
       ].filter(Boolean));
       const keys = Object.keys(this._cache);
-      if (keys.length >= 4) {
+      if (keys.length >= (_AE_ANDROID ? 2 : 4)) {
         for (const k of keys) {
           if (!protected_.has(k)) { delete this._cache[k]; break; }
         }
@@ -15460,7 +15461,7 @@ class AudioEngine {
     if (!S.gapless) return;
     // preload earlier (20s) so slow connections have buffer time; clamp so we don't
     // fire immediately on very short tracks
-    const delay = Math.max(0, (rem - 20) * 1000);
+    const delay = _AE_ANDROID ? Math.max(0, Math.min(rem - 20, 10) * 1000) : Math.max(0, (rem - 20) * 1000);
     this._pt = setTimeout(async () => {
       if (!this.cur) return;
       const nextNid = getNext();
