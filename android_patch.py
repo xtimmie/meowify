@@ -552,6 +552,27 @@ def _prepare_ffmpeg_libs():
     sys.__stderr__.write('[ffmpeg] libs ready at ' + libs + '\n')
     sys.__stderr__.flush()
 
+def _start_boot_confirm(meowify_module, port):
+    """ota safety net: once the server has been up for a few seconds, mark the boot as good.
+    kotlin rolls the ota back if .booting is still there on the next start."""
+    import threading, time
+    ota = os.environ.get("MEOWIFY_OTA_DIR", "")
+    if not ota:
+        return
+    def _run():
+        try:
+            if not meowify_module.wait_for_server("127.0.0.1", port, timeout=60):
+                return
+            time.sleep(3)
+            try:
+                os.remove(os.path.join(ota, ".booting"))
+            except FileNotFoundError:
+                pass
+        except Exception as e:
+            sys.__stderr__.write(f'[ota] boot confirm failed: {e}\n')
+            sys.__stderr__.flush()
+    threading.Thread(target=_run, daemon=True).start()
+
 def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     import sys as _sys
     global _data_dir, _server_started
@@ -590,9 +611,8 @@ def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     _prepare_ffmpeg_libs()
     _patch_ffmpeg()
 
-    # ensure data dir is on sys.path so `import meowify` finds meowify.py
-    if _data_dir and _data_dir not in sys.path:
-        sys.path.insert(0, _data_dir)
+    # sys.path (ota deps -> ota code -> bundled code) is set up by ServerService.kt;
+    # do not insert the data dir here, it would shadow the ota copies
 
     # import meowify — module-level code runs here (load_cfg etc)
     import meowify
@@ -624,6 +644,7 @@ def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     _sys2.__stderr__.flush()
 
     print(f"android_patch: starting flask on 127.0.0.1:{port}")
+    _start_boot_confirm(meowify, port)
 
     # run flask — this call blocks until the process is killed
     meowify.app.run(
