@@ -11858,7 +11858,7 @@ body.rs-full #app:not(.mobile) #vc-wrap{grid-column:1;grid-row:4}
 body.rs-full #app:not(.mobile) .queue-sidebar,body.rs-full #app:not(.mobile) .lyrics-sidebar,body.rs-full #app:not(.mobile) .nowplaying-sidebar{grid-column:2;grid-row:1/-1;min-height:0}
 #vc{flex:1;overflow:auto;padding:0 var(--vc-px) var(--bar-h)}
 body.design-glassy #app:not(.mobile) .list-header::before{content:none}
-body.design-glassy #app:not(.mobile) .list-header{margin:0 calc(var(--vc-px) * -1);padding-left:calc(var(--vc-px) + 8px);padding-right:calc(var(--vc-px) + 8px);width:auto;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);transition:backdrop-filter 180ms var(--ease-out),-webkit-backdrop-filter 180ms var(--ease-out)}
+body.design-glassy #app:not(.mobile) .list-header{margin:0 calc(var(--vc-px) * -1);padding-left:calc(var(--vc-px) + 8px);padding-right:calc(var(--vc-px) + 8px);width:auto;backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px)}
 body.design-glassy #app:not(.mobile) .list-header.pinned{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 body.design-glassy #app:not(.mobile) #vc:has(.list-header.pinned){background:none!important}
 body.design-glassy #app:not(.mobile) #vc-wrap{position:relative;isolation:isolate}
