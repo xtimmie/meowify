@@ -12202,10 +12202,16 @@ html.lg-lens body.design-glassy #app.mobile .mob-nav-glass{display:block;positio
 html.lg-lens body.design-glassy .mob-tab::before{display:none}
 html.lg-lens body.design-glassy #app.mobile .mob-lens{display:block;position:absolute;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--s:.8;scale:var(--s);opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s,--s .15s}
 html.lg-lens body.design-glassy #app.mobile .mob-lens.on{--s:1;opacity:1;visibility:visible;transition:opacity .1s,visibility 0s;animation:tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy)}
-html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens:not(.mob-lens-slide){display:none}
-html.lg-lens:not(.lg-lens-slide) body.design-glassy #app.mobile .mob-lens-slide{display:none}
-html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;will-change:translate,scale;transition:opacity .15s,visibility 0s}
-html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s}
+html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens:not(.mob-lens-slide){display:none}
+html.lg-lens:not(.nav-slide) body.design-glassy #app.mobile .mob-lens-slide{display:none}
+html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;will-change:translate,scale;transition:opacity .15s,visibility 0s}
+html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s}
+/* shared sliding nav pill, any theme. glass only restyles it (and refracts it when liquid glass is on, rules above) */
+html.nav-slide #app.mobile .mob-lens-slide{display:block;position:absolute;left:0;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 20%,#0000);will-change:translate,scale;opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s}
+html.nav-slide #app.mobile .mob-lens-slide.on{opacity:1;visibility:visible;transition:opacity .15s,visibility 0s}
+html.nav-slide .mob-tab::before{display:none}
+html.nav-slide .mob-tab.active{animation:none}
+html.nav-slide body.design-glassy #app.mobile .mob-lens-slide{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
 html.nb-nav .mob-nav-glass,html.nb-nav .mob-lens{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
@@ -28535,7 +28541,7 @@ var LG_PARTS = [
   ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
 ];
 var _LG_LS = 'meowify_lg';
-var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, slide: false };
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1 };
 function _lgPrefs() { const v = DevPrefs.get('lg'); return Object.assign({}, _LG_DEF, v && typeof v === 'object' ? v : {}); }
 function _lgSave(s) { DevPrefs.set('lg', s); }
 function _lgFmt(u, v) {
@@ -28563,8 +28569,19 @@ function applyLG() {
   document.querySelectorAll('.list-header').forEach(_pinLG);
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
   document.documentElement.classList.toggle('lg-lens', lensOn);
-  document.documentElement.classList.toggle('lg-lens-slide', lensOn && !!s.slide);
-  if (lensOn) { _lensInit(); if (window._lensGo) _lensGo(); }
+  applyNavPill();
+}
+// mobile nav pill style: one shared pill that slides between tabs (spring) or a pill per tab that pops in.
+// works in every theme, glassy just restyles the same element (and refracts it when liquid glass is on)
+function _navPillSlide() {
+  const c = _dpCfg();
+  if (c && c.nav_pill_slide != null) return !!c.nav_pill_slide;
+  const l = DevPrefs.get('lg'); return !!(l && l.slide); // old per device liquid glass toggle, used until the new setting is touched
+}
+function applyNavPill() {
+  const root = document.documentElement, slide = _navPillSlide();
+  root.classList.toggle('nav-slide', slide);
+  if (slide || root.classList.contains('lg-lens')) { _lensInit(); if (window._lensGo) _lensGo(); }
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
@@ -28608,11 +28625,11 @@ function lensTick(t) {
 function lensKick() { if (!_LENS.raf) { _LENS.t = 0; _LENS.raf = requestAnimationFrame(lensTick); } }
 function lensLayout() {
   const nav = document.getElementById('mobile-nav'), root = document.documentElement;
-  if (!nav || !root.classList.contains('lg-lens')) return;
+  if (!nav || !(root.classList.contains('lg-lens') || root.classList.contains('nav-slide'))) return;
   // everything is measured in screen px and converted to the nav's own (ui zoomed) px with the nav's scale ratio
   const nr = nav.getBoundingClientRect(), k = (nav.offsetWidth ? nr.width / nav.offsetWidth : 1) || 1;
   const ox = nr.left + nav.clientLeft * k, oy = nr.top + nav.clientTop * k, py = 4, cw = nav.clientWidth, ch = nav.clientHeight;
-  const slide = root.classList.contains('lg-lens-slide'), F = LENS_FX;
+  const slide = root.classList.contains('nav-slide'), F = LENS_FX;
   let act = null;
   const place = (l, r) => {
     const w = Math.min(cw, r.width / k), top = Math.max(0, (r.top - oy) / k + py), hgt = Math.max(0, Math.min(ch - top, r.height / k - 2 * py)), st = l.style;
@@ -28715,7 +28732,6 @@ function lgSettingsHtml(sq) {
         ${sl('contrast', 'punchier or flatter backdrop', .5, 1.5, .05, s.ct, 'f100', "lgSet('ct',+this.value)")}
         <div class="sb-grp">panels</div>
         ${parts}
-        ${line('mobile nav pill slides', 'the highlight slides between tabs instead of popping in', sw(!!s.slide, "lgSet('slide',this.checked)"), off)}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset liquid glass</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="lgReset()">reset</button></div>
       </div>
     </details>`;
@@ -29345,6 +29361,7 @@ async function loadData() {
       _repaintWavyColors(); updateSpikyBtn(); _updateMobNpSpiky();
     }
     if (_chg('glass_alpha') || _chg('glass_blur') || _chg('rs_full_height')) applyGlass(cfg);
+    if (_chg('nav_pill_slide')) applyNavPill();
     if (cfg.ui_design !== undefined && _chg('ui_design')) applyDesign(cfg.ui_design);
     if (cfg.font_override !== undefined && _chg('font_override')) applyFontOverride(cfg.font_override);
     applyPlayerBtnVisibility();
@@ -30935,6 +30952,12 @@ function renderSettings() {
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.rs_full_height?'checked':''} onchange="toggleRsFull(this.checked)" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
+        `)}
+        ${row('mobile nav pill slides', 'the active tab highlight slides between tabs with a springy stretch instead of popping in, works with every theme (mobile only)', `
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${_navPillSlide()?'checked':''} onchange="saveSetting('nav_pill_slide',this.checked);applyNavPill()" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
