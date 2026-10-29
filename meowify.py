@@ -284,7 +284,7 @@ def clean_title(title, artist=None):
     ]
     for p in patterns:
         t = re.sub(p, '', t, flags=re.IGNORECASE)
-    t = re.sub(r'\s*\(?\s*(ft\.?|feat\.?|featuring)\s+[^)\]]*[)\]]?', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'\s*\(?\s*\b(ft\.?|feat\.?|featuring)\s+[^)\]]*[)\]]?', '', t, flags=re.IGNORECASE)
     t = re.sub(r'\s+', ' ', t).strip()
     t = t.strip(' -–—')
     return t or 'untitled'
@@ -2510,8 +2510,7 @@ def _genius_get(path, token):
         return {}
 
 def _fuzzy(a, b):
-    from difflib import SequenceMatcher
-    return SequenceMatcher(None, (a or '').lower(), (b or '').lower()).ratio()
+    return _SequenceMatcher(None, (a or '').lower(), (b or '').lower()).ratio()
 
 _TITLE_MARKER_WORDS = {'part', 'remix', 'rmx', 'live', 'acoustic', 'instrumental', 'sped', 'slowed',
                        'reverb', 'nightcore', 'cover', 'demo', 'vip', 'flip', 'bootleg'}
@@ -4388,12 +4387,14 @@ def _cleanup_sync_actions():
 def cleanup_orphans():
     stats = {'orphaned_files': 0, 'stuck_downloads': 0, 'empty_albums': 0}
     stuck_covers = []
+    with _dl_lock:
+        _live_sids = {d.get('song_id') for d in _dls.values() if d.get('song_id') and d.get('status') not in ('done', 'error')}
     try:
         with db() as c:
             # 1. remove stuck placeholder downloads first
-            stuck = c.execute("SELECT id,cover_path FROM songs WHERE source='downloading' AND file_path=''").fetchall()
-            if stuck:
-                c.execute("DELETE FROM songs WHERE source='downloading' AND file_path=''")
+            stuck = [r for r in c.execute("SELECT id,cover_path FROM songs WHERE source='downloading' AND file_path=''").fetchall() if r[0] not in _live_sids]
+            for _s in stuck:
+                c.execute("DELETE FROM songs WHERE id=?", (_s[0],))
             stats['stuck_downloads'] = len(stuck)
             stuck_covers = [(s[0], s[1]) for s in stuck]
 
@@ -8139,7 +8140,8 @@ def _dbx_apply_song_set_album(c, song_sync_id, album_id, action_ts=0):
               (album_id, alb[1], int(_time.time()), sid))
     ex = c.execute("SELECT id FROM album_tracks WHERE album_id=? AND song_id=?", (album_id, sid)).fetchone()
     if not ex:
-        c.execute("INSERT INTO album_tracks (id, album_id, song_id) VALUES (?,?,?)",
+        c.execute("INSERT INTO album_tracks (id, album_id, song_id, title, artist, track_num) "
+                  "SELECT ?, ?, id, title, artist, track_num FROM songs WHERE id=?",
                   (str(uuid.uuid4()), album_id, sid))
 
 def _dbx_apply_actions(c, actions):
@@ -10455,7 +10457,8 @@ def api_song_set_album(sid):
         ex = c.execute("SELECT id FROM album_tracks WHERE album_id=? AND song_id=?",
                        (album_id, sid)).fetchone()
         if not ex:
-            c.execute("INSERT INTO album_tracks (id, album_id, song_id) VALUES (?,?,?)",
+            c.execute("INSERT INTO album_tracks (id, album_id, song_id, title, artist, track_num) "
+                      "SELECT ?, ?, id, title, artist, track_num FROM songs WHERE id=?",
                       (str(uuid.uuid4()), album_id, sid))
         if song[1]:  # sync_id
             _record_sync_action('song_set_album', song[1], target2=album_id, conn=c)
@@ -11606,7 +11609,7 @@ body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{ma
 body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){margin-bottom:10px;padding:8px 16px;position:relative}
 #app.mobile :is(.qs-hdr,.lyrics-hdr){margin-bottom:8px;position:relative}
-#app :is(.qs-hdr,.lyrics-hdr)::after{content:\"\";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,var(--line-lowest));pointer-events:none}
+#app :is(.qs-hdr,.lyrics-hdr)::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:1px;background:var(--hdr-line,var(--line-lowest));pointer-events:none}
 body.design-glassy #app :is(.qs-hdr,.lyrics-hdr){border-bottom:none;--hdr-line:var(--glass-border)}
 body.design-paper #app :is(.qs-hdr,.lyrics-hdr){box-shadow:none!important;--hdr-line:color-mix(in oklch,var(--paper-accent) 12%,transparent)}
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
@@ -16006,10 +16009,8 @@ class AudioEngine {
     el.loop = true;
     el.volume = 0;
     try {
-      // generate a long silent WAV (1 hour) so the loop event fires once per hour
-      // instead of once per second — eliminates the continuous C++ GC / seeking overhead
-      // that a 1s looping clip causes in WebView2/Chromium
-      const sampleRate = 8000, channels = 1, durationSecs = 3600;
+      // 60s silent WAV: loops once a minute instead of every second without allocating ~55mb up front
+      const sampleRate = 8000, channels = 1, durationSecs = 60;
       const numSamples = sampleRate * durationSecs;
       const dataSize = numSamples * channels * 2; // 16-bit PCM
       const wavBuf = new ArrayBuffer(44 + dataSize);
@@ -21744,27 +21745,28 @@ async function rescanSong(sid) {
 // SESSION PERSISTENCE
 // ═══════════════════════════════════════════════
 let _sessionSaveTimer = null;
+function _sessionBody(position) {
+  const isChaos = S.shuffle && S.shuffleMode === 'chaos';
+  return {
+    song_id: S.cur.id,
+    queue: isChaos ? (S._chaosContext || S.library).map(s => s.id) : S.queue.map(s => s.id),
+    qi: S.qi,
+    position,
+    duration: engine.duration || S._restoredDuration || S.cur.duration || 0,
+    repeat: S.repeat,
+    queueSource: S.queueSource,
+    chaos: isChaos ? [...(S._chaosPlayed || [])] : undefined,
+    chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
+    chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
+  };
+}
 function saveSession() {
   clearTimeout(_sessionSaveTimer);
   _sessionSaveTimer = setTimeout(async () => {
     if (!S.cur) return;
     // in chaos mode S.queue is always [currentSong] — save full context so
     // we can rebuild it on restore instead of stopping after the first song
-    const isChaos = S.shuffle && S.shuffleMode === 'chaos';
-    await api('POST', '/api/session', {
-      song_id: S.cur.id,
-      queue: isChaos
-        ? (S._chaosContext || S.library).map(s => s.id)
-        : S.queue.map(s => s.id),
-      qi: S.qi,
-      position: engine.hasPaused ? engine._pausedAt : engine.curTime,
-      duration: engine.duration || S._restoredDuration || S.cur.duration || 0,
-      repeat: S.repeat,
-      queueSource: S.queueSource,
-      chaos: isChaos ? [...(S._chaosPlayed || [])] : undefined,
-      chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
-      chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
-    });
+    await api('POST', '/api/session', _sessionBody(engine.hasPaused ? engine._pausedAt : engine.curTime));
   }, 150);
 }
 
@@ -30260,7 +30262,7 @@ function renderSettings() {
     const listItems = _SET_SECTIONS.map(s => `
       <div class="set-list-item mu-ripple" onclick="${s.id === '_stats' ? "setView('stats')" : `setSettingsSection('${s.id}')`}">
         <div style="display:flex;align-items:center;gap:14px">
-          <svg class="set-list-icon" viewBox="0 0 24 24" width="22" height="22"">${s.icon}</svg>
+          <svg class="set-list-icon" viewBox="0 0 24 24" width="22" height="22">${s.icon}</svg>
           <span class="set-list-label">${s.label}</span>
         </div>
         ${chevron}
@@ -31944,13 +31946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       pos = engine._lastKnownPosition || S._restoredPosition || 0;
     }
-    navigator.sendBeacon('/api/session', JSON.stringify({
-      song_id: S.cur.id,
-      queue: S.queue.map(s => s.id),
-      qi: S.qi,
-      position: pos,
-      duration: engine.duration || S._restoredDuration || S.cur.duration || 0,
-    }));
+    navigator.sendBeacon('/api/session', JSON.stringify(_sessionBody(pos)));
   });
 
 });
