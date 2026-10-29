@@ -19457,7 +19457,7 @@ function _closeSidebarState(which) {
       document.getElementById('queue-sidebar').classList.add('hidden');
       document.getElementById('bqueue').classList.remove('active');
       if (mobile) _closeMobSheet('queue');
-      if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
+      if (_qvlist && !mobile) { _qvlist.destroy(); _qvlist = null; } // mobile sheet stays laid out off screen, keep the list so reopening is instant
       break;
     case 'lyrics':
       S.lyricsOpen = false;
@@ -19561,7 +19561,7 @@ function toggleQueue() {
     document.getElementById('queue-sidebar').classList.remove('hidden');
     document.getElementById('bqueue').classList.add('active');
     if (isMobile()) _openMobSheet('queue');
-    _qSig = null;
+    if (!isMobile()) _qSig = null; // mobile keeps the built list between opens, renderQueueSidebar only touches what changed
     renderQueueSidebar();
     _scrollQueueToCurrent();
     S._queueScrollPending = false;
@@ -19604,6 +19604,21 @@ function toggleNowPlaying() {
 // initMobNpSeek() is called only inside the shell render path and is itself
 // idempotent (flag-guarded), so it's safe to call from _syncSidebarsToMode too.
 
+// build the mobile sheets while they are closed (idle time) so the first open is just a slide, not a render.
+// both are idempotent: they bail when the thing already exists, opening still runs the normal cheap update path
+function _prerenderNowPlaying() {
+  if (!isMobile() || S.nowPlayingOpen || document.getElementById('np-cover-inner')) return;
+  try { renderNowPlaying(true); } catch (e) { console.warn('np prerender failed', e); }
+}
+function _prebuildQueue() {
+  if (!isMobile() || S.queueOpen || _qvlist || _qSig || !S.queue.length || (S.shuffle && S.shuffleMode === 'chaos')) return;
+  try { renderQueueSidebar(); } catch (e) { console.warn('queue prebuild failed', e); }
+}
+window.addEventListener('load', () => [3000, 8000].forEach(ms => setTimeout(() => {
+  const idle = window.requestIdleCallback || (f => setTimeout(f, 50));
+  idle(() => { _prerenderNowPlaying(); idle(_prebuildQueue); });
+}, ms)));
+
 function _mobNpCtrlsStale() {
   if (!isMobile() || !document.getElementById('mob-np-bplay')) return false;
   return !!document.getElementById('mob-np-wavy-wrap') !== !!CFG.wavy_seekbar
@@ -19617,8 +19632,8 @@ function _syncMobNpCtrls() {
   _startSharedAnim();
 }
 
-function renderNowPlaying() {
-  if (!S.nowPlayingOpen) return;
+function renderNowPlaying(_pre) {
+  if (!S.nowPlayingOpen && !_pre) return;
   const body = document.getElementById('nowplaying-body');
   if (!body) return;
   const song = S.cur || {id: '', title: 'no song playing :v', artist: '', _empty: true};
@@ -19876,7 +19891,7 @@ function renderNowPlaying() {
     body.innerHTML = covHtml + mobCtrlsHtml + `<hr class="np-cover-col-sep">` + lrcHtml
       + (!_npHide.details && metaRows.length ? `<div class="np-section-hdr ui-section-hdr">details</div><div class="np-meta-grid ui-panel">${metaHtml}</div>` : '')
       + (!_npHide.nextup ? nextHtml : '');
-    if (CFG.music_video && S.cur) { _mvActive = false; _mvLoadForSong(S.cur); }
+    if (CFG.music_video && S.cur && !_pre) { _mvActive = false; _mvLoadForSong(S.cur); }
     // idempotent - safe to call even when re-rendering shell on breakpoint switch
     initMobNpSeek();
   }
