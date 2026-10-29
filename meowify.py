@@ -19561,7 +19561,7 @@ function toggleQueue() {
     document.getElementById('queue-sidebar').classList.remove('hidden');
     document.getElementById('bqueue').classList.add('active');
     if (isMobile()) _openMobSheet('queue');
-    if (!isMobile()) _qSig = null; // mobile keeps the built list between opens, renderQueueSidebar only touches what changed
+    if (_qEnvSig !== _qEnv()) _qSig = null; // otherwise keep what is built: renderQueueSidebar only touches what changed
     renderQueueSidebar();
     _scrollQueueToCurrent();
     S._queueScrollPending = false;
@@ -19632,7 +19632,8 @@ function _syncMobNpCtrls() {
   _startSharedAnim();
 }
 
-function renderNowPlaying(_pre) {
+function renderNowPlaying(_preArg) {
+  const _pre = _preArg === true; // true = build the closed sheet ahead of time, anything else (events, callbacks) is a normal call
   if (!S.nowPlayingOpen && !_pre) return;
   const body = document.getElementById('nowplaying-body');
   if (!body) return;
@@ -21121,6 +21122,9 @@ function _makeQueueRow(s, i) {
 }
 
 let _qSig = null;    // signature of the queue content currently rendered (null = must rebuild)
+let _qEnvSig = '';   // layout/zoom/design the rendered queue was built for, a change forces one rebuild on next open
+let _qChaosRows = null; // html of the rows currently shown in the chaos view, so updates only patch what differs
+const _qEnv = () => (isMobile() ? 'm' : 'd') + '|' + (window.devicePixelRatio || 1) + '|' + (typeof _zoom === 'number' ? _zoom : 1) + '|' + (CFG.ui_design || '');
 let _qLastQi = -1;   // queue index that was marked as playing in the last render
 
 let _qAddAnim = null; // {idx, count} of rows just added, consumed by the next full render
@@ -21406,9 +21410,20 @@ function renderQueueSidebar() {
         + '<div class="sdur">' + (next.duration ? fmt(next.duration) : '') + '</div>'
         + '</div>';
     }
-    inner.innerHTML = '<div class="song-list" style="padding:8px 8px 0">' + rowsHtml + '</div>';
-    // re-attach click on current row (history and next rows are display-only)
-    inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])')?.addEventListener('click', () => {});
+    // patch instead of rebuild: history rows never change, so only the rows from the first difference on get replaced
+    const _rows = rowsHtml.split(/(?=<div class="song-row)/).filter(Boolean);
+    const _list = inner.firstElementChild;
+    let _k = 0;
+    if (_qChaosRows && _list && _list.dataset.chaos === '1') {
+      const _n = Math.min(_qChaosRows.length, _rows.length);
+      while (_k < _n && _qChaosRows[_k] === _rows[_k]) _k++;
+      if (_k === _rows.length && _k === _qChaosRows.length) return; // nothing changed
+      while (_list.children.length > _k) _list.lastElementChild.remove();
+      _list.insertAdjacentHTML('beforeend', _rows.slice(_k).join(''));
+    } else {
+      inner.innerHTML = '<div class="song-list" data-chaos="1" style="padding:8px 8px 0">' + _rows.join('') + '</div>';
+    }
+    _qChaosRows = _rows;
     // scroll current into view
     requestAnimationFrame(() => {
       const curRow = inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])');
@@ -21433,7 +21448,7 @@ function renderQueueSidebar() {
 
   const _hadSig = _qSig !== null;
   const _prevScroll = inner.scrollTop;
-  _qSig = _sig;
+  _qSig = _sig; _qEnvSig = _qEnv(); _qChaosRows = null;
   // destroy old vlist
   if (_qvlist) { _qvlist.destroy(); _qvlist = null; }
 
