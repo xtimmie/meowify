@@ -11942,8 +11942,8 @@ html.lg-lens body.design-glassy #app.mobile .mob-lens{display:block;position:abs
 html.lg-lens body.design-glassy #app.mobile .mob-lens.on{--s:1;opacity:1;visibility:visible;transition:opacity .1s,visibility 0s;animation:tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy)}
 html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens:not(.mob-lens-slide){display:none}
 html.lg-lens:not(.lg-lens-slide) body.design-glassy #app.mobile .mob-lens-slide{display:none}
-html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;transition:opacity .15s,visibility 0s,translate calc(var(--dur-3,.3s) * 1.5) var(--ease-spring-bouncy,cubic-bezier(.34,1.56,.64,1))}
-html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s,translate calc(var(--dur-3,.3s) * 1.5) var(--ease-spring-bouncy,cubic-bezier(.34,1.56,.64,1))}
+html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;will-change:translate,scale;transition:opacity .15s,visibility 0s}
+html.lg-lens.lg-lens-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s}
 html.nb-nav .mob-nav-glass,html.nb-nav .mob-lens{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
@@ -28146,21 +28146,66 @@ function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
 function lgReset() { try { localStorage.removeItem(_LG_LS); } catch {} applyLG(); renderSettings(); }
 // mobile nav lens: one glass pill per tab (pop mode) + one shared pill (slide mode), positioned over the tabs, sitting inside the nav under the icons
+// slide mode feel, tweak here. spring: higher stiffness = faster, lower damping = more wobble (damping ~ 2*sqrt(stiffness) is no overshoot at all)
+var LENS_FX = {
+  stiffness: 480, damping: 30,
+  stretch: .22,      // extra scaleX at refSpeed, 0 = no squash and stretch
+  refSpeed: 1400,    // px/s that counts as a full stretch
+  maxStretch: .35,   // hard cap of the extra scaleX
+  squash: .6,        // how much scaleY shrinks while stretching, 1 = keeps volume
+  follow: 28,        // how fast the stretch follows the speed, higher = snappier
+  edgeInset: 2,      // px the pill always stays away from the nav edge
+  settle: .02,       // stop threshold in px
+};
+var _LENS = { x: 0, v: 0, tgt: 0, w: 0, s: 0, dir: 1, t: 0, raf: 0, ready: false, nw: 0, limL: 0, limR: 0 };
+function lensPaint() {
+  const sl = document.querySelector('#mobile-nav .mob-lens-slide'); if (!sl) return;
+  const L = _LENS, F = LENS_FX, sx = 1 + L.s, sy = 1 / (1 + L.s * F.squash), dir = L.dir;
+  // anchor the trailing edge so the leading edge stretches ahead, then keep the whole thing inside the nav
+  const lo = dir > 0 ? L.x : L.x + L.w - L.w * sx, hi = lo + L.w * sx;
+  let dx = 0; if (lo < L.limL) dx = L.limL - lo; else if (hi > L.limR) dx = L.limR - hi;
+  sl.style.transformOrigin = dir > 0 ? '0% 50%' : '100% 50%';
+  sl.style.translate = (L.x + dx).toFixed(2) + 'px 0';
+  sl.style.scale = sx.toFixed(4) + ' ' + sy.toFixed(4);
+}
+function lensTick(t) {
+  const L = _LENS, F = LENS_FX; L.raf = 0;
+  const dt = Math.min(.05, (t - (L.t || t)) / 1000); L.t = t;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  for (let i = 0; i < n; i++) { L.v += (-F.stiffness * (L.x - L.tgt) - F.damping * L.v) * h; L.x += L.v * h; }
+  const want = Math.min(F.maxStretch, Math.abs(L.v) / F.refSpeed * F.stretch);
+  L.s += (want - L.s) * Math.min(1, dt * F.follow);
+  if (Math.abs(L.v) > 20) L.dir = L.v > 0 ? 1 : -1;
+  if (Math.abs(L.x - L.tgt) < F.settle && Math.abs(L.v) < F.settle * 20 && L.s < .002) { L.x = L.tgt; L.v = 0; L.s = 0; L.t = 0; lensPaint(); return; }
+  lensPaint(); L.raf = requestAnimationFrame(lensTick);
+}
+function lensKick() { if (!_LENS.raf) { _LENS.t = 0; _LENS.raf = requestAnimationFrame(lensTick); } }
 function lensLayout() {
-  const nav = document.getElementById('mobile-nav');
-  if (!nav || !document.documentElement.classList.contains('lg-lens')) return;
-  const nr = nav.getBoundingClientRect(), ox = nr.left + nav.clientLeft, oy = nr.top + nav.clientTop, py = 4;
+  const nav = document.getElementById('mobile-nav'), root = document.documentElement;
+  if (!nav || !root.classList.contains('lg-lens')) return;
+  // everything is measured in screen px and converted to the nav's own (ui zoomed) px with the nav's scale ratio
+  const nr = nav.getBoundingClientRect(), k = (nav.offsetWidth ? nr.width / nav.offsetWidth : 1) || 1;
+  const ox = nr.left + nav.clientLeft * k, oy = nr.top + nav.clientTop * k, py = 4, cw = nav.clientWidth, ch = nav.clientHeight;
+  const slide = root.classList.contains('lg-lens-slide'), F = LENS_FX;
   let act = null;
-  const place = (l, r) => { const st = l.style; st.top = (r.top - oy + py) + 'px'; st.width = r.width + 'px'; st.height = Math.max(0, r.height - 2 * py) + 'px'; };
+  const place = (l, r) => {
+    const w = Math.min(cw, r.width / k), top = Math.max(0, (r.top - oy) / k + py), hgt = Math.max(0, Math.min(ch - top, r.height / k - 2 * py)), st = l.style;
+    st.top = top + 'px'; st.width = w + 'px'; st.height = hgt + 'px';
+    return w;
+  };
   nav.querySelectorAll('.mob-tab').forEach(t => {
     const r = t.getBoundingClientRect(), on = t.classList.contains('active'), l = nav.querySelector('.mob-lens[data-for="' + t.id + '"]');
     if (on) act = r;
     if (!l) return;
-    place(l, r); l.style.left = (r.left - ox) + 'px'; l.classList.toggle('on', on);
+    const w = place(l, r); l.style.left = Math.max(0, Math.min(cw - w, (r.left - ox) / k)) + 'px'; l.classList.toggle('on', on);
   });
-  const sl = nav.querySelector('.mob-lens-slide');
-  if (sl && act) { place(sl, act); sl.style.translate = (act.left - ox) + 'px 0'; }
+  const sl = nav.querySelector('.mob-lens-slide'), L = _LENS;
   if (sl) sl.classList.toggle('on', !!act);
+  if (!slide || !sl || !act) { L.ready = false; return; }
+  const w = place(sl, act), tgt = Math.max(F.edgeInset, Math.min(cw - F.edgeInset - w, (act.left - ox) / k));
+  L.w = w; L.limL = F.edgeInset; L.limR = cw - F.edgeInset;
+  if (!L.ready || Math.abs(cw - L.nw) > .5) { L.nw = cw; L.ready = true; L.x = L.tgt = tgt; L.v = 0; L.s = 0; lensPaint(); return; }
+  if (Math.abs(tgt - L.tgt) > .01) { L.tgt = tgt; lensKick(); }
 }
 function _lensInit() {
   const nav = document.getElementById('mobile-nav');
