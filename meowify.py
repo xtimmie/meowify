@@ -13153,6 +13153,26 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .set-list-icon{flex-shrink:0;color:var(--color-on-surface)}
 .set-list-label{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface)}
 .set-list-chevron{color:var(--color-on-surface-variant);flex-shrink:0}
+.set-head{display:flex;align-items:center;gap:6px;margin:0 0 14px;min-height:44px;padding-right:40px}
+.set-back{position:relative;overflow:hidden;flex-shrink:0;width:40px;height:40px;margin-left:-8px;border:none;background:none;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--color-on-surface);-webkit-tap-highlight-color:transparent;transition:background .15s}
+@media (hover:hover){.set-back:hover{background:var(--color-surface-container-high)}}
+.set-back:active{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}
+.set-head-title{font:var(--type-title-large);font-variation-settings:var(--fv-title);color:var(--color-on-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.set-nav{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;margin:0 -20px;padding:2px 20px;cursor:pointer;border-bottom:1px solid var(--line-container);-webkit-tap-highlight-color:transparent}
+.set-nav:last-child{border-bottom:none}
+.set-nav .set-title-cell{padding:12px 0}
+@media (hover:hover){.set-nav:hover{background:var(--color-surface-container-high)}}
+.set-nav:active{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent)}
+@keyframes set-in-fwd{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes set-in-back{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
+.set-anim-fwd{animation:set-in-fwd .32s cubic-bezier(.16,1,.3,1) backwards}
+.set-anim-back{animation:set-in-back .32s cubic-bezier(.16,1,.3,1) backwards}
+@media (prefers-reduced-motion:reduce){.set-anim-fwd,.set-anim-back{animation:none}}
+.set-sub-page .set-section{overflow:visible}
+.set-sub-page .set-blur>summary{display:none}
+.set-sub-page .set-blur{border-bottom:none}
+.set-sub-page .lgp{position:sticky;top:0;z-index:6;height:150px;margin:0 0 12px;box-shadow:0 6px 14px -8px rgba(0,0,0,.45)}
+.set-pin{position:sticky;top:0;z-index:6;display:flex;justify-content:center;margin:0 -20px 6px;padding:14px 20px 12px;background:var(--color-surface-container);border-bottom:1px solid var(--line-container)}
 .set-mob-back{position:relative;overflow:hidden;display:flex;align-items:center;gap:4px;padding:6px 8px 6px 2px;margin-bottom:8px;cursor:pointer;color:var(--color-primary);font:var(--type-label-large);font-variation-settings:var(--fv-label);-webkit-tap-highlight-color:transparent;border:none;background:none;border-radius:var(--radius-sm)}
 
 @media (min-width:768px){
@@ -18983,6 +19003,8 @@ function setView(v, pid, aid) {
     renderStats();
   } else if (v === 'settings') {
     window._settingsSection = null;
+    window._settingsSub = null;
+    window._setDir = null;
     document.getElementById('vtitle').textContent = 'settings';
     renderSettings();
   }
@@ -28522,7 +28544,7 @@ function lgSettingsHtml(sq) {
   for (const [k, label, sub] of LG_PARTS) parts += line(label, sub, sw(!s.off.includes(k), `lgPart('${k}',!this.checked)`), off);
   setTimeout(() => { try { MU.liquidGlass.mountPreviews(); } catch {} }, 0);
   return `
-    <details class="set-blur" ${window._lgOpen ? 'open' : ''} ontoggle="window._lgOpen=this.open;if(this.open)setTimeout(()=>MU.liquidGlass.mountPreviews(),0)">
+    <details class="set-blur" ${(window._lgOpen || window._settingsSub === 'glass') ? 'open' : ''} ontoggle="window._lgOpen=this.open;if(this.open)setTimeout(()=>MU.liquidGlass.mountPreviews(),0)">
       <summary>
         <div class="set-title-cell"><div class="set-lbl">liquid glass</div><div class="set-sub">refracts whatever is behind glass panels, chromium only and heavier on the gpu, off by default</div></div>
         <span class="sb-meta">${!L.supported ? 'unsupported' : s.on ? 'on' : 'off'}</span>
