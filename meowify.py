@@ -14496,7 +14496,7 @@ function mobSort(field){
     S.queue.sort((a,b)=>{
       let av=a[S.libSort]??(typeof b[S.libSort]==='string'?'':0);
       let bv=b[S.libSort]??(typeof a[S.libSort]==='string'?'':0);
-      if(typeof av==='string')return S.libSortDir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+      if(typeof av==='string')return S.libSortDir==='asc'?_libCollator.compare(av,bv):_libCollator.compare(bv,av);
       return S.libSortDir==='asc'?av-bv:bv-av;
     });
     if(curId)S.qi=Math.max(0,S.queue.findIndex(s=>s.id===curId));
@@ -19138,6 +19138,7 @@ function _getColTpl(cols) {
   return _colTplCache;
 }
 
+const _libCollator = new Intl.Collator();
 function renderLibrary(){
   _barHeightCache = null; _barHeightCacheDirty = true;
   S.libSearch = S.globalSearch || S.libSearch || '';
@@ -19327,6 +19328,8 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   if(albInfo.title){const _vt=document.getElementById('vtitle');if(_vt&&_vt.textContent!==albInfo.title)_vt.textContent=albInfo.title;const _ti=document.getElementById('tsearch-input');if(_ti)_ti.placeholder='search: '+albInfo.title+'...';}
   if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
+  if(_viewStale('album',aid))return;
+  await NAV.settled();
   if(_viewStale('album',aid))return;
   const q=(S.globalSearch||'').trim().toLowerCase();
   if(!allTracks||!allTracks.length){
@@ -23957,6 +23960,7 @@ const NAV = (() => {
     r.ghost.remove();
     if (r.styled) r.vc.style.removeProperty('box-shadow');
     r.wrap.classList.remove('nav-animating');
+    r.vc.style.removeProperty('will-change');
   }
 
   function play(kind, vc, ghost, wrap) {
@@ -23996,6 +24000,8 @@ const NAV = (() => {
     wrap.classList.add('nav-animating');
     const ghost = ghostOf(vc);
     wrap.appendChild(ghost);
+    vc.style.willChange = 'transform';
+    ghost.style.willChange = 'transform';
     ghost.scrollTop = scroll;
     rendering = true;
     try { fn(); }
@@ -24229,6 +24235,7 @@ const NAV = (() => {
     settingsStep,
     settingsHtml,
     refresh: () => { endRun(); syncChrome(); },
+    settled: () => run ? Promise.all(run.anims.map(a => a.finished)).then(() => {}, () => {}) : Promise.resolve(),
     fixAid: (from, to) => { const e = top(); if (e && e.view === 'artist' && e.aid === from) e.aid = to; },
     libTab: t => { const e = top(); if (e && e.view === 'library') e.libTab = t; },
     state: () => ({ active, stacks }),
@@ -31004,6 +31011,7 @@ async function renderStats() {
 
   const data = _statsDataCache || await api('GET', '/api/stats');
   _statsDataCache = data || null;
+  await NAV.settled();
 
   if (gen !== _statsRenderGeneration) return;
   if (S.view !== 'stats') return;
