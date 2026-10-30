@@ -19437,6 +19437,7 @@ function _removeQueueMany(idxs) {
 // stacking N drawers (e.g. ctx menu opened on top of the now-playing sheet)
 // dims correctly at every level instead of fighting over one shared backdrop.
 const _drawerHandles = new Map(); // el -> handle returned by MU.drawerStack.push
+const _drawerDismiss = new Map(); // el -> onDismiss, so back can close the topmost drawer
 
 function _registerDrawer(el, onDismiss) {
   // if already registered (re-opening the same element), pop the old entry
@@ -19449,6 +19450,7 @@ function _registerDrawer(el, onDismiss) {
     onDismiss
   });
   _drawerHandles.set(el, handle);
+  _drawerDismiss.set(el, onDismiss);
   return handle;
 }
 
@@ -19457,6 +19459,7 @@ function _unregisterDrawer(el, immediate) {
   if (!handle) return;
   handle.pop(immediate);
   _drawerHandles.delete(el);
+  _drawerDismiss.delete(el);
 }
 
 // ── sidebar mutual-exclusion helpers ─────────────────────────────────────────
@@ -28584,6 +28587,23 @@ function showModal(title, body, acts) {
     }
   });
 }
+
+window.meowifyBack = function () {
+  try {
+    const topDrawer = [..._drawerHandles.keys()].pop();
+    if (topDrawer && _drawerDismiss.has(topDrawer)) { _drawerDismiss.get(topDrawer)(); return true; }
+    const modal = document.getElementById('modal-overlay');
+    if (modal && modal.classList.contains('open')) { closeModal(); return true; }
+    if (window._settingsPopupOpen) { closeSettingsPopup(); return true; }
+    const ctx = document.getElementById('ctx');
+    if (ctx && ctx.classList.contains('on')) { closeCtxAnimated(); return true; }
+    if (S.selectMode) { _setSelectMode(false); return true; }
+    if (S.globalSearchOpen) { toggleGlobalSearch(true); return true; }
+    if (NAV.canBack()) { NAV.back(); return true; }
+    if (S.view !== 'library') { setView('library'); return true; }
+  } catch (e) { console.warn('meowifyBack', e); }
+  return false;
+};
 
 function closeModal() {
   const ov = document.getElementById('modal-overlay');
