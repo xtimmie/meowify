@@ -13585,7 +13585,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #app.mobile #main  { grid-area: 1/1/2/2; }
 #app.mobile #player {
   grid-template-columns: 1fr auto;
-  padding: 8px 12px 19px 8px;
+  padding: 8px 16px 16px 12px;
   position: fixed;
   bottom: 45px;
   left: 0; right: 0;
@@ -13613,7 +13613,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   z-index: 50;
   border-top: 1px solid var(--line-low);
 }
-#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; padding-inline: 4px; /* outer margin, matches .mob-tab --py */ }
+#app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; padding-inline: 8px; /* outer margin, matches .mob-tab --py */ }
 /* nav pill = the .mob-lens elements, styled in the lens section and animated by popTo / lensTick */
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -13653,7 +13653,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #mob-seek {
   display: none;
   position: absolute;
-  top: 0; left: 14px; right: 14px;
+  top: 0; left: 20px; right: 20px;
   height: 4px;
   background: var(--color-outline-variant);
   border-radius: var(--radius-full);
@@ -29359,6 +29359,8 @@ function _applyDesignImpl(design) {
   body.design-glassy #app.mobile #mobile-nav::before{content:'';position:absolute;top:0;left:22px;right:22px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--glass-border-hi),transparent);opacity:.6}
   body.design-glassy #app.mobile #player{bottom:64px;margin:0 6px;border-width:1px;border-radius:34px}
   body.design-glassy #mob-seek{background:rgba(255,255,255,.1)!important}
+  body.design-glassy #app.mobile #player{padding:8px 12px 5px 8px}
+  body.design-glassy #mob-seek{left:14px;right:14px}
   body.design-glassy #global-prog{background:rgba(255,255,255,.07)!important}
   body.design-glassy .pl-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important;box-shadow:var(--glass-spec-panel)}
   body.design-glassy .lrc-line.active{text-shadow:0 0 20px color-mix(in oklch,var(--color-primary) 50%,transparent)}
