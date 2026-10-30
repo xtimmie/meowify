@@ -22656,20 +22656,22 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
     setView('artist', null, nameOrId);
     return;
   }
-  const _gen = window._viewGen || 0;
-  const res = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(nameOrId));
-  if ((window._viewGen || 0) !== _gen) return; // user navigated elsewhere while this resolved
-  if (res && !res.error) {
-    (S._artNames || (S._artNames = {}))[res.id] = res.name || nameOrId;
-    setView('artist', null, res.id, nameOrId);
-  } else if (fallbackName && fallbackName !== nameOrId) {
+  const stubId = '~' + nameOrId;
+  (S._artStubs || (S._artStubs = {}))[stubId] = { name: nameOrId, fallback: fallbackName };
+  setView('artist', null, stubId, nameOrId);
+}
+
+async function _resolveArtistStub(stubId, stub) {
+  let res = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(stub.name));
+  if ((!res || res.error) && stub.fallback && stub.fallback !== stub.name) {
     // primary (comma-split) name didn't resolve - the comma may have been
     // part of a single artist's stylized name rather than a separator, so
     // retry once against the full, unsplit artist string before giving up
-    const res2 = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(fallbackName));
-    if ((window._viewGen || 0) !== _gen) return;
-    if (res2 && !res2.error) setView('artist', null, res2.id, fallbackName);
+    res = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(stub.fallback));
   }
+  if (!res || res.error) return null;
+  (S._artNames || (S._artNames = {}))[res.id] = res.name || stub.name;
+  return res.id;
 }
 
 function artistNameHtml(name, style='') {
@@ -24163,6 +24165,7 @@ const NAV = (() => {
     settingsStep,
     settingsHtml,
     refresh: () => { endRun(); syncChrome(); },
+    fixAid: (from, to) => { const e = top(); if (e && e.view === 'artist' && e.aid === from) e.aid = to; },
     libTab: t => { const e = top(); if (e && e.view === 'library') e.libTab = t; },
     state: () => ({ active, stacks }),
   };
@@ -24949,6 +24952,18 @@ function clearSelection() {
 async function renderArtistPage(aid) {
   const vc = document.getElementById('vc');
   vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
+  if (typeof aid === 'string' && aid[0] === '~') {
+    const stubId = aid, stub = S._artStubs && S._artStubs[stubId];
+    const real = stub ? await _resolveArtistStub(stubId, stub) : null;
+    if (S.view !== 'artist' || S.activeArtid !== stubId) return; // left while resolving
+    if (!real) {
+      vc.innerHTML = '<div class="empty"><div class="ei">🎤</div><p>artist not found</p></div>';
+      return;
+    }
+    S.activeArtid = real;
+    NAV.fixAid(stubId, real);
+    aid = real;
+  }
 
   const [artist, songs, localAlbums] = await Promise.all([
     api('GET', '/api/artists/' + aid),
