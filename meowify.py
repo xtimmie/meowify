@@ -23814,6 +23814,7 @@ window.navAndroidBack = () => NAV.back();
 const NAV = (() => {
   const TAB_ORDER = { mobile: ['library', 'add', 'playlists', 'settings'], desktop: ['library', 'add', 'stats', 'playlists'] };
   const ROOTS = { library: 'library', add: 'add', playlists: 'playlists-mobile', settings: 'settings', stats: 'stats' };
+  const NO_RESTORE = new Set(['settings']);
   const TAB_IDS = {
     mobile: { library: 'lib', add: 'add', playlists: 'pls', settings: 'cfg' },
     desktop: { library: 'nb-lib', add: 'nb-add', stats: 'nb-stats', playlists: 'nb-pls' },
@@ -24164,7 +24165,7 @@ const NAV = (() => {
       if (st.idx === 0) return show(st.entries[0], null);
       return goIdx(id, 0);
     }
-    if (o.forceRoot || !opt('nav_restore_tabs')) { st.entries.length = 1; st.idx = 0; }
+    if (o.forceRoot || NO_RESTORE.has(id) || !opt('nav_restore_tabs')) { st.entries.length = 1; st.idx = 0; }
     goIdx(id, st.idx);
   }
 
