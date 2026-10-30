@@ -23793,12 +23793,12 @@ const NAV_DEFAULTS = {
   nav_restore_tabs: true,
   nav_max_depth: 50,
   nav_parallax: 20,
-  nav_dur_var: '--dur-8',
-  nav_ease_var: 'cubic-bezier(0.2,1.25,0,1)',
+  nav_dur_var: '--dur-9',
+  nav_ease_var: 'cubic-bezier(0.2,1.15,0,1)',
   nav_tab_pad: 100,
   nav_overshoot_ref: 400,
   nav_overshoot_max: 1,
-  nav_back_overshoot: 3,
+  nav_back_overshoot: 1,
 };
 let _navPending = { section: null, sub: null };
 
@@ -24094,7 +24094,7 @@ const NAV = (() => {
     const bar = w.parentElement, z = bar.getBoundingClientRect().width / bar.offsetWidth || 1;
     const W = w.getBoundingClientRect().width / z;
     const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
-    const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
+    const shut = { width: `${W}px`, marginRight: `${-(W + gap)}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
     const o = { duration: TITLE_ANIM.duration, easing: boostEase(navEase(), +opt('nav_back_overshoot')), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
