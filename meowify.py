@@ -23790,9 +23790,10 @@ const NAV_DEFAULTS = {
   nav_restore_tabs: true,
   nav_max_depth: 50,
   nav_parallax: 33,
-  nav_dur_var: '--dur-9',
-  nav_ease_var: 'cubic-bezier(0.2,2,0.2,1)',
+  nav_dur_var: '--dur-7',
+  nav_ease_var: 'cubic-bezier(0.2,1.2,0,1)',
   nav_back_ease: 'cubic-bezier(.2,1.5,.2,1)',
+  nav_tab_pad: 100,
 };
 let _navPending = { section: null, sub: null };
 
@@ -23927,8 +23928,9 @@ const NAV = (() => {
       ghost.classList.add('nav-above');
       layers = [[ghost, [T(0), T(100)]], [vc, [{ ...T(-par), ...C(100 - par) }, { ...T(0), ...C(0) }]]];
     } else {
-      const d = kind.dir;
-      layers = [[vc, [T(100 * d), T(0)]], [ghost, [T(0), T(-100 * d)]]];
+      const d = kind.dir, pad = +opt('nav_tab_pad') || 0;
+      const TP = x => ({ transform: `translateX(calc(${x * d}% + ${x * d / 100 * pad}px))` });
+      layers = [[vc, [TP(100), TP(0)]], [ghost, [TP(0), TP(-100)]]];
     }
     if (cover) cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
     const anims = layers.map(([el, kf]) => animate(el, kf, o));
