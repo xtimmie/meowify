@@ -12199,19 +12199,14 @@ html.lg-pad body.design-glassy #app:not(.mobile) #player{--lg-pad:72px;bottom:ca
 .mob-nav-glass,.mob-lens{display:none}
 html.lg-lens body.design-glassy #app.mobile #mobile-nav{background:none!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 html.lg-lens body.design-glassy #app.mobile .mob-nav-glass{display:block;position:absolute;inset:0;z-index:-2;pointer-events:none;border-radius:41px 41px 0 0;background:var(--glass-bg-mid);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--lg-pad:10px}
-html.lg-lens body.design-glassy .mob-tab::before{display:none}
-html.lg-lens body.design-glassy #app.mobile .mob-lens{display:block;position:absolute;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--s:.8;scale:var(--s);opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s,--s .15s}
-html.lg-lens body.design-glassy #app.mobile .mob-lens.on{--s:1;opacity:1;visibility:visible;transition:opacity .1s,visibility 0s;animation:tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy)}
-html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens:not(.mob-lens-slide){display:none}
-html.lg-lens:not(.nav-slide) body.design-glassy #app.mobile .mob-lens-slide{display:none}
-html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens-slide{left:0;--s:1;will-change:translate,scale;transition:opacity .15s,visibility 0s}
-html.lg-lens.nav-slide body.design-glassy #app.mobile .mob-lens-slide.on{animation:none;transition:opacity .15s,visibility 0s}
-/* shared sliding nav pill, any theme. glass only restyles it (and refracts it when liquid glass is on, rules above) */
-html.nav-slide #app.mobile .mob-lens-slide{display:block;position:absolute;left:0;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 20%,#0000);will-change:translate,scale;opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s}
-html.nav-slide #app.mobile .mob-lens-slide.on{opacity:1;visibility:visible;transition:opacity .15s,visibility 0s}
-html.nav-slide .mob-tab::before{display:none}
-html.nav-slide .mob-tab.active{animation:none}
-html.nav-slide body.design-glassy #app.mobile .mob-lens-slide{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
+/* mobile nav pill, any theme: one pill per tab pops in (spring scale + stretch, popTo) or one shared pill slides between tabs (spring + stretch, lensTick).
+   glassy only restyles them, liquid glass adds the blur/refraction on top */
+#app.mobile .mob-lens{display:none;position:absolute;left:0;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 20%,#0000);will-change:translate,scale;opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s}
+#app.mobile .mob-lens.on{opacity:1;visibility:visible;transition:opacity .1s,visibility 0s}
+html:not(.nav-slide) #app.mobile .mob-lens:not(.mob-lens-slide),html.nav-slide #app.mobile .mob-lens-slide{display:block}
+html.nav-slide #app.mobile .mob-lens-slide.on{transition:opacity .15s,visibility 0s}
+html body.design-glassy #app.mobile .mob-lens{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
+html.lg-lens body.design-glassy #app.mobile .mob-lens{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 html.nb-nav .mob-nav-glass,html.nb-nav .mob-lens{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
@@ -13610,12 +13605,11 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   border-top: 1px solid var(--line-low);
 }
 #app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; padding-inline: 4px; /* outer margin, matches .mob-tab --py */ }
-@property --s { syntax: '<number>'; inherits: true; initial-value: .8; }
-@keyframes tab-pop { from { --s: .6; } }
+/* nav pill = the .mob-lens elements, styled in the lens section and animated by popTo / lensTick */
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
-  --lw: 36px; --py: 4px; --s: .8;
+  --lw: 36px; --py: 4px;
   --g: clamp(0px, calc((100cqw - 8 * var(--lw)) / 3), 16px); /* gap between tabs, shrinks first on narrow widths so each tab keeps room for its label (2 * --lw) */
   /* clip = the pill's final (post pop-in) outline: ::before's box at --s:1 (full tab width, --py top/bottom) + full radius (r = half height, needs cqh from #mobile-nav) */
   --iy: var(--py);
@@ -13637,26 +13631,13 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   font-size: 10px; font-variation-settings: var(--fv-label); letter-spacing: .4px;
   color: var(--color-on-surface-variant);
   cursor: pointer; border: none; background: none;
-  transition: color var(--dur-2), --s .15s;
+  transition: color var(--dur-2);
   -webkit-tap-highlight-color: transparent;
   position: relative;
   overflow: hidden;
   line-height: 14px;
 }
-.mob-tab::before {
-  content: '';
-  position: absolute;
-  inset: var(--py) 0;
-  border-radius: 999px;
-  corner-shape: superellipse(1.5);
-  background: color-mix(in oklch,var(--color-primary) 20%,#0000);
-  opacity: 0;
-  transform: scale(var(--s));
-  transition: opacity .15s;
-  z-index: -1;
-}
-.mob-tab.active { color: var(--color-primary); --s: 1; animation: tab-pop calc(var(--dur-3) * 1.5) var(--ease-spring-bouncy); }
-.mob-tab.active::before { opacity: 1; transition: opacity .1s; }
+.mob-tab.active { color: var(--color-primary); }
 .mob-tab + .mob-tab { margin-left: var(--g); }
 .mob-tab-icon { font-size: 21px; line-height: 1; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; position: relative; z-index: 1; }
 /* mobile seekbar */
@@ -28581,7 +28562,7 @@ function _navPillSlide() {
 function applyNavPill() {
   const root = document.documentElement, slide = _navPillSlide();
   root.classList.toggle('nav-slide', slide);
-  if (slide || root.classList.contains('lg-lens')) { _lensInit(); if (window._lensGo) _lensGo(); }
+  _lensInit(); if (window._lensGo) _lensGo();
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
@@ -28623,9 +28604,51 @@ function lensTick(t) {
   lensPaint(); L.raf = requestAnimationFrame(lensTick);
 }
 function lensKick() { if (!_LENS.raf) { _LENS.t = 0; _LENS.raf = requestAnimationFrame(lensTick); } }
+// pop mode: every tab has its own pill and each one is a spring on its scale. same idea as the slide pill, the stretch comes from the spring velocity
+// (growing = wider and flatter, the overshoot on the way back = narrower and taller) so it wobbles like jelly instead of replaying a fixed keyframe
+var POP_FX = {
+  stiffness: 520, damping: 22,   // damping 2*sqrt(stiffness) = no overshoot, lower = more wobble
+  from: .6, rest: .8,            // scale a pop starts from, and the scale an inactive pill sits at
+  stretch: .28,                  // extra scaleX at refSpeed, 0 = plain scale pop
+  refSpeed: 5,                   // scale units per second that count as a full stretch
+  maxStretch: .45,               // hard cap, applies both ways
+  squash: .6,                    // how much scaleY compensates, 1 = keeps volume
+  follow: 30,                    // how fast the stretch follows the velocity, higher = snappier
+  settle: .002,                  // stop threshold
+};
+var _POP = { set: new Set(), raf: 0, t: 0 };
+function popPaint(el) {
+  const p = el._pop, F = POP_FX;
+  el.style.scale = (p.x * (1 + p.s)).toFixed(4) + ' ' + (p.x / (1 + p.s * F.squash)).toFixed(4);
+}
+function popTick(t) {
+  const P = _POP, F = POP_FX; P.raf = 0;
+  const dt = Math.min(.05, (t - (P.t || t)) / 1000); P.t = t;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  P.set.forEach(el => {
+    const p = el._pop;
+    for (let i = 0; i < n; i++) { p.v += (-F.stiffness * (p.x - p.tgt) - F.damping * p.v) * h; p.x += p.v * h; }
+    const want = Math.max(-F.maxStretch, Math.min(F.maxStretch, p.v / F.refSpeed * F.stretch));
+    p.s += (want - p.s) * Math.min(1, dt * F.follow);
+    if (Math.abs(p.x - p.tgt) < F.settle && Math.abs(p.v) < F.settle * 20 && Math.abs(p.s) < .002) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
+    popPaint(el);
+  });
+  if (P.set.size) P.raf = requestAnimationFrame(popTick); else P.t = 0;
+}
+function popTo(el, on, instant) {
+  const F = POP_FX, tgt = on ? 1 : F.rest;
+  let p = el._pop;
+  if (!p) { p = el._pop = { x: tgt, v: 0, tgt, s: 0 }; instant = true; }
+  if (instant) { p.x = p.tgt = tgt; p.v = 0; p.s = 0; _POP.set.delete(el); popPaint(el); return; }
+  if (p.tgt === tgt) return;
+  if (on) { p.x = F.from; p.v = 0; }
+  p.tgt = tgt;
+  _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
+}
 function lensLayout() {
   const nav = document.getElementById('mobile-nav'), root = document.documentElement;
-  if (!nav || !(root.classList.contains('lg-lens') || root.classList.contains('nav-slide'))) return;
+  if (!nav) return;
   // everything is measured in screen px and converted to the nav's own (ui zoomed) px with the nav's scale ratio
   const nr = nav.getBoundingClientRect(), k = (nav.offsetWidth ? nr.width / nav.offsetWidth : 1) || 1;
   const ox = nr.left + nav.clientLeft * k, oy = nr.top + nav.clientTop * k, py = 4, cw = nav.clientWidth, ch = nav.clientHeight;
@@ -28641,7 +28664,9 @@ function lensLayout() {
     if (on) act = r;
     if (!l) return;
     const w = place(l, r); l.style.left = Math.max(0, Math.min(cw - w, (r.left - ox) / k)) + 'px'; l.classList.toggle('on', on);
+    if (!slide) popTo(l, on, !l._pop || _LENS.popStale);
   });
+  _LENS.popStale = slide; // pills are not tracked while sliding, so snap them when pop mode comes back
   const sl = nav.querySelector('.mob-lens-slide'), L = _LENS;
   if (sl) sl.classList.toggle('on', !!act);
   if (!slide || !sl || !act) { L.ready = false; return; }
@@ -28813,7 +28838,6 @@ function _applyDesignImpl(design) {
   @media (hover: hover) {body.design-glassy .search-track:hover{background:var(--glass-bg-hi)!important;box-shadow:var(--glass-spec-panel)}}
   body.design-glassy .dl-item{background:var(--glass-bg-mid)!important;border-color:var(--glass-border)!important}
   body.design-glassy .mob-tab{transition:color var(--dur-2)}
-  body.design-glassy .mob-tab::before{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
   body.design-glassy #mobile-nav{box-shadow:0 -1px 0 var(--glass-border-hi) inset}
   body.design-glassy .inp{background:rgba(255,255,255,.05)!important;border-color:var(--glass-border)!important}
   body.design-glassy .inp:focus{background:rgba(255,255,255,.08)!important;border-color:color-mix(in oklch,var(--color-primary) 70%,var(--glass-border-hi))!important;box-shadow:0 0 0 3px color-mix(in oklch,var(--color-primary) 15%,transparent)}
