@@ -23794,7 +23794,7 @@ const NAV_DEFAULTS = {
   nav_max_depth: 50,
   nav_parallax: 20,
   nav_dur_var: '--dur-8',
-  nav_ease_var: 'cubic-bezier(0.2,1.15,0,1)',
+  nav_ease_var: 'cubic-bezier(0.2,1.25,0,1)',
   nav_tab_pad: 100,
 };
 let _navPending = { section: null, sub: null };
@@ -24324,6 +24324,7 @@ class VirtualList {
     if (!(h > 0)) return;
     VirtualList._rhCache[VirtualList._rhKey()] = h;
     const prevH = this.ROW_H;
+    if (Math.abs(h - prevH) > 1) console.warn('[vlist] row h', prevH, '->', h, 'zoom', _zoom, 'dpr', window.devicePixelRatio, 't', Math.round(performance.now()), 'fonts', document.fonts && document.fonts.status, 'navAnimating', !!document.querySelector('.nav-animating'));
     this.ROW_H = h;
     if (this.ROW_H === prevH) return;
     this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
