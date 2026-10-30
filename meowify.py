@@ -23798,7 +23798,7 @@ const NAV_DEFAULTS = {
   nav_tab_pad: 100,
   nav_overshoot_ref: 400,
   nav_overshoot_max: 1,
-  nav_overshoot_back_ref: 44,
+  nav_back_overshoot: 3,
 };
 let _navPending = { section: null, sub: null };
 
@@ -23877,12 +23877,16 @@ const NAV = (() => {
     return (v.startsWith('--') ? cssVar(v) : v) || EASE_FALLBACK;
   }
 
-  function scaleEase(ease, px, ref) {
+  function boostEase(ease, k) {
     const m = /cubic-bezier\(([^)]+)\)/.exec(ease), p = m && m[1].split(',').map(parseFloat);
-    if (!p || p.length < 4 || p.some(isNaN) || !(ref > 0) || !(px > 0)) return ease;
-    const k = Math.min(+opt('nav_overshoot_max') || 1, ref / px);
+    if (!p || p.length < 4 || p.some(isNaN) || !(k >= 0)) return ease;
     const f = y => y > 1 ? 1 + (y - 1) * k : y;
     return `cubic-bezier(${p[0]},${f(p[1])},${p[2]},${f(p[3])})`;
+  }
+
+  function scaleEase(ease, px, ref) {
+    if (!(ref > 0) || !(px > 0)) return ease;
+    return boostEase(ease, Math.min(+opt('nav_overshoot_max') || 1, ref / px));
   }
 
   function homeOf(e) {
@@ -24092,7 +24096,7 @@ const NAV = (() => {
     const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
     const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
-    const o = { duration: TITLE_ANIM.duration, easing: scaleEase(navEase(), W, +opt('nav_overshoot_back_ref')), fill: show ? 'none' : 'forwards' };
+    const o = { duration: TITLE_ANIM.duration, easing: boostEase(navEase(), +opt('nav_back_overshoot')), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
     holdTitle(peakTime(o.easing) * o.duration);
     backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
@@ -24330,7 +24334,7 @@ class VirtualList {
     probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
     this._inner.appendChild(probeEl);
     void this._inner.offsetHeight;
-    const h = probeEl.getBoundingClientRect().height / (_zoom || 1);
+    const h = probeEl.getBoundingClientRect().height / _probeZoom(probeEl);
     probeEl.remove();
     if (!(h > 0)) return;
     VirtualList._rhCache[VirtualList._rhKey()] = h;
@@ -24430,13 +24434,13 @@ class VirtualList {
         this._inner.appendChild(probeEl);
         // force layout so getBoundingClientRect is accurate
         void this._inner.offsetHeight;
-        const measured = probeEl.getBoundingClientRect().height;
+        const measured = probeEl.getBoundingClientRect().height, _pz = _probeZoom(probeEl);
         probeEl.remove();
         if (measured > 0) {
           // divide by zoom so row positioning math (i * ROW_H) works in
           // CSS-pixel space - the container itself is already zoomed by the
           // browser, so we must not apply zoom a second time
-          this.ROW_H = measured / (_zoom || 1);
+          this.ROW_H = measured / _pz;
           // update total height now that we have the correct row height;
           // this must happen before _render() so the scroller knows the
           // true document height and scroll events fire correctly
@@ -24460,10 +24464,10 @@ class VirtualList {
           reProbeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none';
           _self._inner.appendChild(reProbeEl);
           void _self._inner.offsetHeight;
-          const reMeasured = reProbeEl.getBoundingClientRect().height;
+          const reMeasured = reProbeEl.getBoundingClientRect().height, _rz = _probeZoom(reProbeEl);
           reProbeEl.remove();
-          if (reMeasured > 0 && Math.abs(reMeasured / (_zoom || 1) - _self.ROW_H) > 2) {
-            _self.ROW_H = reMeasured / (_zoom || 1);
+          if (reMeasured > 0 && Math.abs(reMeasured / _rz - _self.ROW_H) > 2) {
+            _self.ROW_H = reMeasured / _rz;
             _self._inner.style.height = (_self.songs.length * _self.ROW_H + _self._extraBottom) + 'px';
             _self._rendered = {start: -1, end: -1};
             _self._nodes.forEach(el => el.remove());
@@ -24688,9 +24692,9 @@ class VirtualList {
       probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden';
       this._inner.appendChild(probeEl);
       void this._inner.offsetHeight;
-      const measured = probeEl.getBoundingClientRect().height;
+      const measured = probeEl.getBoundingClientRect().height, _pz = _probeZoom(probeEl);
       if (measured > 0) {
-        this.ROW_H = measured / (this._zoom || 1);
+        this.ROW_H = measured / _pz;
         this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
       }
       probeEl.remove();
