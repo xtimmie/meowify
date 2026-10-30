@@ -19034,15 +19034,10 @@ const TITLE_ANIM = { strength: .1, duration: 350, easing: [.2, 3, .2, 1] }; // c
   const el = document.getElementById('vtitle');
   el.style.transformOrigin = 'left center';
   let w0 = el.offsetWidth;
-  const ease = w1 => {
-    const r = w0 / w1, damp = Math.min(r, 1 / r) || 1, [x1, y1, x2, y2] = TITLE_ANIM.easing;
-    return `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})`;
-  };
-  window._titleEase = () => ease(el.offsetWidth);
   new MutationObserver(() => {
-    const w1 = el.offsetWidth, r = w0 / w1, { strength, duration } = TITLE_ANIM;
+    const w1 = el.offsetWidth, r = w0 / w1, damp = Math.min(r, 1 / r), { strength, duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
     if (w0 && w1 && w0 !== w1)
-      el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: ease(w1) });
+      el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})` });
     w0 = w1;
   }).observe(el, { childList: true, characterData: true, subtree: true });
 })();
@@ -23796,7 +23791,8 @@ const NAV_DEFAULTS = {
   nav_max_depth: 50,
   nav_parallax: 33,
   nav_dur_var: '--dur-9',
-  nav_ease_var: 'cubic-bezier(0,2,0,1)',
+  nav_ease_var: 'cubic-bezier(0.2,2,0.2,1)',
+  nav_back_ease: 'cubic-bezier(.2,1.5,.2,1)',
 };
 let _navPending = { section: null, sub: null };
 
@@ -23841,10 +23837,9 @@ const NAV = (() => {
     catch { return el.animate(frames, { ...o, easing: EASE_FALLBACK }); }
   }
 
-  // same duration and curve as the title morph, read live so tweaking TITLE_ANIM moves everything together
+  // back button uses the title morph duration, easing is its own value (nav_back_ease)
   function titleTiming() {
-    const { duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
-    return { duration, easing: window._titleEase ? window._titleEase() : `cubic-bezier(${x1},${y1},${x2},${y2})` };
+    return { duration: TITLE_ANIM.duration, easing: opt('nav_back_ease') };
   }
 
   function homeOf(e) {
@@ -23918,7 +23913,8 @@ const NAV = (() => {
   }
 
   function play(kind, vc, ghost, wrap) {
-    const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: cssVar(opt('nav_ease_var')) || EASE_FALLBACK, fill: 'both' };
+    const ev = String(opt('nav_ease_var') || '').trim();
+    const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: (ev.startsWith('--') ? cssVar(ev) : ev) || EASE_FALLBACK, fill: 'both' };
     const par = +opt('nav_parallax');
     const T = x => ({ transform: `translateX(${x}%)` });
     const C = r => ({ clipPath: `inset(0 ${r}% 0 0)` });
