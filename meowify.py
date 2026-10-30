@@ -24092,7 +24092,7 @@ const NAV = (() => {
     const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
     const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
-    const o = { duration: TITLE_ANIM.duration, easing: scaleEase(navEase(), W, +opt('nav_overshoot_back_ref')), fill: 'both' === 0 ? '' : (show ? 'none' : 'forwards') };
+    const o = { duration: TITLE_ANIM.duration, easing: scaleEase(navEase(), W, +opt('nav_overshoot_back_ref')), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
     holdTitle(peakTime(o.easing) * o.duration);
     backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
