@@ -19034,10 +19034,15 @@ const TITLE_ANIM = { strength: .1, duration: 350, easing: [.2, 3, .2, 1] }; // c
   const el = document.getElementById('vtitle');
   el.style.transformOrigin = 'left center';
   let w0 = el.offsetWidth;
+  const ease = w1 => {
+    const r = w0 / w1, damp = Math.min(r, 1 / r) || 1, [x1, y1, x2, y2] = TITLE_ANIM.easing;
+    return `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})`;
+  };
+  window._titleEase = () => ease(el.offsetWidth);
   new MutationObserver(() => {
-    const w1 = el.offsetWidth, r = w0 / w1, damp = Math.min(r, 1 / r), { strength, duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
+    const w1 = el.offsetWidth, r = w0 / w1, { strength, duration } = TITLE_ANIM;
     if (w0 && w1 && w0 !== w1)
-      el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})` });
+      el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: ease(w1) });
     w0 = w1;
   }).observe(el, { childList: true, characterData: true, subtree: true });
 })();
@@ -22661,14 +22666,14 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
   if ((window._viewGen || 0) !== _gen) return; // user navigated elsewhere while this resolved
   if (res && !res.error) {
     (S._artNames || (S._artNames = {}))[res.id] = res.name || nameOrId;
-    setView('artist', null, res.id);
+    setView('artist', null, res.id, nameOrId);
   } else if (fallbackName && fallbackName !== nameOrId) {
     // primary (comma-split) name didn't resolve - the comma may have been
     // part of a single artist's stylized name rather than a separator, so
     // retry once against the full, unsplit artist string before giving up
     const res2 = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(fallbackName));
     if ((window._viewGen || 0) !== _gen) return;
-    if (res2 && !res2.error) setView('artist', null, res2.id);
+    if (res2 && !res2.error) setView('artist', null, res2.id, fallbackName);
   }
 }
 
@@ -23789,13 +23794,13 @@ const NAV_DEFAULTS = {
   nav_anim_desktop: true,
   nav_restore_tabs: true,
   nav_max_depth: 50,
-  nav_parallax: 50,
+  nav_parallax: 33,
   nav_dur_var: '--dur-9',
   nav_ease_var: 'cubic-bezier(0,2,0,1)',
 };
 let _navPending = { section: null, sub: null };
 
-function setView(v, pid, aid) { NAV.view(v, pid, aid); }
+function setView(v, pid, aid, title) { NAV.view(v, pid, aid, title); }
 function historyBack() { NAV.back(); }
 function historyForward() { NAV.forward(); }
 function _navPush(state) { if (state && state.libTab) NAV.libTab(state.libTab); }
@@ -23820,7 +23825,7 @@ const NAV = (() => {
   const animOn = () => !!opt('nav_anim_' + plat()) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const backOn = () => !!opt('nav_back_' + plat());
   const cssVar = n => getComputedStyle(document.body).getPropertyValue(n).trim();
-  const mkEntry = (view, pid, aid) => ({ view, pid: pid || null, aid: aid || null, section: null, sub: null });
+  const mkEntry = (view, pid, aid, title) => ({ view, pid: pid || null, aid: aid || null, title: title || null, section: null, sub: null });
   const key = e => [e.view, e.pid, e.aid, e.section, e.sub].join('|');
   const stack = id => stacks[id] || (stacks[id] = { entries: [mkEntry(ROOTS[id] || id)], idx: 0 });
   const top = () => { const s = stack(active); return s.entries[s.idx]; };
@@ -23839,7 +23844,7 @@ const NAV = (() => {
   // same duration and curve as the title morph, read live so tweaking TITLE_ANIM moves everything together
   function titleTiming() {
     const { duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
-    return { duration, easing: `cubic-bezier(${x1},${y1},${x2},${y2})` };
+    return { duration, easing: window._titleEase ? window._titleEase() : `cubic-bezier(${x1},${y1},${x2},${y2})` };
   }
 
   function homeOf(e) {
@@ -23966,7 +23971,7 @@ const NAV = (() => {
     if (t == null) return;
     if (el.textContent !== t) el.textContent = t;
     const inp = $('tsearch-input');
-    if (inp && e.view === 'settings') inp.placeholder = 'search: ' + t + '...';
+    if (inp && (e.view === 'settings' || e.view === 'artist')) inp.placeholder = 'search: ' + t + '...';
   }
 
   function syncDbxPoll(e) {
@@ -24113,8 +24118,8 @@ const NAV = (() => {
     show(e, { type: 'fwd' });
   }
 
-  function view(v, pid, aid) {
-    const e = mkEntry(v, pid, aid), h = homeOf(e);
+  function view(v, pid, aid, title) {
+    const e = mkEntry(v, pid, aid, title), h = homeOf(e);
     if (h.root) return tab(h.tab, { forceRoot: true });
     const id = h.tab || active;
     if (id !== active) return openIn(id, e);
