@@ -23796,6 +23796,9 @@ const NAV_DEFAULTS = {
   nav_dur_var: '--dur-8',
   nav_ease_var: 'cubic-bezier(0.2,1.25,0,1)',
   nav_tab_pad: 100,
+  nav_overshoot_ref: 400,
+  nav_overshoot_max: 1,
+  nav_overshoot_back_ref: 44,
 };
 let _navPending = { section: null, sub: null };
 
@@ -23874,6 +23877,14 @@ const NAV = (() => {
     return (v.startsWith('--') ? cssVar(v) : v) || EASE_FALLBACK;
   }
 
+  function scaleEase(ease, px, ref) {
+    const m = /cubic-bezier\(([^)]+)\)/.exec(ease), p = m && m[1].split(',').map(parseFloat);
+    if (!p || p.length < 4 || p.some(isNaN) || !(ref > 0) || !(px > 0)) return ease;
+    const k = Math.min(+opt('nav_overshoot_max') || 1, ref / px);
+    const f = y => y > 1 ? 1 + (y - 1) * k : y;
+    return `cubic-bezier(${p[0]},${f(p[1])},${p[2]},${f(p[3])})`;
+  }
+
   function homeOf(e) {
     switch (e.view) {
       case 'library': return { tab: 'library', root: true };
@@ -23945,25 +23956,25 @@ const NAV = (() => {
   }
 
   function play(kind, vc, ghost, wrap) {
-    const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: navEase(), fill: 'both' };
-    const par = +opt('nav_parallax');
+    const o = { duration: cssTime(opt('nav_dur_var'), 450), fill: 'both' };
+    const par = +opt('nav_parallax'), base = navEase(), ref = +opt('nav_overshoot_ref'), Wpx = wrap.offsetWidth;
     const T = x => ({ transform: `translateX(${x}%)` });
     const C = r => ({ clipPath: `inset(0 ${r}% 0 0)` });
     let layers, cover = null;
     if (kind.type === 'fwd') {
       cover = vc;
-      layers = [[vc, [T(100), T(0)]], [ghost, [{ ...T(0), ...C(0) }, { ...T(-par), ...C(100 - par) }]]];
+      layers = [[vc, [T(100), T(0)], Wpx], [ghost, [{ ...T(0), ...C(0) }, { ...T(-par), ...C(100 - par) }], Wpx * par / 100]];
     } else if (kind.type === 'back') {
       cover = ghost;
       ghost.classList.add('nav-above');
-      layers = [[ghost, [T(0), T(100)]], [vc, [{ ...T(-par), ...C(100 - par) }, { ...T(0), ...C(0) }]]];
+      layers = [[ghost, [T(0), T(100)], Wpx], [vc, [{ ...T(-par), ...C(100 - par) }, { ...T(0), ...C(0) }], Wpx * par / 100]];
     } else {
       const d = kind.dir, pad = +opt('nav_tab_pad') || 0;
       const TP = x => ({ transform: `translateX(calc(${x * d}% + ${x * d / 100 * pad}px))` });
-      layers = [[vc, [TP(100), TP(0)]], [ghost, [TP(0), TP(-100)]]];
+      layers = [[vc, [TP(100), TP(0)], Wpx + pad], [ghost, [TP(0), TP(-100)], Wpx + pad]];
     }
     if (cover) cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
-    const anims = layers.map(([el, kf]) => animate(el, kf, o));
+    const anims = layers.map(([el, kf, px]) => animate(el, kf, { ...o, easing: scaleEase(base, px, ref) }));
     const mine = run = { ghost, vc, wrap, anims, styled: cover === vc };
     Promise.all(anims.map(a => a.finished)).then(() => { if (run === mine) endRun(); }).catch(() => {});
   }
@@ -24081,7 +24092,7 @@ const NAV = (() => {
     const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
     const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
-    const o = { duration: TITLE_ANIM.duration, easing: navEase(), fill: show ? 'none' : 'forwards' };
+    const o = { duration: TITLE_ANIM.duration, easing: scaleEase(navEase(), W, +opt('nav_overshoot_back_ref')), fill: 'both' === 0 ? '' : (show ? 'none' : 'forwards') };
     window._noTitleMorph = performance.now() + o.duration;
     holdTitle(peakTime(o.easing) * o.duration);
     backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
