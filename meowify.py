@@ -11689,7 +11689,7 @@ svg {overflow: visible}
 }
 #nb-cfg .ni svg, #nb-stats .ni svg, #nb-lib .ni svg, #nb-add .ni svg line, #nb-stats .ni svg line,
 #mnt-cfg .ni svg, #mnt-lib .ni svg, #mnt-add .ni svg line, #nb-lib.active .ni path, #mnt-lib.active .ni path {
-  transition: 0.6s cubic-bezier(.3,2,.5,1);
+  transition: transform .6s cubic-bezier(.3,2,.5,1), d .6s cubic-bezier(.3,2,.5,1);
   transform-box: fill-box;
   transform-origin: center center;
 }
