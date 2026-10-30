@@ -11860,8 +11860,9 @@ svg {overflow: visible}
   pointer-events:all;
 }
 .topbar-acts{display:flex;align-items:center;gap:var(--tb-gap);flex-shrink:0;min-width:0}
-#topbar-back-wrap{display:flex;align-items:center;flex-shrink:0;overflow:hidden;width:0;margin-right:calc(var(--tb-gap) * -1);visibility:hidden}
-#topbar-back-wrap.on{width:auto;margin-right:0;visibility:visible}
+#topbar-back-wrap{--back-trim:.6;display:flex;align-items:center;flex-shrink:0;overflow:hidden;width:0;margin-right:calc(var(--tb-gap) * -1);visibility:hidden}
+#topbar-back-wrap.on{width:auto;margin-right:calc(var(--tb-gap) * var(--back-trim) * -1);visibility:visible}
+#topbar-back-btn{will-change:transform}
 #vc-wrap.nav-animating{position:relative;isolation:isolate}
 .nav-ghost{position:absolute!important;box-sizing:border-box;margin:0;pointer-events:none;z-index:-1;will-change:transform}
 .nav-ghost.nav-above{z-index:2}
@@ -24075,8 +24076,9 @@ const NAV = (() => {
     if (instant) { w.classList.toggle('on', show); w.inert = !show; return; }
     const btn = w.firstElementChild, gap = parseFloat(getComputedStyle(w.parentElement).columnGap) || 0;
     if (show) { w.classList.add('on'); w.inert = false; }
-    const W = show ? btn.offsetWidth : w.offsetWidth;
-    const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: '0px' };
+    const W = w.getBoundingClientRect().width;
+    const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
+    const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
     const o = { duration: TITLE_ANIM.duration, easing: navEase(), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
