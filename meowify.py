@@ -23792,13 +23792,13 @@ const NAV_DEFAULTS = {
   nav_anim_desktop: true,
   nav_restore_tabs: true,
   nav_max_depth: 50,
-  nav_parallax: 20,
-  nav_dur_var: '--dur-9',
-  nav_ease_var: 'cubic-bezier(0.2,1.15,0,1)',
+  nav_parallax: 10,
+  nav_dur_var: '--dur-8',
+  nav_ease_var: 'cubic-bezier(0.3,1.22,.2,1)',
   nav_tab_pad: 100,
   nav_overshoot_ref: 400,
   nav_overshoot_max: 1,
-  nav_back_overshoot: 1,
+  nav_back_overshoot: 2,
 };
 let _navPending = { section: null, sub: null };
 
@@ -24090,6 +24090,10 @@ const NAV = (() => {
     backAnims = [];
     if (instant) { w.classList.toggle('on', show); w.inert = !show; return; }
     const btn = w.firstElementChild, gap = parseFloat(getComputedStyle(w.parentElement).columnGap) || 0;
+    w.style.overflow = '';
+    const sibs = [...w.parentElement.children].slice([...w.parentElement.children].indexOf(w) + 1);
+    const lefts = () => sibs.map(s => s.getBoundingClientRect().left);
+    const before = lefts();
     if (show) { w.classList.add('on'); w.inert = false; }
     const bar = w.parentElement, z = bar.getBoundingClientRect().width / bar.offsetWidth || 1;
     const W = w.getBoundingClientRect().width / z;
@@ -24099,7 +24103,16 @@ const NAV = (() => {
     const o = { duration: TITLE_ANIM.duration, easing: boostEase(navEase(), +opt('nav_back_overshoot')), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
     holdTitle(peakTime(o.easing) * o.duration);
-    backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
+    let after;
+    if (show) after = lefts();
+    else { w.classList.remove('on'); after = lefts(); w.classList.add('on'); }
+    w.style.overflow = 'visible';
+    const sibAnims = sibs.map((s, i) => {
+      const d = (after[i] - before[i]) / z;
+      return animate(s, show ? [{ translate: `${-d}px 0` }, { translate: '0 0' }] : [{ translate: '0 0' }, { translate: `${d}px 0` }], o);
+    });
+    backAnims = [animate(btn, show ? [away, here] : [here, away], o), ...sibAnims];
+    Promise.all(backAnims.map(a => a.finished)).then(() => { w.style.overflow = ''; }).catch(() => {});
     if (!show) {
       Promise.all(backAnims.map(a => a.finished))
         .then(() => { w.classList.remove('on'); w.inert = true; backAnims.forEach(a => a.cancel()); backAnims = []; })
