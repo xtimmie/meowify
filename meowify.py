@@ -19326,6 +19326,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
   if(_viewStale('album',aid))return; // left while loading
+  if(albInfo.title)NAV.noteTitle('album',aid,albInfo.title);
   if(albInfo.title){const _vt=document.getElementById('vtitle');if(_vt&&_vt.textContent!==albInfo.title)_vt.textContent=albInfo.title;const _ti=document.getElementById('tsearch-input');if(_ti)_ti.placeholder='search: '+albInfo.title+'...';}
   if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
@@ -24027,16 +24028,36 @@ const NAV = (() => {
   }
 
   // ── rendering a stack entry ──
+  const titleCache = {};
+  function titleOf(e) {
+    const id = e.aid || e.pid;
+    if (e.title) return e.title;
+    const c = titleCache[e.view + '|' + id];
+    if (c) return c;
+    if (e.view === 'artist') return (S._artNames && S._artNames[id]) || null;
+    if (e.view === 'playlist') {
+      const p = S.playlists && S.playlists.find(p => String(p.id) === String(id));
+      return p ? p.name : null;
+    }
+    if (e.view === 'album') {
+      const a = S.albums && S.albums.find(a => String(a.id) === String(id));
+      if (a && a.title) return a.title;
+      const s = S.library && S.library.find(s => String(s.album_id) === String(id));
+      return s && s.album ? s.album : null;
+    }
+    return null;
+  }
+
   function syncTitle(e) {
     const el = $('vtitle');
     if (!el) return;
     let t = null;
     if (e.view === 'settings' && isMobile()) t = e.sub ? (window._settingsSubTitle || e.sub) : (e.section || 'settings');
-    else if (e.view === 'artist') t = e.title || null;
+    else if (e.view === 'artist' || e.view === 'album' || e.view === 'playlist') t = titleOf(e);
     if (t == null) return;
     if (el.textContent !== t) el.textContent = t;
     const inp = $('tsearch-input');
-    if (inp && (e.view === 'settings' || e.view === 'artist')) inp.placeholder = 'search: ' + t + '...';
+    if (inp && (e.view === 'settings' || e.view === 'artist' || e.view === 'album' || e.view === 'playlist')) inp.placeholder = 'search: ' + t + '...';
   }
 
   function syncDbxPoll(e) {
@@ -24251,6 +24272,12 @@ const NAV = (() => {
     settingsStep,
     settingsHtml,
     refresh: () => { endRun(); syncChrome(); },
+    noteTitle: (view, id, title) => {
+      if (!title) return;
+      titleCache[view + '|' + id] = title;
+      const e = top();
+      if (e && e.view === view && String(e.aid || e.pid) === String(id)) e.title = title;
+    },
     settled: () => run ? Promise.all(run.anims.map(a => a.finished)).then(() => {}, () => {}) : Promise.resolve(),
     fixAid: (from, to) => { const e = top(); if (e && e.view === 'artist' && e.aid === from) e.aid = to; },
     libTab: t => { const e = top(); if (e && e.view === 'library') e.libTab = t; },
@@ -25078,6 +25105,7 @@ async function renderArtistPage(aid) {
   }
 
   (S._artNames || (S._artNames = {}))[aid] = artist.name;
+  NAV.noteTitle('artist', aid, artist.name);
   document.getElementById('vtitle').textContent = artist.name;
 
   const totalPlays = (songs || []).reduce((s, sg) => s + (sg.play_count || 0), 0);
