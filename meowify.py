@@ -24076,7 +24076,8 @@ const NAV = (() => {
     if (instant) { w.classList.toggle('on', show); w.inert = !show; return; }
     const btn = w.firstElementChild, gap = parseFloat(getComputedStyle(w.parentElement).columnGap) || 0;
     if (show) { w.classList.add('on'); w.inert = false; }
-    const W = w.getBoundingClientRect().width;
+    const bar = w.parentElement, z = bar.getBoundingClientRect().width / bar.offsetWidth || 1;
+    const W = w.getBoundingClientRect().width / z;
     const t = parseFloat(getComputedStyle(w).getPropertyValue('--back-trim')), trim = isNaN(t) ? .6 : t;
     const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: `${-gap * trim}px` };
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
