@@ -16618,7 +16618,7 @@ async function ensureLoudness(song) {
     if (entry) entry.loudness_lufs = res.loudness_lufs;
     if (S.cur && S.cur.id === song.id) applyNormToCurrentSong();
   } else if (res && res.status === 'analyzing') {
-    setTimeout(() => ensureLoudness(song), 2500);
+    if ((song._lufsTries = (song._lufsTries || 0) + 1) <= 12) setTimeout(() => ensureLoudness(song), 2500);
   }
 }
 
@@ -16721,7 +16721,7 @@ function _smartShuffle(songs) {
       if (!b.length) continue;
       const artist = _smartShuffleArtistKey(b[0].artist);
       const recency = recentArtists.lastIndexOf(artist);
-      const penaltyRaw = recency === -1 ? 0 : (WINDOW - recency);
+      const penaltyRaw = recency === -1 ? 0 : (WINDOW - (recentArtists.length - 1 - recency));
       const penalty = Math.max(0, penaltyRaw);
       const score = b.length - penalty * 2 + Math.random() * 0.5;
       if (score > bestScore) { bestScore = score; best = b; }
@@ -16856,7 +16856,7 @@ function _smartShuffleUnits(units) {
       if (!b.length) continue;
       const artist = _smartShuffleArtistKey(b[0][0]?.artist);
       const recency = recentArtists.lastIndexOf(artist);
-      const penalty = Math.max(0, recency === -1 ? 0 : (WINDOW - recency));
+      const penalty = Math.max(0, recency === -1 ? 0 : (WINDOW - (recentArtists.length - 1 - recency)));
       const score = b.length - penalty * 2 + Math.random() * 0.5;
       if (score > bestScore) { bestScore = score; best = b; }
     }
@@ -17044,7 +17044,7 @@ function _chaosPickNext() {
     const scored = pool.map(s => {
       const artist = (s.artist || '').toLowerCase().trim() || '__unknown__';
       const recency = _chaosRecentArtists.lastIndexOf(artist);
-      const penalty = recency === -1 ? 0 : Math.max(0, CHAOS_ARTIST_WINDOW - recency);
+      const penalty = recency === -1 ? 0 : Math.max(0, CHAOS_ARTIST_WINDOW - (_chaosRecentArtists.length - 1 - recency));
       return { s, score: Math.random() - penalty * 0.4 };
     });
     scored.sort((a, b) => b.score - a.score);
@@ -32487,6 +32487,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     _primeMediaSession();
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if ((e.ctrlKey || e.metaKey || e.altKey) && e.key.length === 1 && !'azAZ=+-0fF'.includes(e.key)) return;
     switch(e.key) {
       case ' ':
         e.preventDefault(); togglePlay(); break;
