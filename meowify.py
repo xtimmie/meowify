@@ -11866,6 +11866,7 @@ svg {overflow: visible}
 #vc-wrap.nav-animating{position:relative;isolation:isolate}
 .nav-ghost{position:absolute!important;box-sizing:border-box;margin:0;pointer-events:none;z-index:-1;will-change:transform}
 .nav-ghost.nav-above{z-index:2}
+.nav-shade{position:absolute!important;pointer-events:none;z-index:1;will-change:transform,opacity;background:linear-gradient(to left,var(--nav-shade-color,rgba(0,0,0,.28)),color-mix(in srgb,var(--nav-shade-color,rgba(0,0,0,.28)) 45%,transparent) calc(var(--nav-shade-w,28px)*.35),transparent var(--nav-shade-w,28px))}
 body.nav-back-on #app.mobile .set-head{display:none}
 body.nav-anim-on #app.mobile :is(.set-anim-fwd,.set-anim-back){animation:none}
 #content-area{flex:1;display:flex;overflow:hidden}
@@ -23959,6 +23960,7 @@ const NAV = (() => {
     run = null;
     r.anims.forEach(a => { try { a.cancel(); } catch {} });
     r.ghost.remove();
+    if (r.shade) r.shade.remove();
     if (r.styled) r.vc.style.removeProperty('box-shadow');
     r.wrap.classList.remove('nav-animating');
     r.vc.style.removeProperty('will-change');
@@ -23982,9 +23984,22 @@ const NAV = (() => {
       const TP = x => ({ transform: `translateX(calc(${x * d}% + ${x * d / 100 * pad}px))` });
       layers = [[vc, [TP(100), TP(0)], Wpx + pad], [ghost, [TP(0), TP(-100)], Wpx + pad]];
     }
-    if (cover) cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
+    let shade = null;
+    if (cover && getComputedStyle(document.body).getPropertyValue('--nav-layer-shadow').trim() !== 'none') {
+      shade = document.createElement('div');
+      shade.className = 'nav-shade';
+      Object.assign(shade.style, { left: (vc.offsetLeft - vc.offsetWidth) + 'px', top: vc.offsetTop + 'px', width: vc.offsetWidth + 'px', height: vc.offsetHeight + 'px' });
+      wrap.appendChild(shade);
+    }
     const anims = layers.map(([el, kf, px]) => animate(el, kf, { ...o, easing: scaleEase(base, px, ref) }));
-    const mine = run = { ghost, vc, wrap, anims, styled: cover === vc };
+    if (shade) {
+      const fwd = kind.type === 'fwd';
+      anims.push(animate(shade, fwd
+        ? [{ ...T(100), opacity: 0, offset: 0 }, { opacity: 1, offset: .25 }, { ...T(0), opacity: 1, offset: 1 }]
+        : [{ ...T(0), opacity: 1, offset: 0 }, { opacity: 1, offset: .75 }, { ...T(100), opacity: 0, offset: 1 }],
+        { ...o, easing: scaleEase(base, Wpx, ref) }));
+    }
+    const mine = run = { ghost, vc, wrap, anims, shade, styled: cover === vc };
     Promise.all(anims.map(a => a.finished)).then(() => { if (run === mine) endRun(); }).catch(() => {});
   }
 
