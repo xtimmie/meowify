@@ -11860,6 +11860,13 @@ svg {overflow: visible}
   pointer-events:all;
 }
 .topbar-acts{display:flex;align-items:center;gap:var(--tb-gap);flex-shrink:0;min-width:0}
+#topbar-back-wrap{display:flex;align-items:center;flex-shrink:0;overflow:hidden;width:0;margin-right:calc(var(--tb-gap) * -1);visibility:hidden}
+#topbar-back-wrap.on{width:auto;margin-right:0;visibility:visible}
+#vc-wrap.nav-animating{position:relative;isolation:isolate}
+.nav-ghost{position:absolute!important;box-sizing:border-box;margin:0;pointer-events:none;z-index:-1;will-change:transform}
+.nav-ghost.nav-above{z-index:2}
+body.nav-back-on #app.mobile .set-head{display:none}
+body.nav-anim-on #app.mobile :is(.set-anim-fwd,.set-anim-back){animation:none}
 #content-area{flex:1;display:flex;overflow:hidden}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar{width:8px}
@@ -13914,20 +13921,20 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
       <span class="logo-txt">meowify</span>
     </div>
     <div class="nav-sec">
-      <button class="nav-btn mu-ripple active" id="nb-lib" onclick="setView('library')">
+      <button class="nav-btn mu-ripple active" id="nb-lib" onclick="NAV.tab('library')">
         <span class="ni">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path d="M12.6,15.1c-9,-4.2 -11,6.9 -3.1,6.9c3.5,0 5.5,-1.8 5.5,-5c0,-.1 0,-9.4 0,-11.2c0,0 2.4,.5 3.8,4c3.2,-5.4 -6.3,-9.8 -6.3,-6.7c0,2.8 .1,8.7 .1,12.1Z" fill="currentColor"/>
           </svg>
         </span><span class="nl">library</span>
       </button>
-      <button class="nav-btn mu-ripple" id="nb-add" onclick="setView('add')">
+      <button class="nav-btn mu-ripple" id="nb-add" onclick="NAV.tab('add')">
         <span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4">
           <line x1="12" y1="4" x2="12" y2="20"/>
           <line x1="4" y1="12" x2="20" y2="12"/>
         </svg></span><span class="nl">add music</span>
       </button>
-      <button class="nav-btn mu-ripple" id="nb-stats" onclick="setView('stats')">
+      <button class="nav-btn mu-ripple" id="nb-stats" onclick="NAV.tab('stats')">
         <span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="5" y2="19"/>
@@ -14389,7 +14396,10 @@ function _updateMobileTab(view){
 }
 
 function setMobileTab(tab){
-  if(tab==='playlists'){
+  NAV.tab(tab);
+}
+
+function _showPlaylistsMobile(){
     if (S.view === 'settings') window.resetGear?.();
     if (S.selectMode) _setSelectMode(false); // song selection makes no sense on this page, same as setView
     S.view='playlists-mobile';
@@ -14404,15 +14414,9 @@ function setMobileTab(tab){
     renderMobilePlaylists();
     if(S.activePid) plNoteAnim(S.activePid);
     else playMobNote();
-  } else {
-    setView(tab);
-  }
 }
 
 function openPlaylistsView(){
-  if(S._vlist){S._vlist.destroy();S._vlist=null;}
-  document.getElementById('vc').scrollTop=0;
-  window._syncVcFade?.();
   setMobileTab('playlists');
   document.getElementById('nb-pls')?.classList.add('active');
 }
@@ -18942,7 +18946,7 @@ function _queueRenderSoon() {
 // VIEWS
 // ═══════════════════════════════════════════════
 
-function setView(v, pid, aid) {
+function _setViewRaw(v, pid, aid) {
   window._viewGen = (window._viewGen || 0) + 1; // lets late async navigation detect that the user moved on
   if (S.selectMode) _setSelectMode(false);
   // kill any in-flight ripple waves in #vc before replacing content
@@ -18965,9 +18969,6 @@ function setView(v, pid, aid) {
   document.querySelectorAll('.pl-item').forEach(r => {
     r.classList.toggle('active', r.dataset.id === S.activePid && S.view === 'playlist');
   });
-  if (v === 'library' || v === 'playlist' || v === 'album' || v === 'artist' || v === 'add' || v === 'settings' || v === 'stats') {
-    _navPush({ view: v, pid: pid||null, aid: aid||null, libTab: S.libTab });
-  }
   if (S.globalSearchOpen) {
     S.globalSearchOpen = false;
     S.globalSearch = '';
@@ -19015,8 +19016,8 @@ function setView(v, pid, aid) {
       </button>`;
     renderStats();
   } else if (v === 'settings') {
-    window._settingsSection = null;
-    window._settingsSub = null;
+    window._settingsSection = _navPending.section;
+    window._settingsSub = _navPending.sub;
     window._setDir = null;
     document.getElementById('vtitle').textContent = 'settings';
     renderSettings();
@@ -23778,47 +23779,392 @@ function adjustZoom(delta) { setZoom(_zoomTo + delta); }
 // ===============================================
 // NAVIGATION HISTORY
 // ===============================================
-const _navHistory = [];
-let _navIdx = -1;
-let _navSuppressPush = false;
+// every key can be overridden through CFG, e.g. saveSetting('nav_anim_desktop', false) in the console
+const NAV_DEFAULTS = {
+  nav_back_mobile: true,
+  nav_back_desktop: true,
+  nav_anim_mobile: true,
+  nav_anim_desktop: true,
+  nav_restore_tabs: true,
+  nav_max_depth: 50,
+  nav_parallax: 50,
+  nav_dur_var: '--dur-7',
+  nav_ease_var: '--ease-spring-soft',
+};
+let _navPending = { section: null, sub: null };
 
-function _navPush(state) {
-  if (_navSuppressPush) return;
-  // drop forward stack
-  _navHistory.splice(_navIdx + 1);
-  _navHistory.push(state);
-  if (_navHistory.length > 50) _navHistory.shift();
-  _navIdx = _navHistory.length - 1;
-}
+function setView(v, pid, aid) { NAV.view(v, pid, aid); }
+function historyBack() { NAV.back(); }
+function historyForward() { NAV.forward(); }
+function _navPush(state) { if (state && state.libTab) NAV.libTab(state.libTab); }
+window.navAndroidBack = () => NAV.back();
 
-function historyBack() {
-  if (_navIdx <= 0) return;
-  _navIdx--;
-  _navGo(_navHistory[_navIdx]);
-}
+const NAV = (() => {
+  const TAB_ORDER = { mobile: ['library', 'add', 'playlists', 'settings'], desktop: ['library', 'add', 'stats', 'playlists'] };
+  const ROOTS = { library: 'library', add: 'add', playlists: 'playlists-mobile', settings: 'settings', stats: 'stats' };
+  const TAB_IDS = {
+    mobile: { library: 'lib', add: 'add', playlists: 'pls', settings: 'cfg' },
+    desktop: { library: 'nb-lib', add: 'nb-add', stats: 'nb-stats', playlists: 'nb-pls' },
+  };
+  const EASE_FALLBACK = 'cubic-bezier(.16,1,.3,1)';
+  const stacks = {};
+  let active = 'library';
+  let run = null, rendering = false;
+  let backShown = false, backWrap = null, backAnims = [];
 
-function historyForward() {
-  if (_navIdx >= _navHistory.length - 1) return;
-  _navIdx++;
-  _navGo(_navHistory[_navIdx]);
-}
+  const $ = id => document.getElementById(id);
+  const opt = k => (CFG && CFG[k] !== undefined) ? CFG[k] : NAV_DEFAULTS[k];
+  const plat = () => isMobile() ? 'mobile' : 'desktop';
+  const animOn = () => !!opt('nav_anim_' + plat()) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const backOn = () => !!opt('nav_back_' + plat());
+  const cssVar = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+  const mkEntry = (view, pid, aid) => ({ view, pid: pid || null, aid: aid || null, section: null, sub: null });
+  const key = e => [e.view, e.pid, e.aid, e.section, e.sub].join('|');
+  const stack = id => stacks[id] || (stacks[id] = { entries: [mkEntry(ROOTS[id] || id)], idx: 0 });
+  const top = () => { const s = stack(active); return s.entries[s.idx]; };
 
-function _navGo(state) {
-  if (!state) return;
-  _navSuppressPush = true;
-  try {
-    if (state.view === 'playlist') setView('playlist', state.pid);
-    else if (state.view === 'album') setView('album', null, state.aid);
-    else if (state.view === 'artist') setView('artist', null, state.aid);
-    else if (state.view === 'library') {
-      S.libTab = state.libTab || 'songs';
-      setView('library');
-    }
-    else setView(state.view);
-  } finally {
-    _navSuppressPush = false;
+  function cssTime(name, fb) {
+    const v = cssVar(name), x = parseFloat(v);
+    if (!isFinite(x)) return fb;
+    return /ms$/.test(v) ? x : /s$/.test(v) ? x * 1000 : fb;
   }
-}
+
+  function animate(el, frames, o) {
+    try { return el.animate(frames, o); }
+    catch { return el.animate(frames, { ...o, easing: EASE_FALLBACK }); }
+  }
+
+  // same duration and curve as the title morph, read live so tweaking TITLE_ANIM moves everything together
+  function titleTiming() {
+    const { duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
+    return { duration, easing: `cubic-bezier(${x1},${y1},${x2},${y2})` };
+  }
+
+  function homeOf(e) {
+    switch (e.view) {
+      case 'library': return { tab: 'library', root: true };
+      case 'add': return { tab: 'add', root: true };
+      case 'playlists-mobile': return { tab: 'playlists', root: true };
+      case 'settings': return { tab: 'settings', root: !e.section && !e.sub };
+      case 'stats': return isMobile() ? { tab: 'settings', root: false } : { tab: 'stats', root: true };
+      case 'playlist': return { tab: 'playlists', root: false };
+      default: return { tab: null, root: false };
+    }
+  }
+
+  function valid(e) {
+    if (e.view === 'playlist') return !S.playlists || S.playlists.some(p => String(p.id) === String(e.pid));
+    if (e.view === 'album') return !S.albums?.length || S.albums.some(a => String(a.id) === String(e.aid));
+    return true;
+  }
+
+  function prune(st) {
+    for (let k = st.entries.length - 1; k > 0; k--) {
+      if (valid(st.entries[k])) continue;
+      st.entries.splice(k, 1);
+      if (k <= st.idx) st.idx--;
+    }
+    st.idx = Math.max(0, Math.min(st.idx, st.entries.length - 1));
+  }
+
+  function leave(e) {
+    const vc = $('vc');
+    if (!e || !vc) return;
+    e.scroll = vc.scrollTop;
+    if (e.view === 'library') e.libTab = S.libTab;
+    if (e.view === 'artist') {
+      const t = $('vtitle')?.textContent;
+      if (t && t !== 'artist') e.title = t;
+    }
+  }
+
+  function kindFor(fromTab, fromIdx, toTab, toIdx, from, dest) {
+    if (fromTab === toTab && from && key(from) === key(dest)) return null;
+    if (fromTab !== toTab) {
+      const o = TAB_ORDER[plat()];
+      return { type: 'tab', dir: o.indexOf(toTab) >= o.indexOf(fromTab) ? 1 : -1 };
+    }
+    return { type: toIdx < fromIdx ? 'back' : 'fwd' };
+  }
+
+  // ── transitions ──
+  function ghostOf(vc) {
+    const g = vc.cloneNode(true);
+    g.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+    g.classList.add('nav-ghost');
+    g.setAttribute('inert', '');
+    g.setAttribute('aria-hidden', 'true');
+    const src = vc.querySelectorAll('canvas'), dst = g.querySelectorAll('canvas');
+    src.forEach((c, i) => { try { dst[i].getContext('2d').drawImage(c, 0, 0); } catch {} });
+    Object.assign(g.style, { left: vc.offsetLeft + 'px', top: vc.offsetTop + 'px', width: vc.offsetWidth + 'px', height: vc.offsetHeight + 'px' });
+    return g;
+  }
+
+  function endRun() {
+    if (!run) return;
+    const r = run;
+    run = null;
+    r.anims.forEach(a => { try { a.cancel(); } catch {} });
+    r.ghost.remove();
+    if (r.styled) ['background', 'box-shadow'].forEach(p => r.vc.style.removeProperty(p));
+    r.wrap.classList.remove('nav-animating');
+  }
+
+  function play(kind, vc, ghost, wrap) {
+    const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: cssVar(opt('nav_ease_var')) || EASE_FALLBACK, fill: 'both' };
+    const par = +opt('nav_parallax');
+    const T = x => ({ transform: `translateX(${x}%)` });
+    let layers, cover = null;
+    if (kind.type === 'fwd') {
+      cover = vc;
+      layers = [[vc, [T(100), T(0)]], [ghost, [T(0), T(-par)]]];
+    } else if (kind.type === 'back') {
+      cover = ghost;
+      ghost.classList.add('nav-above');
+      layers = [[ghost, [T(0), T(100)]], [vc, [T(-par), T(0)]]];
+    } else {
+      const d = kind.dir;
+      layers = [[vc, [T(100 * d), T(0)]], [ghost, [T(0), T(-100 * d)]]];
+    }
+    if (cover) {
+      cover.style.setProperty('background', 'var(--nav-layer-bg, var(--color-surface))', 'important');
+      cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
+    }
+    const anims = layers.map(([el, kf]) => animate(el, kf, o));
+    const mine = run = { ghost, vc, wrap, anims, styled: cover === vc };
+    Promise.all(anims.map(a => a.finished)).then(() => { if (run === mine) endRun(); }).catch(() => {});
+  }
+
+  function swap(kind, fn) {
+    if (rendering) { fn(); return; }
+    endRun();
+    const vc = $('vc');
+    if (!kind || !vc || !animOn()) {
+      rendering = true;
+      try { fn(); } finally { rendering = false; }
+      return;
+    }
+    const wrap = vc.parentElement, scroll = vc.scrollTop;
+    wrap.classList.add('nav-animating');
+    const ghost = ghostOf(vc);
+    wrap.appendChild(ghost);
+    ghost.scrollTop = scroll;
+    rendering = true;
+    try { fn(); }
+    catch (err) { ghost.remove(); wrap.classList.remove('nav-animating'); throw err; }
+    finally { rendering = false; }
+    play(kind, vc, ghost, wrap);
+  }
+
+  // ── rendering a stack entry ──
+  function syncTitle(e) {
+    const el = $('vtitle');
+    if (!el) return;
+    let t = null;
+    if (e.view === 'settings' && isMobile()) t = e.sub ? (window._settingsSubTitle || e.sub) : (e.section || 'settings');
+    else if (e.view === 'artist') t = e.title || null;
+    if (t == null) return;
+    if (el.textContent !== t) el.textContent = t;
+    const inp = $('tsearch-input');
+    if (inp && e.view === 'settings') inp.placeholder = 'search: ' + t + '...';
+  }
+
+  function syncDbxPoll(e) {
+    if (e.section === 'dropbox sync') refreshDbxStatus().then(_startDbxTabPoll);
+    else _stopDbxTabPoll();
+  }
+
+  function restoreScroll(top) {
+    if (!top) return;
+    const vc = $('vc'), gen = window._viewGen;
+    const apply = () => { if (window._viewGen !== gen) return true; vc.scrollTop = top; return Math.abs(vc.scrollTop - top) < 2; };
+    if (apply()) return;
+    const mo = new MutationObserver(() => { if (apply()) stop(); });
+    const t = setTimeout(() => stop(), 1500);
+    function stop() {
+      mo.disconnect();
+      clearTimeout(t);
+      vc.removeEventListener('wheel', stop);
+      vc.removeEventListener('touchstart', stop);
+    }
+    mo.observe(vc, { childList: true, subtree: true });
+    vc.addEventListener('wheel', stop, { passive: true, once: true });
+    vc.addEventListener('touchstart', stop, { passive: true, once: true });
+  }
+
+  function render(e) {
+    _navPending = { section: e.section, sub: e.sub };
+    if (e.view === 'library' && e.libTab) S.libTab = e.libTab;
+    const vc = $('vc');
+    if (e.view === 'settings' && S.view === 'settings') {
+      window._settingsSection = e.section;
+      window._settingsSub = e.sub;
+      window._setDir = null;
+      vc.scrollTop = 0;
+      renderSettings();
+    } else if (e.view === 'playlists-mobile') {
+      window._viewGen = (window._viewGen || 0) + 1;
+      if (S._vlist) { S._vlist.destroy(); S._vlist = null; }
+      vc.scrollTop = 0;
+      window._syncVcFade?.();
+      _showPlaylistsMobile();
+    } else {
+      _setViewRaw(e.view, e.pid, e.aid);
+    }
+    if (e.view === 'settings') syncDbxPoll(e);
+    syncTitle(e);
+    restoreScroll(e.scroll);
+  }
+
+  function show(e, kind) {
+    swap(kind, () => render(e));
+    syncChrome();
+  }
+
+  // ── topbar back button ──
+  function mountBack() {
+    if (backWrap && backWrap.isConnected) return backWrap;
+    const bar = document.querySelector('.topbar'), anchor = $('topbar-search-wrap');
+    if (!bar || !anchor) return null;
+    backWrap = document.createElement('div');
+    backWrap.id = 'topbar-back-wrap';
+    backWrap.inert = true;
+    backWrap.innerHTML = `<button id="topbar-back-btn" class="cbtn mu-ripple" title="back" aria-label="back" onclick="NAV.back()"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>`;
+    bar.insertBefore(backWrap, anchor);
+    return backWrap;
+  }
+
+  function animateBack(w, show, instant) {
+    backAnims.forEach(a => a.cancel());
+    backAnims = [];
+    if (instant) { w.classList.toggle('on', show); w.inert = !show; return; }
+    const btn = w.firstElementChild, gap = parseFloat(getComputedStyle(w.parentElement).columnGap) || 0;
+    if (show) { w.classList.add('on'); w.inert = false; }
+    const W = show ? btn.offsetWidth : w.offsetWidth;
+    const shut = { width: '0px', marginRight: `${-gap}px` }, open = { width: `${W}px`, marginRight: '0px' };
+    const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
+    const o = { ...titleTiming(), fill: show ? 'none' : 'forwards' };
+    backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
+    if (!show) {
+      Promise.all(backAnims.map(a => a.finished))
+        .then(() => { w.classList.remove('on'); w.inert = true; backAnims.forEach(a => a.cancel()); backAnims = []; })
+        .catch(() => {});
+    }
+  }
+
+  function syncBack(instant) {
+    const want = backOn() && stack(active).idx > 0;
+    const w = mountBack();
+    if (!w || want === backShown) return;
+    backShown = want;
+    animateBack(w, want, instant || !animOn());
+  }
+
+  function syncChrome(instant) {
+    document.body.classList.toggle('nav-back-on', backOn());
+    document.body.classList.toggle('nav-anim-on', animOn());
+    if (isMobile()) {
+      const id = 'mnt-' + TAB_IDS.mobile[active];
+      document.querySelectorAll('.mob-tab').forEach(b => b.classList.toggle('active', b.id === id));
+    }
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.id === TAB_IDS.desktop[active]));
+    syncBack(instant);
+  }
+
+  // ── navigation ──
+  function goIdx(id, idx) {
+    const fromTab = active, fromSt = stack(fromTab), fromIdx = fromSt.idx, from = fromSt.entries[fromIdx];
+    const st = stack(id);
+    prune(st);
+    idx = Math.max(0, Math.min(idx, st.entries.length - 1));
+    const dest = st.entries[idx];
+    if (from !== dest) leave(from);
+    active = id;
+    st.idx = idx;
+    show(dest, kindFor(fromTab, fromIdx, id, idx, from, dest));
+  }
+
+  function tab(id, o = {}) {
+    const st = stack(id);
+    if (id === active) {
+      if (st.idx === 0) return show(st.entries[0], null);
+      return goIdx(id, 0);
+    }
+    if (o.forceRoot || !opt('nav_restore_tabs')) { st.entries.length = 1; st.idx = 0; }
+    goIdx(id, st.idx);
+  }
+
+  function openIn(id, e) {
+    const fromTab = active, fromSt = stack(fromTab), from = fromSt.entries[fromSt.idx];
+    leave(from);
+    const st = stacks[id] = { entries: [mkEntry(ROOTS[id] || id), e], idx: 1 };
+    active = id;
+    show(e, kindFor(fromTab, fromSt.idx, id, 1, from, e));
+  }
+
+  function push(e) {
+    const st = stack(active);
+    leave(st.entries[st.idx]);
+    st.entries.splice(st.idx + 1);
+    st.entries.push(e);
+    st.idx = st.entries.length - 1;
+    const max = Math.max(2, +opt('nav_max_depth') || 50);
+    while (st.entries.length > max) { st.entries.splice(1, 1); st.idx--; }
+    show(e, { type: 'fwd' });
+  }
+
+  function view(v, pid, aid) {
+    const e = mkEntry(v, pid, aid), h = homeOf(e);
+    if (h.root) return tab(h.tab, { forceRoot: true });
+    const id = h.tab || active;
+    if (id !== active) return openIn(id, e);
+    if (key(top()) === key(e)) return show(e, null);
+    push(e);
+  }
+
+  function step(d) {
+    const st = stack(active);
+    prune(st);
+    const i = st.idx + d;
+    if (i < 0 || i >= st.entries.length) return false;
+    goIdx(active, i);
+    return true;
+  }
+
+  function settingsStep(section, sub) {
+    if (!isMobile() || S.view !== 'settings') return false;
+    if (section || sub) {
+      push({ ...mkEntry('settings'), section: section || null, sub: sub || null });
+      return true;
+    }
+    return step(-1);
+  }
+
+  function settingsHtml(row, toggle) {
+    const t = k => toggle(k, opt(k), 'NAV.refresh()');
+    return row('back button · mobile', 'unified back button at the top left of the topbar', t('nav_back_mobile'))
+      + row('back button · desktop', 'same back button on desktop', t('nav_back_desktop'))
+      + row('page transitions · mobile', 'slide and parallax when going deeper, going back or switching tabs', t('nav_anim_mobile'))
+      + row('page transitions · desktop', 'same transitions on desktop', t('nav_anim_desktop'))
+      + row('remember tab history', 'switching tabs restores where you were in that tab, off = tabs always open at their root', t('nav_restore_tabs'))
+      + row('history depth', 'how many levels a tab remembers', `<input type="number" class="input" style="width:72px" min="2" max="500" value="${opt('nav_max_depth')}" onchange="saveSetting('nav_max_depth',Math.max(2,parseInt(this.value)||50)).then(()=>NAV.refresh())">`);
+  }
+
+  window.addEventListener('resize', () => syncChrome(true));
+
+  return {
+    view,
+    tab,
+    back: () => step(-1),
+    forward: () => step(1),
+    canBack: () => stack(active).idx > 0,
+    settingsStep,
+    settingsHtml,
+    refresh: () => { endRun(); syncChrome(); },
+    libTab: t => { const e = top(); if (e && e.view === 'library') e.libTab = t; },
+    state: () => ({ active, stacks }),
+  };
+})();
 
 // ===============================================
 // UNDO / REDO
@@ -30899,6 +31245,7 @@ function renderSettings() {
       </div>` : ''}
 
       ${_sectionMatch('appearance') ? section('appearance', `
+        ${subRow('navigation', 'navigation', 'back button, page transitions, tab history and history depth', () => NAV.settingsHtml(row, toggle))}
         ${subRow('theme', 'theme & font', 'hue, saturation, brightness, cover art colors and font', () => `
         ${row('theme', 'hue · saturation · brightness', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
@@ -31254,6 +31601,7 @@ function renderSettings() {
       `) : ''}
     </div>`;
   if (window._settingsSub && !_SUBS.active) window._settingsSub = null;
+  window._settingsSubTitle = _SUBS.active ? _SUBS.active.title : null;
   if (_SUBS.active) {
     _setHtml = `
     <div class="set-panel set-sub-page" style="max-width:640px">
@@ -31760,6 +32108,7 @@ function _setScroller() {
 }
 
 function setSettingsSub(id) {
+  if (NAV.settingsStep(window._settingsSection, id)) return;
   const sc = _setScroller();
   window._setScroll = sc ? sc.scrollTop : 0;
   window._settingsSub = id;
@@ -31769,6 +32118,7 @@ function setSettingsSub(id) {
 }
 
 function closeSettingsSub() {
+  if (NAV.settingsStep(null, null)) return;
   const sc = _setScroller();
   window._settingsSub = null;
   window._setDir = 'back';
@@ -31777,6 +32127,7 @@ function closeSettingsSub() {
 }
 
 function setSettingsSection(id) {
+  if (NAV.settingsStep(id, null)) return;
   window._settingsSection = id;
   window._settingsSub = null;
   window._setDir = id ? 'fwd' : 'back';
