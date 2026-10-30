@@ -23910,6 +23910,33 @@ const NAV = (() => {
     r.wrap.classList.remove('nav-animating');
   }
 
+  let _bgCtx = null;
+  function perceivedBg(el) {
+    if (!_bgCtx) _bgCtx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    _bgCtx.canvas.width = _bgCtx.canvas.height = 1;
+    const layers = [];
+    let opaque = false;
+    for (let n = el; n; n = n.parentElement) {
+      _bgCtx.clearRect(0, 0, 1, 1);
+      _bgCtx.fillStyle = '#000';
+      _bgCtx.fillStyle = getComputedStyle(n).backgroundColor;
+      _bgCtx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = _bgCtx.getImageData(0, 0, 1, 1).data;
+      if (!a) continue;
+      layers.push([r, g, b, a / 255]);
+      if (a === 255) { opaque = true; break; }
+    }
+    if (!opaque) return 'var(--color-surface)';
+    let [r, g, b] = layers.pop();
+    while (layers.length) {
+      const [lr, lg, lb, la] = layers.pop();
+      r = lr * la + r * (1 - la);
+      g = lg * la + g * (1 - la);
+      b = lb * la + b * (1 - la);
+    }
+    return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  }
+
   function play(kind, vc, ghost, wrap) {
     const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: cssVar(opt('nav_ease_var')) || EASE_FALLBACK, fill: 'both' };
     const par = +opt('nav_parallax');
@@ -23927,7 +23954,7 @@ const NAV = (() => {
       layers = [[vc, [T(100 * d), T(0)]], [ghost, [T(0), T(-100 * d)]]];
     }
     if (cover) {
-      cover.style.setProperty('background', 'var(--nav-layer-bg, var(--color-surface))', 'important');
+      cover.style.setProperty('background', cssVar('--nav-layer-bg') || perceivedBg(vc), 'important');
       cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
     }
     const anims = layers.map(([el, kf]) => animate(el, kf, o));
