@@ -23788,8 +23788,8 @@ const NAV_DEFAULTS = {
   nav_restore_tabs: true,
   nav_max_depth: 50,
   nav_parallax: 50,
-  nav_dur_var: '--dur-7',
-  nav_ease_var: '--ease-spring-soft',
+  nav_dur_var: '--dur-9',
+  nav_ease_var: 'cubic-bezier(0,1.2,0,1)',
 };
 let _navPending = { section: null, sub: null };
 
@@ -23906,57 +23906,28 @@ const NAV = (() => {
     run = null;
     r.anims.forEach(a => { try { a.cancel(); } catch {} });
     r.ghost.remove();
-    if (r.styled) ['background', 'box-shadow'].forEach(p => r.vc.style.removeProperty(p));
+    if (r.styled) r.vc.style.removeProperty('box-shadow');
     r.wrap.classList.remove('nav-animating');
-  }
-
-  let _bgCtx = null;
-  function perceivedBg(el) {
-    if (!_bgCtx) _bgCtx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
-    _bgCtx.canvas.width = _bgCtx.canvas.height = 1;
-    const layers = [];
-    let opaque = false;
-    for (let n = el; n; n = n.parentElement) {
-      _bgCtx.clearRect(0, 0, 1, 1);
-      _bgCtx.fillStyle = '#000';
-      _bgCtx.fillStyle = getComputedStyle(n).backgroundColor;
-      _bgCtx.fillRect(0, 0, 1, 1);
-      const [r, g, b, a] = _bgCtx.getImageData(0, 0, 1, 1).data;
-      if (!a) continue;
-      layers.push([r, g, b, a / 255]);
-      if (a === 255) { opaque = true; break; }
-    }
-    if (!opaque) return 'var(--color-surface)';
-    let [r, g, b] = layers.pop();
-    while (layers.length) {
-      const [lr, lg, lb, la] = layers.pop();
-      r = lr * la + r * (1 - la);
-      g = lg * la + g * (1 - la);
-      b = lb * la + b * (1 - la);
-    }
-    return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
   }
 
   function play(kind, vc, ghost, wrap) {
     const o = { duration: cssTime(opt('nav_dur_var'), 450), easing: cssVar(opt('nav_ease_var')) || EASE_FALLBACK, fill: 'both' };
     const par = +opt('nav_parallax');
     const T = x => ({ transform: `translateX(${x}%)` });
+    const C = r => ({ clipPath: `inset(0 ${r}% 0 0)` });
     let layers, cover = null;
     if (kind.type === 'fwd') {
       cover = vc;
-      layers = [[vc, [T(100), T(0)]], [ghost, [T(0), T(-par)]]];
+      layers = [[vc, [T(100), T(0)]], [ghost, [{ ...T(0), ...C(0) }, { ...T(-par), ...C(100 - par) }]]];
     } else if (kind.type === 'back') {
       cover = ghost;
       ghost.classList.add('nav-above');
-      layers = [[ghost, [T(0), T(100)]], [vc, [T(-par), T(0)]]];
+      layers = [[ghost, [T(0), T(100)]], [vc, [{ ...T(-par), ...C(100 - par) }, { ...T(0), ...C(0) }]]];
     } else {
       const d = kind.dir;
       layers = [[vc, [T(100 * d), T(0)]], [ghost, [T(0), T(-100 * d)]]];
     }
-    if (cover) {
-      cover.style.setProperty('background', cssVar('--nav-layer-bg') || perceivedBg(vc), 'important');
-      cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
-    }
+    if (cover) cover.style.setProperty('box-shadow', 'var(--nav-layer-shadow, 0 0 28px rgba(0,0,0,.28))', 'important');
     const anims = layers.map(([el, kf]) => animate(el, kf, o));
     const mine = run = { ghost, vc, wrap, anims, styled: cover === vc };
     Promise.all(anims.map(a => a.finished)).then(() => { if (run === mine) endRun(); }).catch(() => {});
