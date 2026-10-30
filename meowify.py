@@ -24065,7 +24065,7 @@ const NAV = (() => {
     backWrap = document.createElement('div');
     backWrap.id = 'topbar-back-wrap';
     backWrap.inert = true;
-    backWrap.innerHTML = `<button id="topbar-back-btn" class="cbtn mu-ripple" title="back" aria-label="back" onclick="NAV.back()"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>`;
+    backWrap.innerHTML = `<button id="topbar-back-btn" class="cbtn mu-ripple" title="back" aria-label="back" onclick="NAV.back()"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M21 12H5M10 19l-7-7 7-7"/></svg></button>`;
     bar.insertBefore(backWrap, anchor);
     return backWrap;
   }
@@ -24269,6 +24269,8 @@ function _showUndoToast(desc, wasUndo) {
 // BULK SELECT
 // ===============================================
 class VirtualList {
+  static _rhCache = {};
+  static _rhKey() { return [isMobile() ? 'm' : 'd', typeof _zoom === 'number' ? _zoom : 1, window.devicePixelRatio || 1].join('|'); }
   get ROW_H() { return this._rowH; }
   set ROW_H(v) {
     const q = (window.devicePixelRatio || 1) * (typeof _zoom === 'number' && _zoom > 0 ? _zoom : 1);
@@ -24316,6 +24318,7 @@ class VirtualList {
     const h = probeEl.getBoundingClientRect().height / (_zoom || 1);
     probeEl.remove();
     if (!(h > 0)) return;
+    VirtualList._rhCache[VirtualList._rhKey()] = h;
     const prevH = this.ROW_H;
     this.ROW_H = h;
     if (this.ROW_H === prevH) return;
@@ -24400,7 +24403,12 @@ class VirtualList {
       this._remeasure();
       // probe a real row to get the true rendered height (accounts for zoom,
       // padding, line-height etc.) before painting any visible rows
-      const probeEl = this._makeRow(0);
+      const _cached = VirtualList._rhCache[VirtualList._rhKey()];
+      if (_cached > 0) {
+        this.ROW_H = _cached;
+        this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
+      }
+      const probeEl = _cached > 0 ? null : this._makeRow(0);
       if (probeEl) {
         probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none';
         this._inner.appendChild(probeEl);
