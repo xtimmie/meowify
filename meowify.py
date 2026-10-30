@@ -24308,8 +24308,12 @@ class VirtualList {
     }
   }
 
-  _reprobe() {
+  _reprobe(n = 0) {
     if (this._dead || !this._inner || !this._inner.isConnected || !this._scroller || !this._scroller.clientHeight) return;
+    if (n < 20 && document.querySelector('.nav-animating')) {
+      setTimeout(() => this._reprobe(n + 1), 120);
+      return;
+    }
     const probeEl = this._makeRow(0);
     if (!probeEl) return;
     probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
@@ -24320,7 +24324,6 @@ class VirtualList {
     if (!(h > 0)) return;
     VirtualList._rhCache[VirtualList._rhKey()] = h;
     const prevH = this.ROW_H;
-    if (Math.abs(h - prevH) > 1) console.warn('[vlist] row h', prevH, '->', h, 'zoom', _zoom, 'dpr', window.devicePixelRatio, 't', Math.round(performance.now()), 'fonts', document.fonts && document.fonts.status, 'navAnimating', !!document.querySelector('.nav-animating'));
     this.ROW_H = h;
     if (this.ROW_H === prevH) return;
     this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
