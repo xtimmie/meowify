@@ -23791,7 +23791,7 @@ const NAV_DEFAULTS = {
   nav_anim_desktop: true,
   nav_restore_tabs: true,
   nav_max_depth: 50,
-  nav_parallax: 33,
+  nav_parallax: 20,
   nav_dur_var: '--dur-8',
   nav_ease_var: 'cubic-bezier(0.2,1.15,0,1)',
   nav_tab_pad: 100,
@@ -23837,6 +23837,35 @@ const NAV = (() => {
   function animate(el, frames, o) {
     try { return el.animate(frames, o); }
     catch { return el.animate(frames, { ...o, easing: EASE_FALLBACK }); }
+  }
+
+  let prevTitle = null, titleTimer = 0;
+
+  function peakTime(ease) {
+    const m = /cubic-bezier\(([^)]+)\)/.exec(ease);
+    const p = m && m[1].split(',').map(parseFloat);
+    if (!p || p.length < 4 || p.some(isNaN)) return .5;
+    const [x1, y1, x2, y2] = p;
+    const bz = (s, a, b) => 3 * (1 - s) * (1 - s) * s * a + 3 * (1 - s) * s * s * b + s * s * s;
+    const dz = (s, a, b) => 3 * (1 - s) * (1 - s) * a + 6 * (1 - s) * s * (b - a) + 3 * s * s * (1 - b);
+    let best = 0, at = .5;
+    for (let i = 0; i <= 200; i++) {
+      const s = i / 200, dx = dz(s, x1, x2);
+      if (dx <= 1e-6) continue;
+      const v = dz(s, y1, y2) / dx;
+      if (v > best) { best = v; at = bz(s, x1, x2); }
+    }
+    return at;
+  }
+
+  function holdTitle(ms) {
+    const el = $('vtitle');
+    if (!el || prevTitle == null) return;
+    const next = el.textContent, old = prevTitle;
+    if (next === old) return;
+    el.textContent = old;
+    clearTimeout(titleTimer);
+    titleTimer = setTimeout(() => { if (el.textContent === old) el.textContent = next; }, ms);
   }
 
   function navEase() {
@@ -24020,8 +24049,11 @@ const NAV = (() => {
   }
 
   function show(e, kind) {
+    clearTimeout(titleTimer);
+    prevTitle = $('vtitle') ? $('vtitle').textContent : null;
     swap(kind, () => render(e));
     syncChrome();
+    prevTitle = null;
   }
 
   // ── topbar back button ──
@@ -24048,6 +24080,7 @@ const NAV = (() => {
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
     const o = { duration: TITLE_ANIM.duration, easing: navEase(), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
+    holdTitle(peakTime(o.easing) * o.duration);
     backAnims = [animate(w, show ? [shut, open] : [open, shut], o), animate(btn, show ? [away, here] : [here, away], o)];
     if (!show) {
       Promise.all(backAnims.map(a => a.finished))
