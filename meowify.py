@@ -18996,10 +18996,10 @@ function _setViewRaw(v, pid, aid) {
     renderPlaylist(pid);
   } else if (v === 'album' && aid) {
     const alb = S.albums.find(a => a.id === aid);
-    document.getElementById('vtitle').textContent = alb ? alb.title : 'album';
+    document.getElementById('vtitle').textContent = alb ? alb.title : '';
     renderAlbumDetail(aid);
   } else if (v === 'artist' && aid) {
-    document.getElementById('vtitle').textContent = 'artist';
+    document.getElementById('vtitle').textContent = (S._artNames && S._artNames[aid]) || '';
     renderArtistPage(aid);
   } else if (v === 'add') {
     document.getElementById('vtitle').textContent = 'add music';
@@ -19323,6 +19323,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
   if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
   if(_viewStale('album',aid))return; // left while loading
+  if(albInfo.title){const _vt=document.getElementById('vtitle');if(_vt&&_vt.textContent!==albInfo.title)_vt.textContent=albInfo.title;const _ti=document.getElementById('tsearch-input');if(_ti)_ti.placeholder='search: '+albInfo.title+'...';}
   if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
   const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
   if(_viewStale('album',aid))return;
@@ -22659,6 +22660,7 @@ async function navigateToArtist(nameOrId, isId, _srcEl, fallbackName) {
   const res = await api('GET', '/api/artists/by-name?name=' + encodeURIComponent(nameOrId));
   if ((window._viewGen || 0) !== _gen) return; // user navigated elsewhere while this resolved
   if (res && !res.error) {
+    (S._artNames || (S._artNames = {}))[res.id] = res.name || nameOrId;
     setView('artist', null, res.id);
   } else if (fallbackName && fallbackName !== nameOrId) {
     // primary (comma-split) name didn't resolve - the comma may have been
@@ -23789,7 +23791,7 @@ const NAV_DEFAULTS = {
   nav_max_depth: 50,
   nav_parallax: 50,
   nav_dur_var: '--dur-9',
-  nav_ease_var: 'cubic-bezier(0,1.2,0,1)',
+  nav_ease_var: 'cubic-bezier(0,2,0,1)',
 };
 let _navPending = { section: null, sub: null };
 
@@ -23854,7 +23856,7 @@ const NAV = (() => {
 
   function valid(e) {
     if (e.view === 'playlist') return !S.playlists || S.playlists.some(p => String(p.id) === String(e.pid));
-    if (e.view === 'album') return !S.albums?.length || S.albums.some(a => String(a.id) === String(e.aid));
+    if (e.view === 'album') return true;
     return true;
   }
 
@@ -24958,6 +24960,7 @@ async function renderArtistPage(aid) {
     return;
   }
 
+  (S._artNames || (S._artNames = {}))[aid] = artist.name;
   document.getElementById('vtitle').textContent = artist.name;
 
   const totalPlays = (songs || []).reduce((s, sg) => s + (sg.play_count || 0), 0);
