@@ -12,9 +12,3 @@ langdetect
 scipy
 pywebview; sys_platform == "win32"
 pystray; sys_platform == "win32"
-winrt-runtime; sys_platform == "win32"
-winrt-Windows.Foundation; sys_platform == "win32"
-winrt-Windows.Foundation.Collections; sys_platform == "win32"
-winrt-Windows.Media; sys_platform == "win32"
-winrt-Windows.Media.Playback; sys_platform == "win32"
-winrt-Windows.Storage.Streams; sys_platform == "win32"
