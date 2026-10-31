@@ -13743,12 +13743,12 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   transition: background var(--dur-2);
 }
 .mob-sort-btn svg { flex-shrink: 0; }
-#app:not(.mobile) #sel-mode-btn{display:none}
+#app:not(.mobile) #sel-mode-wrap{display:none}
 #sel-mode-btn svg{translate:-.4px .2px} /* optical centering: the tick overshoots the checkbox to the top right */
 #sel-mode-btn{position:relative}
 #sel-mode-btn svg,#dl-panel-btn svg{width:16px;height:16px}
 /* count badge shared by the select and downloads buttons: small, tucked into the top right corner so the icon stays readable */
-.cbtn-badge{position:absolute;top:1px;right:0;min-width:13px;height:13px;border-radius:7px;box-sizing:border-box;background:var(--color-primary);color:var(--color-on-primary);font-size:8px;font-weight:700;align-items:center;justify-content:center;padding:0 3px;line-height:1;pointer-events:none;font-variant-numeric:tabular-nums}
+.cbtn-badge{position:absolute;top:0;right:-1px;z-index:1;min-width:13px;height:13px;border-radius:7px;box-sizing:border-box;background:var(--color-primary);color:var(--color-on-primary);font-size:8px;font-weight:700;align-items:center;justify-content:center;padding:0 3px;line-height:1;pointer-events:none;font-variant-numeric:tabular-nums}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow.drag-stacked{transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
 :where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
@@ -14013,14 +14013,17 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
       </div>
       <div class="topbar-acts" id="tacts"></div>
       <div class="topbar-acts">
+        <div id="sel-mode-wrap" style="position:relative">
         <button id="sel-mode-btn" class="cbtn mu-ripple" title="select" onclick="toggleSelectMode()">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M15 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5"/><path d="M8.5 11.5L12 15l9-10"/></svg>
         </button>
+        <span id="sel-badge" class="cbtn-badge" style="display:none"></span>
+        </div>
         <div id="topbar-dl-wrap" style="position:relative">
           <button id="dl-panel-btn" class="cbtn mu-ripple" title="downloads" style="position:relative" onclick="toggleDlPanel()">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><line x1="12" y1="3" x2="12" y2="14"/><polyline points="8,10 12,15 16,10"/><path d="M4,17 Q4,21 12,21 Q20,21 20,17" fill="none" id="dl-btn-basin"/></svg>
-            <span id="dl-badge" class="cbtn-badge" style="display:none"></span>
           </button>
+          <span id="dl-badge" class="cbtn-badge" style="display:none"></span>
         </div>
         <button id="topbar-cfg-btn" class="cbtn mu-ripple" title="settings" onclick="openSettingsPopup()">
           <svg viewBox="0 0 24 24" width="17" height="17">
@@ -25042,7 +25045,7 @@ function _syncSelBtn() {
   const b = document.getElementById('sel-mode-btn');
   if (!b) return;
   const hide = S.view === 'add' || S.view === 'settings' || S.view === 'stats';
-  b.style.display = hide ? 'none' : '';
+  (b.parentElement || b).style.display = hide ? 'none' : '';
 }
 
 // ── mobile playlists page: batch select ──────────────────────────────────────
@@ -25253,12 +25256,10 @@ function refreshSelectionUI() {
 
 // count badge on the topbar select button, same look as the downloads one (.cbtn-badge)
 function _updateSelBadge() {
-  const b = document.getElementById('sel-mode-btn');
-  if (!b) return;
-  let el = b.querySelector('.cbtn-badge');
+  const el = document.getElementById('sel-badge');
+  if (!el) return;
   const n = S.selectMode ? S.selected.size : 0;
-  if (!n) { if (el) el.style.display = 'none'; return; }
-  if (!el) { el = document.createElement('span'); el.className = 'cbtn-badge'; b.appendChild(el); }
+  if (!n) { el.style.display = 'none'; return; }
   el.textContent = n > 99 ? '99+' : String(n);
   el.style.display = 'flex';
 }
