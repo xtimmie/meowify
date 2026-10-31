@@ -17826,6 +17826,7 @@ function setShuffleMode(mode) {
   _updateShuffleBtnTitle();
   if (S.shuffle) _shuffleRemaining();
   if (S.queueOpen) renderQueueSidebar();
+  if (S.shuffle) _queueNextChanged();
 }
 
 function setSmartShuffle(on) {
@@ -17887,6 +17888,7 @@ function toggleShuffle() {
   updateHighlights();
   engine._stopNxt();
   _updateShuffleBtnTitle();
+  _queueNextChanged();
 }
 
 function toggleRepeat() {
@@ -19482,7 +19484,6 @@ function _removeQueueMany(idxs) {
   for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
   // when the playing row is gone this is the first survivor after it (== queue.length if there is none)
   S.qi = S.qi - below;
-  if (S.nowPlayingOpen && !curRemoved) renderNowPlaying();
   if (S.queueOpen) {
     // destroy vlist before rebuild so it doesn't reference stale indices
     const _qInner = document.getElementById('queue-inner');
@@ -19511,8 +19512,9 @@ function _removeQueueMany(idxs) {
       S.isPlaying = false; S.cur = null;
       updatePlayerUI(null); updateHighlights(); updatePlayBtn();
     }
-  } else if (nxtId && ids.has(nxtId)) {
-    engine._stopNxt();
+  } else {
+    // covers next up card + re-preloading when the preloaded song was removed or something new is now next
+    _queueNextChanged();
   }
 }
 
@@ -21451,15 +21453,21 @@ document.addEventListener('dragstart', e => {
   if (_qSwipe && _qSwipe.on) e.preventDefault();
 }, true);
 
+// call after anything that can change what plays next (add, remove, reorder, shuffle):
+// refreshes the next up card and re-points the gapless/crossfade preload, only if the preloaded song is stale
+function _queueNextChanged() {
+  if (S.nowPlayingOpen) { try { renderNowPlaying(); } catch (e) {} }
+  if (!engine.ctx || !engine.cur) return;
+  if (engine.nxt && engine.nxt.songId === getNextId()) return; // already preloading the right one
+  if (engine.nxt && engine.nxt.srcStartedAt <= engine.ctx.currentTime) return; // incoming song already started
+  clearTimeout(engine._pt); engine._pt = null;
+  engine._stopNxt();
+  engine._schedPreload(getNextId);
+}
+
 // call after S.queue got new songs at idx..idx+count-1
 function _queueAdded(idx, count) {
-  // next up card in now playing + gapless/crossfade preload must follow the queue change
-  if (S.nowPlayingOpen) { try { renderNowPlaying(); } catch (e) {} }
-  if (engine.ctx && engine.cur && idx <= S.qi + 1 && (!engine.nxt || engine.nxt.srcStartedAt > engine.ctx.currentTime)) {
-    clearTimeout(engine._pt); engine._pt = null;
-    engine._stopNxt();
-    engine._schedPreload(getNextId);
-  }
+  _queueNextChanged();
   if (!S.queueOpen) return;
   _qAddAnim = {idx, count};
   renderQueueSidebar();
@@ -28582,6 +28590,7 @@ function initVlistReorder(vl) {
         _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',');
         _qLastQi = S.qi;
         changed = true;
+        _queueNextChanged();
       }
       if (changed) {
         vl._rendered = {start: -1, end: -1};
@@ -28684,6 +28693,7 @@ function initDrag(pid) {
         S.queue = newList.filter(s => queueIds.has(s.id));
         S.qi = curId ? Math.max(0, S.queue.findIndex(s => s.id === curId)) : 0;
         if (S.queueOpen) renderQueueSidebar();
+        _queueNextChanged();
       }
       await api('POST', '/api/playlists/' + pid + '/reorder', {order: newIds});
       _pushUndo({
