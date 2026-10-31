@@ -16693,10 +16693,6 @@ class AudioEngine {
     }
     _mediaAudio._lastSongId = song.id;
     _mediaAudio._paused = !!paused;
-    if (window._nmWidget) {   // native windows widget is active: the browser one must stay off
-      if (!_mediaAudio.paused) { try { _mediaAudio.pause(); } catch(e) {} }
-      return;
-    }
     if (paused && _MS_FOLLOW_PAUSE) {
       // really pause the decoy so every widget flips to the paused icon, the session stays alive while paused
       if (!_mediaAudio.paused) { try { _mediaAudio.pause(); } catch(e) {} }
@@ -16718,7 +16714,7 @@ class AudioEngine {
   // playing through pause too, see syncMediaAudio above for why.
   function _ensureMediaAudioAlive() {
     if (engine.ctx && engine.ctx.state === 'suspended') engine.ctx.resume().catch(()=>{});
-    if (S.cur && _mediaAudio.paused && !window._nmWidget && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
+    if (S.cur && _mediaAudio.paused && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
       _mediaAudio.play().catch(() => {
         // if blocked, retry once after a short delay (handles browser autoplay policy)
         setTimeout(() => { if (S.cur) _mediaAudio.play().catch(()=>{}); }, 500);
@@ -16757,7 +16753,7 @@ class AudioEngine {
   // pause too now (see syncMediaAudio), so any unexpected pause while a
   // song is loaded, playing or not, should trigger a resume attempt.
   _mediaAudio.addEventListener('pause', () => {
-    if (S.cur && !window._nmWidget && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
+    if (S.cur && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
       setTimeout(() => { if (S.cur && _mediaAudio.paused && (S.isPlaying || !_MS_FOLLOW_PAUSE)) _mediaAudio.play().catch(()=>{}); }, 100);
     }
   });
@@ -16776,7 +16772,6 @@ class AudioEngine {
 
   // ── windows native integration bridge: the widget / tray / taskbar buttons live in python, this feeds them state
   // and runs the commands they send back. everything stays idle unless one of them is switched on in settings
-  window._nmWidget = false;
   let _nmCaps = null, _nmOn = false, _nmPollOn = false;
   let _nmLast = '', _nmLastPos = 0, _nmLastAt = 0, _nmLastPlaying = false, _nmChk = 0;
 
@@ -16784,10 +16779,8 @@ class AudioEngine {
     if (_nmCaps) return;
     try { _nmCaps = await (await fetch('/api/native/caps')).json(); }
     catch (e) { _nmCaps = {}; return; }
-    window._nmWidget = !!_nmCaps.widget_active;
-    _nmOn = !!(_nmCaps.widget_active || _nmCaps.tray_active || _nmCaps.thumb_active);
-    if (window._nmWidget) { try { _mediaAudio.pause(); } catch (e) {} }   // native widget replaces the browser one
-    else if (S.cur) syncMediaAudio(S.cur, !S.isPlaying);
+    // based on the saved settings, not on what python has built yet (it builds the tray a few seconds after the page loads)
+    _nmOn = !!(_nmCaps.win && (CFG.win_tray || CFG.win_tray_ctrl || CFG.win_thumb));
     if (_nmOn && !_nmPollOn) _nmPoll();
     _nativePush(true);
   }
@@ -16821,6 +16814,7 @@ class AudioEngine {
       else if (c.cmd === 'next') nextSong();
       else if (c.cmd === 'prev') prevSong();
       else if (c.cmd === 'seek') _nmSeek(c.value);
+      else if (c.cmd === 'cfg') api('GET', '/api/settings').then(n => { Object.assign(CFG, n); renderSettings(); });
     } catch (e) { console.warn('[native] command failed', c, e); }
   }
 
@@ -16865,8 +16859,7 @@ class AudioEngine {
     const list = (key) => Array.isArray(CFG[key]) ? CFG[key] : ['prev', 'play', 'next'];
     const btnChips = (key) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']].map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
     const status = c.err ? esc(c.err) : '';
-    return row('native media widget', 'windows media widget made by meowify itself, right name, cover and controls' + (status ? '<br>' + status : ''), sw('win_native_widget', !!CFG.win_native_widget))
-      + row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls', sw('win_tray', !!CFG.win_tray))
+    return row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls' + (status ? '<br>' + status : ''), sw('win_tray', !!CFG.win_tray))
       + row('tray media buttons', 'separate tray icons for the controls, drag them out of the tray overflow onto the taskbar', sw('win_tray_ctrl', !!CFG.win_tray_ctrl))
       + row('tray buttons shown', 'pick which controls get a tray icon', btnChips('win_tray_btns'))
       + row('tray icon color', 'auto follows the windows taskbar theme', `<div style="display:flex;gap:6px">${[['auto', 'auto'], ['white', 'white'], ['black', 'black']].map(([v, l]) => chip((CFG.win_tray_style || 'auto') === v, `_nmSetting('win_tray_style','${v}')`, l)).join('')}</div>`)
@@ -33743,13 +33736,14 @@ def _cached_port():
     pf.write_text(str(p))
     return p
 
-# ── windows native integration: media widget (smtc), tray icons, taskbar preview buttons ──
+# ── windows native integration: tray icons, taskbar preview buttons ──
 # optional, off by default, every part is guarded so a failure here can never stop the app from starting
 _NM_CV   = threading.Condition()
 _NM      = {'id': None, 'title': '', 'artist': '', 'album': '', 'dur': 0.0, 'pos': 0.0, 'playing': False, 'cover': False}
 _NM_CMDS = []   # commands from the native ui (widget buttons, tray, thumbnail) -> page, drained by /api/native/wait
-_NM_ST   = {'widget': None, 'tray': None, 'thumb': None, 'installing': False, 'err': '', 'base': ''}
+_NM_ST   = {'tray': None, 'thumb': None, 'err': ''}
 _NM_REB  = threading.Lock()
+_NM_GEN  = [0]
 
 def _nm_cmd(cmd, value=None):
     with _NM_CV:
@@ -33791,8 +33785,32 @@ def _nm_glyph(kind, color, size=64):
     return im.resize((size, size), Image.LANCZOS)
 
 def _nm_hwnd():
+    """our own top level window (matched by process + title, hidden ones included)"""
     import ctypes
-    return ctypes.windll.user32.FindWindowW(None, 'meowify')
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    pid = os.getpid()
+    found = []
+    Enum = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, l):
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            n = u.GetWindowTextLengthW(h)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u.GetWindowTextW(h, buf, n + 1)
+                if buf.value == 'meowify':
+                    found.append(h)
+                    return False
+        return True
+    u.EnumWindows(Enum(cb), 0)
+    return found[0] if found else 0
+
+def _nm_tray_sig():
+    b = CFG.get('win_tray_btns')
+    if not isinstance(b, list): b = ['prev', 'play', 'next']
+    return (bool(CFG.get('win_tray')), bool(CFG.get('win_tray_ctrl')), tuple(b), CFG.get('win_tray_style', 'auto'))
 
 def _nm_toggle_window():
     import ctypes
@@ -33817,127 +33835,14 @@ def _nm_quit():
     h = _nm_hwnd()
     if h: ctypes.windll.user32.PostMessageW(h, 0x0010, 0, 0)   # WM_CLOSE, same path as pressing the x so cleanup runs
 
-class _NmWidget:
-    """native windows media widget (smtc) owned by this process, so name / cover / controls are ours"""
-    def __init__(self):
-        self.player = None; self.smtc = None; self._tok = []
-        self._meta = None; self._pending = None; self._stop = False
-        self._cv = threading.Condition()
-
-    def start(self):
-        from winrt.windows.media.playback import MediaPlayer
-        from winrt.windows.media import SystemMediaTransportControlsButton as B
-        self._B = B
-        self.player = MediaPlayer()
-        try: self.player.command_manager.is_enabled = False
-        except Exception: pass
-        s = self.smtc = self.player.system_media_transport_controls
-        s.is_enabled = True
-        s.is_play_enabled = True; s.is_pause_enabled = True
-        s.is_next_enabled = True; s.is_previous_enabled = True
-        s.is_stop_enabled = False
-        self._tok.append(('button_pressed', s.add_button_pressed(self._on_button)))
-        try: self._tok.append(('playback_position_change_requested', s.add_playback_position_change_requested(self._on_seek)))
-        except Exception as e: _log_server.warning(f'[native] seek events unavailable: {e}')
-        threading.Thread(target=self._loop, daemon=True).start()
-
-    def _on_button(self, sender, args):
-        try:
-            b = args.button
-            if b == self._B.PLAY: _nm_cmd('play')
-            elif b == self._B.PAUSE: _nm_cmd('pause')
-            elif b == self._B.NEXT: _nm_cmd('next')
-            elif b == self._B.PREVIOUS: _nm_cmd('prev')
-        except Exception as e:
-            _log_server.warning(f'[native] button event failed: {e}')
-
-    def _on_seek(self, sender, args):
-        try: _nm_cmd('seek', args.requested_playback_position.total_seconds())
-        except Exception as e: _log_server.warning(f'[native] seek event failed: {e}')
-
-    def push(self, st):
-        with self._cv:
-            self._pending = st
-            self._cv.notify()
-
-    def _loop(self):
-        while not self._stop:
-            with self._cv:
-                while self._pending is None and not self._stop:
-                    self._cv.wait(1.0)
-                st, self._pending = self._pending, None
-            if st is None: continue
-            try: self._apply(st)
-            except Exception as e: _log_server.warning(f'[native] widget update failed: {e}')
-
-    def _cover_ref(self, st):
-        if not st.get('cover') or not _NM_ST.get('base'): return None
-        try:
-            import asyncio
-            from winrt.windows.storage.streams import InMemoryRandomAccessStream, DataWriter, RandomAccessStreamReference
-            data = _urllib_request.urlopen(f"{_NM_ST['base']}/cover/{st['id']}", timeout=5).read()
-            async def mk():
-                stream = InMemoryRandomAccessStream()
-                w = DataWriter(stream)
-                w.write_bytes(data)
-                await w.store_async()
-                await w.flush_async()
-                w.detach_stream()
-                stream.seek(0)
-                return stream
-            return RandomAccessStreamReference.create_from_stream(asyncio.run(mk()))
-        except Exception as e:
-            _log_server.warning(f'[native] cover failed: {e}')
-            return None
-
-    def _apply(self, st):
-        from datetime import timedelta
-        from winrt.windows.media import MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControlsTimelineProperties
-        s = self.smtc
-        if not st.get('id'):
-            s.playback_status = MediaPlaybackStatus.CLOSED
-            try: s.display_updater.clear_all()
-            except Exception: pass
-            self._meta = None
-            return
-        key = (st['id'], st['title'], st['artist'], st['album'], st['cover'])
-        if key != self._meta:
-            du = s.display_updater
-            du.type = MediaPlaybackType.MUSIC
-            mp = du.music_properties
-            mp.title = st['title'] or 'untitled'
-            mp.artist = st['artist'] or ''
-            mp.album_title = st['album'] or ''
-            ref = self._cover_ref(st)
-            if ref is not None: du.thumbnail = ref
-            du.update()
-            self._meta = key
-        s.playback_status = MediaPlaybackStatus.PLAYING if st['playing'] else MediaPlaybackStatus.PAUSED
-        dur = max(0.0, float(st.get('dur') or 0))
-        if dur > 0:
-            pos = min(max(0.0, float(st.get('pos') or 0)), dur)
-            tl = SystemMediaTransportControlsTimelineProperties()
-            tl.start_time = timedelta(0); tl.min_seek_time = timedelta(0)
-            tl.end_time = timedelta(seconds=dur); tl.max_seek_time = timedelta(seconds=dur)
-            tl.position = timedelta(seconds=pos)
-            s.update_timeline(tl)
-
-    def stop(self):
-        self._stop = True
-        with self._cv: self._cv.notify()
-        try:
-            for name, tok in self._tok:
-                getattr(self.smtc, 'remove_' + name)(tok)
-            self.smtc.is_enabled = False
-            self.player.close()
-        except Exception as e:
-            _log_server.warning(f'[native] widget stop: {e}')
-
 class _NmTray:
     """tray icons: optional app icon + one icon per media button (drag them out of the overflow onto the taskbar)"""
     def __init__(self):
         self.icons = {}
+        self.threads = []
         self.style = CFG.get('win_tray_style', 'auto')
+        self.sig = _nm_tray_sig()
+        self.playing = bool(_NM['playing'])
 
     def start(self):
         order = []
@@ -33954,7 +33859,9 @@ class _NmTray:
             if not isinstance(cur, list): cur = ['prev', 'play', 'next']
             CFG['win_tray_btns'] = [b for b in cur if b != name]
             save_cfg(CFG)
-        threading.Thread(target=_nm_rebuild, daemon=True).start()
+        def _go():
+            _nm_rebuild(); _nm_cmd('cfg')
+        threading.Thread(target=_go, daemon=True).start()
 
     def _add(self, name):
         import pystray
@@ -33974,13 +33881,17 @@ class _NmTray:
                                 M('hide this button', lambda icon, item, n=name: self._hide(n)))
             kind = 'pause' if (name == 'play' and _NM['playing']) else name
             img, title = _nm_glyph(kind, col), label
-        ic = pystray.Icon('meowify-' + name, img, title, menu)
+        _NM_GEN[0] += 1
+        ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
         self.icons[name] = ic
-        threading.Thread(target=ic.run, daemon=True).start()
+        th = threading.Thread(target=ic.run, daemon=True)
+        th.start(); self.threads.append(th)
 
     def update(self, playing):
         ic = self.icons.get('play')
-        if not ic: return
+        playing = bool(playing)
+        if not ic or playing == self.playing: return
+        self.playing = playing
         try:
             ic.icon = _nm_glyph('pause' if playing else 'play', _nm_color(self.style))
             ic.title = 'pause' if playing else 'play'
@@ -33990,7 +33901,10 @@ class _NmTray:
         for ic in list(self.icons.values()):
             try: ic.stop()
             except Exception: pass
-        self.icons = {}
+        for th in self.threads:
+            try: th.join(2)
+            except Exception: pass
+        self.icons = {}; self.threads = []
 
 class _NmThumb:
     """prev / play / next buttons under the taskbar window preview (ITaskbarList3 over ctypes)"""
@@ -34142,30 +34056,24 @@ def _nm_rebuild():
     if sys.platform != 'win32': return {}
     with _NM_REB:
         _NM_ST['err'] = ''
-        want = {'widget': bool(CFG.get('win_native_widget')),
-                'tray': bool(CFG.get('win_tray') or CFG.get('win_tray_ctrl')),
+        want = {'tray': bool(CFG.get('win_tray') or CFG.get('win_tray_ctrl')),
                 'thumb': bool(CFG.get('win_thumb'))}
-        w = _NM_ST['widget']
-        if want['widget'] and not w:
-            try:
-                w = _NmWidget(); w.start(); _NM_ST['widget'] = w; w.push(dict(_NM))
-            except Exception as e:
-                _NM_ST['err'] = f'widget: {e}'[:200]; _log_server.warning(f'[native] widget failed: {e}')
-        elif not want['widget'] and w:
-            try: w.stop()
-            finally: _NM_ST['widget'] = None
         t = _NM_ST['tray']
-        if t:
-            try: t.stop()
-            finally: _NM_ST['tray'] = None
-        if want['tray']:
-            try:
-                t = _NmTray(); t.start(); _NM_ST['tray'] = t; t.update(_NM['playing'])
-            except Exception as e:
-                _NM_ST['err'] = f'tray: {e}'[:200]; _log_server.warning(f'[native] tray failed: {e}')
+        if want['tray'] and t and t.sig == _nm_tray_sig():
+            pass   # nothing tray related changed, leave the icons alone
         else:
-            try: _nm_show_window()   # never leave the window hidden with no tray icon to bring it back
-            except Exception: pass
+            had = bool(t)
+            if t:
+                try: t.stop()
+                finally: _NM_ST['tray'] = None
+            if want['tray']:
+                try:
+                    t = _NmTray(); t.start(); _NM_ST['tray'] = t
+                except Exception as e:
+                    _NM_ST['err'] = f'tray: {e}'[:200]; _log_server.warning(f'[native] tray failed: {e}')
+            elif had:
+                try: _nm_show_window()   # never leave the window hidden with no tray icon to bring it back
+                except Exception: pass
         th = _NM_ST['thumb']
         if want['thumb'] and not th:
             try:
@@ -34174,7 +34082,7 @@ def _nm_rebuild():
                 _NM_ST['err'] = f'preview buttons: {e}'[:200]
         elif not want['thumb'] and th:
             th.stop(); _NM_ST['thumb'] = None
-        return {'installing': False}
+        return {}
 
 def _nm_boot():
     time.sleep(6)
@@ -34184,9 +34092,8 @@ def _nm_boot():
 @app.route('/api/native/caps')
 def api_native_caps():
     return jsonify({'win': sys.platform == 'win32',
-                    'widget_active': bool(_NM_ST['widget']), 'tray_active': bool(_NM_ST['tray']),
-                    'thumb_active': bool(_NM_ST['thumb']),
-                    'installing': _NM_ST['installing'], 'err': _NM_ST['err']})
+                    'tray_active': bool(_NM_ST['tray']), 'thumb_active': bool(_NM_ST['thumb']),
+                    'err': _NM_ST['err']})
 
 @app.route('/api/native/apply', methods=['POST'])
 def api_native_apply():
@@ -34196,12 +34103,10 @@ def api_native_apply():
 @app.route('/api/native/state', methods=['POST'])
 def api_native_state():
     d = request.get_json(silent=True) or {}
-    _NM_ST['base'] = request.host_url.rstrip('/')
     _NM.update({'id': d.get('id'), 'title': d.get('title') or '', 'artist': d.get('artist') or '', 'album': d.get('album') or '',
                 'dur': float(d.get('dur') or 0), 'pos': float(d.get('pos') or 0),
                 'playing': bool(d.get('playing')), 'cover': bool(d.get('cover'))})
     try:
-        if _NM_ST['widget']: _NM_ST['widget'].push(dict(_NM))
         if _NM_ST['tray']: _NM_ST['tray'].update(_NM['playing'])
         if _NM_ST['thumb']: _NM_ST['thumb'].push(_NM['playing'])
     except Exception as e:
