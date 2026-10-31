@@ -13748,7 +13748,11 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 #sel-mode-btn{position:relative}
 #sel-mode-btn svg,#dl-panel-btn svg{width:16px;height:16px}
 /* count badge shared by the select and downloads buttons: small, tucked into the top right corner so the icon stays readable */
-.cbtn-badge{position:absolute;top:0;right:-1px;z-index:1;min-width:13px;height:13px;border-radius:7px;box-sizing:border-box;background:var(--color-primary);color:var(--color-on-primary);font-size:8px;font-weight:700;align-items:center;justify-content:center;padding:0 3px;line-height:1;pointer-events:none;font-variant-numeric:tabular-nums}
+.cbtn-badge{position:absolute;top:-2px;right:-4px;z-index:1;min-width:14px;height:14px;border-radius:7px;box-sizing:border-box;background:var(--color-primary);color:var(--color-on-primary);font-size:9px;font-weight:700;place-items:center;padding:0 4px;line-height:1;pointer-events:none;font-variant-numeric:tabular-nums}
+/* single digit = perfect circle, 2+ digits stretch into a pill */
+.cbtn-badge:is(:empty,[data-n="1"]){padding:0;width:14px}
+/* only the digit's real height gets centered instead of the whole font line box, so any font or number sits dead center */
+@supports (text-box: trim-both cap alphabetic){.cbtn-badge{text-box:trim-both cap alphabetic}}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow.drag-stacked{transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
 :where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
@@ -25261,7 +25265,8 @@ function _updateSelBadge() {
   const n = S.selectMode ? S.selected.size : 0;
   if (!n) { el.style.display = 'none'; return; }
   el.textContent = n > 99 ? '99+' : String(n);
-  el.style.display = 'flex';
+  el.dataset.n = String(el.textContent.length);
+  el.style.display = 'grid';
 }
 
 function updateBulkBar() {
@@ -26400,8 +26405,9 @@ function _updateDlPanelBadge() {
   const active = Object.values(_dlPanelItems).filter(d => d.status !== 'done' && d.status !== 'error').length;
   const badge = document.getElementById('dl-badge');
   if (badge) {
-    badge.textContent = active || '';
-    badge.style.display = active ? 'flex' : 'none';
+    badge.textContent = active > 99 ? '99+' : (active || '');
+    badge.dataset.n = String(badge.textContent.length);
+    badge.style.display = active ? 'grid' : 'none';
   }
   if (_dlPanelOpen) _renderDlPanel(false);
 }
