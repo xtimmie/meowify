@@ -16864,8 +16864,10 @@ class AudioEngine {
       + row('tray buttons shown', 'pick which controls get a tray icon', btnChips('win_tray_btns'))
       + row('tray icon color', 'auto follows the windows taskbar theme', `<div style="display:flex;gap:6px">${[['auto', 'auto'], ['white', 'white'], ['black', 'black']].map(([v, l]) => chip((CFG.win_tray_style || 'auto') === v, `_nmSetting('win_tray_style','${v}')`, l)).join('')}</div>`)
       + row('taskbar preview buttons', 'prev / play / next under the window preview when you hover the taskbar icon, changing which buttons needs a restart', sw('win_thumb', !!CFG.win_thumb))
-      + row('preview buttons shown', 'pick which controls show in the taskbar preview', btnChips('win_thumb_btns'));
+      + row('preview buttons shown', 'pick which controls show in the taskbar preview', btnChips('win_thumb_btns'))
+      + row('close to taskbar', 'the x button minimizes meowify to the taskbar instead of quitting, quit from the tray menu or by closing it from the taskbar while minimized (webview mode only)', sw('win_close_min', !!CFG.win_close_min));
   };
+  setInterval(() => { if (_nmOn) _nativePush(); }, 500);   // catches play / pause changes that dont go through updatePositionState
   setTimeout(_nativeInit, 3000);
   setTimeout(() => { if (window._nativeReload) window._nativeReload(); }, 9000);   // re-read status after python built the tray
 
@@ -33745,6 +33747,8 @@ _NM_CMDS = []   # commands from the native ui (widget buttons, tray, thumbnail) 
 _NM_ST   = {'tray': None, 'thumb': None, 'err': ''}
 _NM_REB  = threading.Lock()
 _NM_GEN  = [0]
+_NM_QUIT = [False]   # set by the tray quit so close-to-taskbar lets that one through
+_NM_HW   = [0]       # cached window handle, the close event cant look it up itself (would deadlock)
 
 def _nm_cmd(cmd, value=None):
     with _NM_CV:
@@ -33790,6 +33794,7 @@ def _nm_hwnd():
     import ctypes
     from ctypes import wintypes
     u = ctypes.windll.user32
+    if _NM_HW[0] and u.IsWindow(ctypes.c_void_p(_NM_HW[0])): return _NM_HW[0]
     pid = os.getpid()
     found = []
     Enum = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -33806,7 +33811,21 @@ def _nm_hwnd():
                     return False
         return True
     u.EnumWindows(Enum(cb), 0)
+    if found: _NM_HW[0] = found[0]
     return found[0] if found else 0
+
+def _nm_on_closing():
+    """webview closing event: returning False cancels the close. runs while the ui thread waits, so no cross thread sends in here"""
+    try:
+        if sys.platform != 'win32' or not CFG.get('win_close_min') or _NM_QUIT[0]: return True
+        import ctypes
+        u = ctypes.windll.user32
+        h = _NM_HW[0]
+        if not h or u.IsIconic(ctypes.c_void_p(h)) or not u.IsWindowVisible(ctypes.c_void_p(h)): return True
+        u.ShowWindowAsync(ctypes.c_void_p(h), 6)   # SW_MINIMIZE
+        return False
+    except Exception:
+        return True
 
 def _nm_tray_sig():
     b = CFG.get('win_tray_btns')
@@ -33833,6 +33852,7 @@ def _nm_show_window():
 
 def _nm_quit():
     import ctypes
+    _NM_QUIT[0] = True
     h = _nm_hwnd()
     if h: ctypes.windll.user32.PostMessageW(h, 0x0010, 0, 0)   # WM_CLOSE, same path as pressing the x so cleanup runs
 
@@ -33905,7 +33925,9 @@ class _NmTray:
         try:
             ic.icon = _nm_glyph('pause' if playing else 'play', _nm_color(self.style))
             ic.title = 'pause' if playing else 'play'
-        except Exception: pass
+        except Exception as e:
+            self.playing = None   # retry on the next push
+            _log_server.warning(f'[native] tray play icon update failed: {e}')
 
     def stop(self):
         for ic in list(self.icons.values()):
@@ -34095,7 +34117,11 @@ def _nm_rebuild():
         return {}
 
 def _nm_boot():
-    time.sleep(6)
+    for _ in range(30):
+        try:
+            if _nm_hwnd(): break
+        except Exception: pass
+        time.sleep(1)
     try: _nm_rebuild()
     except Exception as e: _log_server.warning(f'[native] boot failed: {e}')
 
@@ -34208,7 +34234,9 @@ def main():
                 if not wait_for_server(host, port):
                     _log_server.error('failed to start server'); sys.exit(1)
                 webview.settings['OPEN_DEVTOOLS_IN_DEBUG'] = False
-                webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
+                _nm_win = webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
+                try: _nm_win.events.closing += _nm_on_closing
+                except Exception as e: _log_server.warning(f'[native] close to taskbar unavailable: {e}')
                 try:
                     # default private mode wipes localStorage on every exit
                     webview.start(debug=True, private_mode=False, storage_path=str(_HOME / 'webview'))
