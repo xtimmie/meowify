@@ -13745,6 +13745,10 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .mob-sort-btn svg { flex-shrink: 0; }
 #app:not(.mobile) #sel-mode-btn{display:none}
 #sel-mode-btn svg{translate:-.4px .2px} /* optical centering: the tick overshoots the checkbox to the top right */
+#sel-mode-btn{position:relative}
+#sel-mode-btn svg,#dl-panel-btn svg{width:16px;height:16px}
+/* count badge shared by the select and downloads buttons: small, tucked into the top right corner so the icon stays readable */
+.cbtn-badge{position:absolute;top:1px;right:0;min-width:13px;height:13px;border-radius:7px;box-sizing:border-box;background:var(--color-primary);color:var(--color-on-primary);font-size:8px;font-weight:700;align-items:center;justify-content:center;padding:0 3px;line-height:1;pointer-events:none;font-variant-numeric:tabular-nums}
 :is(.song-row,.song-row-mobile).drag-lifted.drag-follow.drag-stacked{transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s var(--ease-out),opacity .18s,border-radius .2s var(--ease-out)!important}
 :where(#queue-inner) .song-row[data-id]{border-radius:var(--radius-md)}
 .song-list:has(>.song-row-mobile){gap:0}
@@ -14015,7 +14019,7 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
         <div id="topbar-dl-wrap" style="position:relative">
           <button id="dl-panel-btn" class="cbtn mu-ripple" title="downloads" style="position:relative" onclick="toggleDlPanel()">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><line x1="12" y1="3" x2="12" y2="14"/><polyline points="8,10 12,15 16,10"/><path d="M4,17 Q4,21 12,21 Q20,21 20,17" fill="none" id="dl-btn-basin"/></svg>
-            <span id="dl-badge" style="display:none;position:absolute;top:3px;right:3px;min-width:14px;height:14px;border-radius:7px;background:var(--color-primary);color:var(--color-on-primary);font-size:9px;font-weight:600;align-items:center;justify-content:center;padding:0 3px;line-height:1;pointer-events:none"></span>
+            <span id="dl-badge" class="cbtn-badge" style="display:none"></span>
           </button>
         </div>
         <button id="topbar-cfg-btn" class="cbtn mu-ripple" title="settings" onclick="openSettingsPopup()">
@@ -25046,6 +25050,7 @@ function _syncSelBtn() {
 function _plSelIds() { return S.playlists.filter(p => S.selected.has(p.id)).map(p => p.id); }
 
 function _plSelRefresh() {
+  _updateSelBadge();
   const rows = [...document.querySelectorAll('#vc .song-list > .song-row-mobile[data-pl]')];
   rows.forEach((r, i) => {
     const me = S.selected.has(r.dataset.pl);
@@ -25246,7 +25251,20 @@ function refreshSelectionUI() {
   updateBulkBar();
 }
 
+// count badge on the topbar select button, same look as the downloads one (.cbtn-badge)
+function _updateSelBadge() {
+  const b = document.getElementById('sel-mode-btn');
+  if (!b) return;
+  let el = b.querySelector('.cbtn-badge');
+  const n = S.selectMode ? S.selected.size : 0;
+  if (!n) { if (el) el.style.display = 'none'; return; }
+  if (!el) { el = document.createElement('span'); el.className = 'cbtn-badge'; b.appendChild(el); }
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.style.display = 'flex';
+}
+
 function updateBulkBar() {
+  _updateSelBadge();
   const bar = document.getElementById('bulk-bar');
   if (bar) bar.remove();
 }
