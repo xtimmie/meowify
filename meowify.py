@@ -16859,9 +16859,7 @@ class AudioEngine {
     const list = (key) => Array.isArray(CFG[key]) ? CFG[key] : ['prev', 'play', 'next'];
     const btnChips = (key) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']].map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
     const status = c.err ? esc(c.err) : '';
-    return row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls' + (status ? '<br>' + status : ''), sw('win_tray', !!CFG.win_tray))
-      + row('tray media buttons', 'separate tray icons for the controls, drag them out of the tray overflow onto the taskbar', sw('win_tray_ctrl', !!CFG.win_tray_ctrl))
-      + row('tray buttons shown', 'pick which controls get a tray icon', btnChips('win_tray_btns'))
+    return row('tray icon', 'meowify icon in the system tray, left click opens a small player with cover, title and controls, right click for the menu' + (status ? '<br>' + status : ''), sw('win_tray', !!CFG.win_tray))
       + row('tray icon color', 'auto follows the windows taskbar theme', `<div style="display:flex;gap:6px">${[['auto', 'auto'], ['white', 'white'], ['black', 'black']].map(([v, l]) => chip((CFG.win_tray_style || 'auto') === v, `_nmSetting('win_tray_style','${v}')`, l)).join('')}</div>`)
       + row('taskbar preview buttons', 'prev / play / next under the window preview when you hover the taskbar icon, changing which buttons needs a restart', sw('win_thumb', !!CFG.win_thumb))
       + row('preview buttons shown', 'pick which controls show in the taskbar preview', btnChips('win_thumb_btns'))
@@ -33749,6 +33747,10 @@ _NM_REB  = threading.Lock()
 _NM_GEN  = [0]
 _NM_QUIT = [False]   # set by the tray quit so close-to-taskbar lets that one through
 _NM_HW   = [0]       # cached window handle, the close event cant look it up itself (would deadlock)
+_NM_URL  = ['']      # base url of the running server, set by main() in webview mode
+_NM_WV   = [False]   # true when meowify runs in the pywebview window (the flyout is a second webview window)
+_NM_FLY  = {'win': None, 'hwnd': 0, 'vis': False, 'busy': False, 'creating': False, 'shown_at': 0.0, 'hidden_at': 0.0, 'u32': None}
+_FLY_W, _FLY_H = 360, 136   # flyout size in logical px
 
 def _nm_cmd(cmd, value=None):
     with _NM_CV:
@@ -33855,9 +33857,196 @@ def _nm_hide_to_tray():
         if h: ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(h), 6)   # SW_MINIMIZE
 
 def _nm_tray_sig():
-    b = CFG.get('win_tray_btns')
-    if not isinstance(b, list): b = ['prev', 'play', 'next']
-    return (bool(CFG.get('win_tray')), bool(CFG.get('win_tray_ctrl')), tuple(b), CFG.get('win_tray_style', 'auto'))
+    return (bool(CFG.get('win_tray')), CFG.get('win_tray_style', 'auto'))
+
+# ── tray flyout: a small frameless always-on-top webview window with cover, title and controls ──
+def _nm_u32():
+    """private user32 handle with proper 64 bit signatures (the shared one has other code's argtypes on it)"""
+    if _NM_FLY['u32'] is None:
+        import ctypes
+        from ctypes import wintypes as w
+        u = ctypes.WinDLL('user32')
+        V = ctypes.c_void_p
+        u.IsWindow.argtypes = [V]
+        u.ShowWindow.argtypes = [V, ctypes.c_int]
+        u.SetWindowPos.argtypes = [V, V, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        u.SetForegroundWindow.argtypes = [V]
+        u.GetForegroundWindow.restype = V
+        u.GetWindowRect.argtypes = [V, ctypes.POINTER(w.RECT)]
+        u.GetCursorPos.argtypes = [ctypes.POINTER(w.POINT)]
+        u.MonitorFromPoint.argtypes = [w.POINT, ctypes.c_uint]
+        u.MonitorFromPoint.restype = V
+        u.GetMonitorInfoW.argtypes = [V, V]
+        u.GetWindowLongPtrW.argtypes = [V, ctypes.c_int]
+        u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u.SetWindowLongPtrW.argtypes = [V, ctypes.c_int, ctypes.c_ssize_t]
+        u.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        u.GetAsyncKeyState.restype = ctypes.c_short
+        u.GetWindowThreadProcessId.argtypes = [V, ctypes.POINTER(w.DWORD)]
+        u.GetWindowTextLengthW.argtypes = [V]
+        u.GetWindowTextW.argtypes = [V, w.LPWSTR, ctypes.c_int]
+        u.GetDpiForWindow.argtypes = [V]
+        _NM_FLY['u32'] = u
+    return _NM_FLY['u32']
+
+def _nm_find(title):
+    """top level window of this process with exactly this title (hidden ones included)"""
+    import ctypes
+    from ctypes import wintypes as w
+    u = _nm_u32()
+    pid = os.getpid()
+    found = []
+    Enum = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+    def cb(h, l):
+        p = w.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            n = u.GetWindowTextLengthW(h)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u.GetWindowTextW(h, buf, n + 1)
+                if buf.value == title:
+                    found.append(h)
+                    return False
+        return True
+    ctypes.windll.user32.EnumWindows(Enum(cb), 0)
+    return found[0] if found else 0
+
+def _nm_fly_create():
+    """creates the flyout window hidden, returns True when it is ready to be shown"""
+    if _NM_FLY['hwnd']: return True
+    if not _NM_WV[0]: return False
+    if _NM_FLY['creating']:
+        for _ in range(60):
+            if _NM_FLY['hwnd']: return True
+            time.sleep(0.25)
+        return False
+    _NM_FLY['creating'] = True
+    try:
+        import webview
+        url = _NM_URL[0].rstrip('/') + '/native/flyout'
+        kw = dict(width=_FLY_W, height=_FLY_H, frameless=True, on_top=True, hidden=True, resizable=False,
+                  easy_drag=False, background_color='#15131b')
+        try:
+            win = webview.create_window('meowify flyout', url, **kw)
+        except TypeError as e:
+            _log_server.info(f'[native] flyout: retrying with fewer window options ({e})')
+            for k in ('easy_drag', 'background_color'): kw.pop(k, None)
+            win = webview.create_window('meowify flyout', url, **kw)
+        _NM_FLY['win'] = win
+        h = 0
+        for _ in range(60):
+            h = _nm_find('meowify flyout')
+            if h: break
+            time.sleep(0.25)
+        if not h: raise RuntimeError('flyout window never appeared')
+        u = _nm_u32()
+        ex = u.GetWindowLongPtrW(h, -20)
+        u.SetWindowLongPtrW(h, -20, (ex | 0x80) & ~0x40000)   # WS_EX_TOOLWINDOW on, APPWINDOW off: no taskbar button
+        try:
+            import ctypes
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(h), 33, ctypes.byref(ctypes.c_int(2)), 4)   # round corners on win 11
+        except Exception: pass
+        u.ShowWindow(h, 0)
+        _NM_FLY['hwnd'] = h
+        return True
+    except Exception as e:
+        _NM_ST['err'] = f'flyout: {e}'[:200]; _log_server.warning(f'[native] flyout create failed: {e}')
+        return False
+    finally:
+        _NM_FLY['creating'] = False
+
+def _nm_fly_hide():
+    _NM_FLY['vis'] = False
+    _NM_FLY['hidden_at'] = time.time()
+    h = _NM_FLY['hwnd']
+    if h:
+        try: _nm_u32().ShowWindow(h, 0)
+        except Exception: pass
+
+def _nm_fly_watch():
+    """closes the flyout when you click anywhere else or switch to another window"""
+    import ctypes
+    from ctypes import wintypes as w
+    u = _nm_u32()
+    got_fg = False
+    while _NM_FLY['vis']:
+        time.sleep(0.05)
+        h = _NM_FLY['hwnd']
+        if not h: break
+        try:
+            fg = u.GetForegroundWindow()
+            if fg == h: got_fg = True
+            outside = False
+            if (u.GetAsyncKeyState(1) & 0x8000) or (u.GetAsyncKeyState(2) & 0x8000):
+                pt = w.POINT(); rc = w.RECT()
+                u.GetCursorPos(ctypes.byref(pt)); u.GetWindowRect(h, ctypes.byref(rc))
+                outside = not (rc.left <= pt.x < rc.right and rc.top <= pt.y < rc.bottom)
+            lost = got_fg and fg and fg != h
+            if time.time() - _NM_FLY['shown_at'] > 0.25 and (outside or lost):
+                _nm_fly_hide(); break
+        except Exception:
+            _nm_fly_hide(); break
+
+def _nm_fly_open():
+    if _NM_FLY['busy']: return
+    _NM_FLY['busy'] = True
+    try:
+        if not _nm_fly_create():
+            _nm_toggle_window()   # flyout not available, plain show / hide instead
+            return
+        import ctypes
+        from ctypes import wintypes as w
+        u = _nm_u32()
+        h = _NM_FLY['hwnd']
+        class MI(ctypes.Structure):
+            _fields_ = [('cbSize', w.DWORD), ('rcMonitor', w.RECT), ('rcWork', w.RECT), ('dwFlags', w.DWORD)]
+        pt = w.POINT(); u.GetCursorPos(ctypes.byref(pt))
+        mi = MI(); mi.cbSize = ctypes.sizeof(MI)
+        u.GetMonitorInfoW(u.MonitorFromPoint(pt, 2), ctypes.byref(mi))   # MONITOR_DEFAULTTONEAREST
+        try: dpi = u.GetDpiForWindow(h) or 96
+        except Exception: dpi = 96
+        sc = dpi / 96.0
+        W, H, M = int(_FLY_W * sc), int(_FLY_H * sc), int(12 * sc)
+        m, r = mi.rcMonitor, mi.rcWork
+        # the tray click happened at the taskbar, so open next to the screen edge the cursor is closest to
+        edge = min((pt.y - m.top, 'top'), (m.bottom - pt.y, 'bottom'), (pt.x - m.left, 'left'), (m.right - pt.x, 'right'))[1]
+        cx = min(max(pt.x - W // 2, r.left + M), r.right - W - M)
+        cy = min(max(pt.y - H // 2, r.top + M), r.bottom - H - M)
+        if edge == 'top': x, y = cx, r.top + M
+        elif edge == 'left': x, y = r.left + M, cy
+        elif edge == 'right': x, y = r.right - W - M, cy
+        else: x, y = cx, r.bottom - H - M
+        u.SetWindowPos(h, -1, x, y, W, H, 0x0040)   # HWND_TOPMOST, SWP_SHOWWINDOW
+        u.SetForegroundWindow(h)
+        _NM_FLY['vis'] = True
+        _NM_FLY['shown_at'] = time.time()
+        threading.Thread(target=_nm_fly_watch, daemon=True).start()
+    except Exception as e:
+        _log_server.warning(f'[native] flyout open failed: {e}')
+        try: _nm_toggle_window()
+        except Exception: pass
+    finally:
+        _NM_FLY['busy'] = False
+
+def _nm_fly_toggle():
+    """tray icon left click"""
+    if not _NM_WV[0]: return _nm_toggle_window()
+    if _NM_FLY['vis']: _nm_fly_hide(); return
+    if time.time() - _NM_FLY['hidden_at'] < 0.4: return   # that same click is what just closed it
+    threading.Thread(target=_nm_fly_open, daemon=True).start()
+
+def _nm_fly_kill(*a):
+    """main window closed: the hidden flyout would keep the app alive, so close it too"""
+    w = _NM_FLY['win']
+    if not w: return
+    def _go():
+        try: w.destroy()
+        except Exception: pass
+        time.sleep(3)
+        os._exit(0)
+    threading.Thread(target=_go, daemon=True).start()
 
 def _nm_toggle_window():
     import ctypes
@@ -33884,59 +34073,35 @@ def _nm_quit():
     if h: ctypes.windll.user32.PostMessageW(h, 0x0010, 0, 0)   # WM_CLOSE, same path as pressing the x so cleanup runs
 
 class _NmTray:
-    """tray icons: optional app icon + one icon per media button (drag them out of the overflow onto the taskbar)"""
+    """one meowify tray icon: left click opens the player flyout, right click has the menu"""
     def __init__(self):
         self.icons = {}
         self.threads = []
         self.style = CFG.get('win_tray_style', 'auto')
         self.sig = _nm_tray_sig()
-        self.playing = bool(_NM['playing'])
 
     def start(self):
-        order = []
-        if CFG.get('win_tray_ctrl'):
-            btns = CFG.get('win_tray_btns')
-            if not isinstance(btns, list): btns = ['prev', 'play', 'next']
-            order += [b for b in ('prev', 'play', 'next') if b in btns]
-        for name in order: self._add(name)
         if CFG.get('win_tray'): self._add('app')
 
-    def _hide(self, name):
-        with _cfg_lock:
-            cur = CFG.get('win_tray_btns')
-            if not isinstance(cur, list): cur = ['prev', 'play', 'next']
-            CFG['win_tray_btns'] = [b for b in cur if b != name]
-            save_cfg(CFG)
-        def _go():
-            _nm_rebuild(); _nm_cmd('cfg')
-        threading.Thread(target=_go, daemon=True).start()
+    def ensure_app(self):
+        if 'app' not in self.icons: self._add('app')
 
     def _add(self, name):
         import pystray
         M = pystray.MenuItem
         col = _nm_color(self.style)
         def send(c): return lambda icon, item: _nm_cmd(c)
-        if name == 'app':
-            menu = pystray.Menu(
-                M('show / hide meowify', lambda icon, item: _nm_toggle_window(), default=True),
-                M('play / pause', send('toggle')), M('next', send('next')), M('previous', send('prev')),
-                pystray.Menu.SEPARATOR,
-                M('quit meowify', lambda icon, item: _nm_quit()))
-            img, title = _nm_glyph('note', col), 'meowify'
-        else:
-            label, cmd = {'prev': ('previous', 'prev'), 'play': ('play / pause', 'toggle'), 'next': ('next', 'next')}[name]
-            menu = pystray.Menu(M(label, send(cmd), default=True),
-                                M('hide this button', lambda icon, item: self._hide(name)))
-            kind = 'pause' if (name == 'play' and _NM['playing']) else name
-            img, title = _nm_glyph(kind, col), label
+        menu = pystray.Menu(
+            M('open player', lambda icon, item: _nm_fly_toggle(), default=True),
+            M('show / hide meowify', lambda icon, item: _nm_toggle_window()),
+            M('play / pause', send('toggle')), M('next', send('next')), M('previous', send('prev')),
+            pystray.Menu.SEPARATOR,
+            M('quit meowify', lambda icon, item: _nm_quit()))
         _NM_GEN[0] += 1
-        ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
+        ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', _nm_glyph('note', col), 'meowify', menu)
         self.icons[name] = ic
         th = threading.Thread(target=self._run, args=(ic, name), daemon=True)
         th.start(); self.threads.append(th)
-
-    def ensure_app(self):
-        if 'app' not in self.icons: self._add('app')
 
     def _run(self, ic, name):
         try:
@@ -33946,18 +34111,6 @@ class _NmTray:
         except Exception as e:
             _NM_ST['err'] = f'tray {name}: {e}'[:200]
             _log_server.warning(f'[native] tray icon {name} crashed: {e}')
-
-    def update(self, playing):
-        ic = self.icons.get('play')
-        playing = bool(playing)
-        if not ic or playing == self.playing: return
-        self.playing = playing
-        try:
-            ic.icon = _nm_glyph('pause' if playing else 'play', _nm_color(self.style))
-            ic.title = 'pause' if playing else 'play'
-        except Exception as e:
-            self.playing = None   # retry on the next push
-            _log_server.warning(f'[native] tray play icon update failed: {e}')
 
     def stop(self):
         for ic in list(self.icons.values()):
@@ -34118,7 +34271,7 @@ def _nm_rebuild():
     if sys.platform != 'win32': return {}
     with _NM_REB:
         _NM_ST['err'] = ''
-        want = {'tray': bool(CFG.get('win_tray') or CFG.get('win_tray_ctrl')),
+        want = {'tray': bool(CFG.get('win_tray')),
                 'thumb': bool(CFG.get('win_thumb'))}
         t = _NM_ST['tray']
         if want['tray'] and t and t.sig == _nm_tray_sig():
@@ -34131,6 +34284,7 @@ def _nm_rebuild():
             if want['tray']:
                 try:
                     t = _NmTray(); t.start(); _NM_ST['tray'] = t
+                    if _NM_WV[0]: threading.Thread(target=_nm_fly_create, daemon=True).start()   # build the flyout ahead so the first click is instant
                 except Exception as e:
                     _NM_ST['err'] = f'tray: {e}'[:200]; _log_server.warning(f'[native] tray failed: {e}')
             elif had:
@@ -34171,12 +34325,128 @@ def api_native_state():
     d = request.get_json(silent=True) or {}
     _NM.update({'id': d.get('id'), 'title': d.get('title') or '', 'artist': d.get('artist') or '', 'album': d.get('album') or '',
                 'dur': float(d.get('dur') or 0), 'pos': float(d.get('pos') or 0),
-                'playing': bool(d.get('playing')), 'cover': bool(d.get('cover'))})
+                'playing': bool(d.get('playing')), 'cover': bool(d.get('cover')), 'at': time.time()})
     try:
-        if _NM_ST['tray']: _NM_ST['tray'].update(_NM['playing'])
         if _NM_ST['thumb']: _NM_ST['thumb'].push(_NM['playing'])
     except Exception as e:
         _log_server.warning(f'[native] state push failed: {e}')
+    return jsonify({'ok': True})
+
+_FLY_HTML = r"""<!doctype html>
+<html><head><meta charset="utf-8"><title>meowify flyout</title>
+<style>
+:root { --a: hsl(145 50% 62%); --bg: #15131b; --fg: #ece8f3; --mut: #9a94a8; }
+* { box-sizing: border-box; margin: 0; user-select: none; -webkit-user-select: none; }
+html, body { height: 100%; background: var(--bg); color: var(--fg); font: 13px system-ui, 'Segoe UI', sans-serif; overflow: hidden; }
+body { border: 1px solid rgba(255,255,255,.12); padding: 12px; display: flex; gap: 12px; align-items: center; }
+.cv { width: 92px; height: 92px; border-radius: 10px; background: #2a2633 center / cover no-repeat; flex: none; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.t { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.barw { padding: 5px 0; cursor: pointer; }
+.bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.16); position: relative; overflow: hidden; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--a); width: 0; }
+.tm { display: flex; justify-content: space-between; color: var(--mut); font-size: 11px; }
+.ctl { display: flex; gap: 8px; justify-content: center; align-items: center; margin-top: 2px; }
+button { border: 0; background: transparent; color: var(--fg); width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
+button:hover { background: rgba(255,255,255,.1); }
+button svg { width: 22px; height: 22px; fill: currentColor; }
+#pp { background: var(--a); color: #14121a; width: 38px; height: 38px; }
+#pp:hover { filter: brightness(1.1); }
+</style></head><body>
+<div class="cv" id="cv"></div>
+<div class="main">
+  <div class="t" id="t">nothing playing</div>
+  <div class="s" id="s">&nbsp;</div>
+  <div class="barw" id="barw"><div class="bar"><i id="fill"></i></div></div>
+  <div class="tm"><span id="c">0:00</span><span id="d">0:00</span></div>
+  <div class="ctl">
+    <button id="bp" title="previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 18V6z"/></svg></button>
+    <button id="pp" title="play / pause"></button>
+    <button id="bn" title="next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+  </div>
+</div>
+<script>
+const PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+const $ = id => document.getElementById(id);
+let st = null, t0 = 0, lastKey = '', lastPlaying = null;
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+fetch('/api/settings').then(r => r.json()).then(c => {
+  if (c.theme_hue != null) document.documentElement.style.setProperty('--a', 'hsl(' + c.theme_hue + ' ' + (c.theme_sat != null ? c.theme_sat : 50) + '% 62%)');
+}).catch(() => {});
+function curPos() {
+  if (!st) return 0;
+  let p = st.pos || 0;
+  if (st.playing) p += (performance.now() - t0) / 1000;
+  return st.dur ? Math.min(p, st.dur) : p;
+}
+function draw() {
+  if (!st) return;
+  const key = st.id + '|' + st.title + '|' + st.artist + '|' + st.cover;
+  if (key !== lastKey) {
+    lastKey = key;
+    $('t').textContent = st.id ? (st.title || 'untitled') : 'nothing playing';
+    $('s').textContent = st.artist || '\u00a0';
+    $('cv').style.backgroundImage = st.id && st.cover ? 'url(/cover/' + encodeURIComponent(st.id) + ')' : 'none';
+  }
+  const p = curPos();
+  $('fill').style.width = (st.dur ? p / st.dur * 100 : 0) + '%';
+  $('c').textContent = fmt(p);
+  $('d').textContent = fmt(st.dur);
+  if (lastPlaying !== !!st.playing) { lastPlaying = !!st.playing; $('pp').innerHTML = lastPlaying ? PAUSE : PLAY; }
+}
+async function poll() {
+  try { st = await (await fetch('/api/native/now', { cache: 'no-store' })).json(); t0 = performance.now(); } catch (e) {}
+  draw();
+}
+function send(cmd, value) {
+  fetch('/api/native/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd, value }) }).catch(() => {});
+}
+$('bp').onclick = () => { send('prev'); setTimeout(poll, 500); };
+$('bn').onclick = () => { send('next'); setTimeout(poll, 500); };
+$('pp').onclick = () => {
+  if (st) { st.pos = curPos(); t0 = performance.now(); st.playing = !st.playing; draw(); }
+  send('toggle'); setTimeout(poll, 500);
+};
+$('barw').onclick = e => {
+  if (!st || !st.dur) return;
+  const r = $('barw').getBoundingClientRect();
+  const v = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * st.dur;
+  st.pos = v; t0 = performance.now(); draw();
+  send('seek', v); setTimeout(poll, 700);
+};
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fetch('/api/native/flyout_hide', { method: 'POST' }).catch(() => {}); });
+window.addEventListener('focus', poll);
+setInterval(poll, 800); setInterval(draw, 250); poll();
+</script></body></html>
+"""
+
+@app.route('/native/flyout')
+def native_flyout_page():
+    r = Response(_FLY_HTML, mimetype='text/html')
+    r.headers['Cache-Control'] = 'no-store'
+    return r
+
+@app.route('/api/native/now')
+def api_native_now():
+    d = dict(_NM)
+    at = d.pop('at', None)
+    if d.get('playing') and d.get('dur') and at:
+        d['pos'] = min(d['dur'], d['pos'] + max(0.0, time.time() - at))
+    return jsonify(d)
+
+@app.route('/api/native/cmd', methods=['POST'])
+def api_native_cmd():
+    d = request.get_json(silent=True) or {}
+    c = d.get('cmd')
+    if c in ('play', 'pause', 'toggle', 'next', 'prev', 'seek'):
+        _nm_cmd(c, d.get('value'))
+    return jsonify({'ok': True})
+
+@app.route('/api/native/flyout_hide', methods=['POST'])
+def api_native_flyout_hide():
+    _nm_fly_hide()
     return jsonify({'ok': True})
 
 @app.route('/api/native/wait')
@@ -34267,6 +34537,9 @@ def main():
                 _nm_win = webview.create_window('meowify', url, width=1320, height=860, background_color='#0a0a0a')
                 try: _nm_win.events.closing += _nm_on_closing
                 except Exception as e: _log_server.warning(f'[native] close to taskbar unavailable: {e}')
+                _NM_URL[0] = url; _NM_WV[0] = True
+                try: _nm_win.events.closed += _nm_fly_kill
+                except Exception as e: _log_server.warning(f'[native] flyout cleanup hook unavailable: {e}')
                 try:
                     # default private mode wipes localStorage on every exit
                     webview.start(debug=True, private_mode=False, storage_path=str(_HOME / 'webview'))
