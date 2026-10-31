@@ -5731,6 +5731,39 @@ def api_artist_albums(aid):
         """, (aid,)).fetchall()
     return jsonify([dict(r) for r in rows])
 
+@app.route('/api/artists/<aid>/page')
+def api_artist_page(aid):
+    with db() as c:
+        artist = c.execute("SELECT * FROM artists WHERE id=?", (aid,)).fetchone()
+        if not artist:
+            return jsonify({'error': 'not found'}), 404
+        rows = c.execute("""
+            SELECT s.*, MIN(CASE WHEN sa.role='featuring' THEN 1 ELSE 0 END) AS _feat_only
+            FROM songs_display s
+            JOIN song_artists sa ON sa.song_id = s.id
+            WHERE sa.artist_id = ? AND s.source != 'downloading'
+            GROUP BY s.id
+            ORDER BY s.added_at DESC
+        """, (aid,)).fetchall()
+        songs, appears = [], []
+        for r in rows:
+            d = dict(r)
+            (appears if d.pop('_feat_only') else songs).append(d)
+
+        def _albums(items, skip=()):
+            ids = list({d['album_id'] for d in items if d.get('album_id')} - set(skip))
+            if not ids:
+                return []
+            q = ','.join('?' * len(ids))
+            out = [dict(r) for r in c.execute(f"SELECT * FROM albums WHERE id IN ({q})", ids).fetchall()]
+            out.sort(key=lambda a: (a.get('year') or '', a.get('created_at') or 0), reverse=True)
+            return out
+
+        albums = _albums(songs)
+        appears_albums = _albums(appears, skip={a['id'] for a in albums})
+    return jsonify({'artist': dict(artist), 'songs': songs, 'albums': albums,
+                    'appears_songs': appears, 'appears_albums': appears_albums})
+
 @app.route('/api/artists/<aid>/genius-discography')
 def api_artist_genius_discography(aid):
     import urllib.parse
@@ -11890,6 +11923,10 @@ svg {overflow: visible}
 #vc-wrap.nav-animating{position:relative;isolation:isolate}
 .nav-ghost{position:absolute!important;box-sizing:border-box;margin:0;pointer-events:none;z-index:-1;will-change:transform}
 .nav-ghost.nav-above{z-index:2}
+.sk-line,.sk-box{background:linear-gradient(90deg,var(--color-surface-container-high) 25%,var(--color-surface-container-highest,var(--color-surface-container)) 50%,var(--color-surface-container-high) 75%);background-size:200% 100%;animation:sk-sh 1.3s linear infinite;border-radius:6px;color:transparent!important;max-width:100%;user-select:none}
+.sk-row{pointer-events:none}
+@keyframes sk-sh{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.sk-line,.sk-box{animation:none}}
 .nav-shade{position:absolute!important;pointer-events:none;z-index:1;will-change:transform,opacity;background:linear-gradient(to left,var(--nav-shade-color,rgba(0,0,0,.28)),color-mix(in srgb,var(--nav-shade-color,rgba(0,0,0,.28)) 45%,transparent) calc(var(--nav-shade-w,28px)*.35),transparent var(--nav-shade-w,28px))}
 body.nav-back-on #app.mobile .set-head{display:none}
 body.nav-anim-on #app.mobile :is(.set-anim-fwd,.set-anim-back){animation:none}
@@ -19434,46 +19471,105 @@ async function renderPlaylist(pid){
   if(!q)initDrag(pid);
 }
 
+const _albInflight={};
+function _albFetch(aid){
+  if(_albInflight[aid])return _albInflight[aid];
+  const done=t=>{delete _albInflight[aid];if(!Array.isArray(t))return null;(S._albTracks||(S._albTracks={}))[aid]=t;return t;};
+  return _albInflight[aid]=api('GET','/api/albums/'+aid+'/all-tracks').then(done,()=>done(null));
+}
+function _albPrefetch(aid){if(!(S._albTracks&&S._albTracks[aid]))_albFetch(aid);}
+function _albSig(t){return t.map(x=>x.id+'|'+(x.song_id||'')+'|'+x.title+'|'+x.track_num).join('~');}
+
+function _albSkel(aid){
+  const n=Math.min(30,S.library.filter(s=>s.album_id===aid).length)||8;
+  const w=i=>(42+((i*37)%40))+'%';
+  const mob=isMobile();
+  const cols=getViewCols('album');
+  const menu=`<button class="smenu-btn" tabindex="-1" style="opacity:0;pointer-events:none;flex-shrink:0">${MEOW_ICONS.more}</button>`;
+  let rows='';
+  for(let i=0;i<n;i++){
+    const titleBlock=`<div class="stitle${mob?'-mob':''} sk-line" style="width:${w(i)}">&nbsp;</div><div class="sartist${mob?'-mob':''} sk-line" style="width:${w(i+5)}">&nbsp;</div>`;
+    if(mob){
+      rows+=`<div class="song-row-mobile sk-row"><div class="sthumb sk-box" style="width:40px;height:40px;flex-shrink:0"></div><div class="sinfo-mob" style="flex:1">${titleBlock}</div>${menu}</div>`;
+      continue;
+    }
+    const cell={
+      num:`<div class="snum"><span class="snum-num sk-line" style="display:inline-block;width:14px">&nbsp;</span></div>`,
+      thumb:`<div class="sthumb sk-box"></div>`,
+      title:`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0"><div class="sthumb sk-box" style="width:40px;height:40px;flex-shrink:0"></div><div style="min-width:0;flex:1">${titleBlock}</div></div>`,
+      album:`<div class="salbum"></div>`,
+      date:`<div class="sdate"></div>`,
+      duration:`<div class="sdur"><span class="sk-line" style="display:inline-block;width:28px">&nbsp;</span></div>`,
+      plays:`<div class="splays"></div>`,
+      source:`<div class="ssrc"></div>`,
+      menu,
+    };
+    rows+=`<div class="song-row ui-list-item sk-row" draggable="false">${cols.map(k=>cell[k]||'').join('')}</div>`;
+  }
+  return renderTable('album',[],'',null,rows);
+}
+
 async function renderAlbumDetail(aid, skipLoadingScreen){
   const vc=document.getElementById('vc');
-  if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
-  const albInfo=S.albums.find(a=>a.id===aid)||await api('GET','/api/albums/'+aid)||{};
-  if(_viewStale('album',aid))return; // left while loading
+  let albInfo=S.albums.find(a=>a.id===aid);
+  if(!albInfo){
+    if(!skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
+    albInfo=await api('GET','/api/albums/'+aid)||{};
+    if(_viewStale('album',aid))return; // left while loading
+  }
   if(albInfo.title)NAV.noteTitle('album',aid,albInfo.title);
   if(albInfo.title){const _vt=document.getElementById('vtitle');if(_vt&&_vt.textContent!==albInfo.title)_vt.textContent=albInfo.title;const _ti=document.getElementById('tsearch-input');if(_ti)_ti.placeholder='search: '+albInfo.title+'...';}
-  if(albInfo.title && !skipLoadingScreen) vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>'+albumHeader(albInfo);
-  const allTracks=await api('GET','/api/albums/'+aid+'/all-tracks');
-  if(_viewStale('album',aid))return;
-  await NAV.settled();
-  if(_viewStale('album',aid))return;
-  const q=(S.globalSearch||'').trim().toLowerCase();
-  if(!allTracks||!allTracks.length){
-    const songs=(await api('GET','/api/albums/'+aid+'/songs')||[]);
-    if(_viewStale('album',aid))return;
-    const filtered=q?songs.filter(s=>((s.title||'')+(s.artist||'')).toLowerCase().includes(q)):songs;
-    S.viewSongs=songs;
+  const fetched=_albFetch(aid);
+
+  const draw=async allTracks=>{
+    const q=(S.globalSearch||'').trim().toLowerCase();
+    if(!allTracks||!allTracks.length){
+      const songs=(await api('GET','/api/albums/'+aid+'/songs')||[]);
+      if(_viewStale('album',aid))return;
+      const filtered=q?songs.filter(s=>((s.title||'')+(s.artist||'')).toLowerCase().includes(q)):songs;
+      S.viewSongs=songs;
+      _rebuildViewIdx();
+      if(!songs.length){vc.innerHTML=albumHeader(albInfo)+`<div class="empty"><div class="ei">💿</div><p>this album is empty</p></div>`;return;}
+      if(!filtered.length){vc.innerHTML=albumHeader(albInfo)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
+      vc.innerHTML=albumHeader(albInfo)+renderTable('album',filtered,'');
+      updateHighlights();updateBulkBar();return;
+    }
+    const need=new Set(allTracks.filter(t=>t.owned).map(t=>t.song_id));
+    const lib=new Map();
+    for(const s of S.library) if(need.has(s.id)) lib.set(s.id,s);
+    const ownedCount=need.size;
+    const filteredTracks=q?allTracks.filter(t=>((t.title||'')+(t.artist||'')).toLowerCase().includes(q)):allTracks;
+    S.viewSongs=allTracks.filter(t=>t.owned).map(t=>lib.get(t.song_id)).filter(Boolean);
     _rebuildViewIdx();
-    if(!songs.length){vc.innerHTML=albumHeader(albInfo)+`<div class="empty"><div class="ei">💿</div><p>this album is empty</p></div>`;return;}
-    if(!filtered.length){vc.innerHTML=albumHeader(albInfo)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
-    vc.innerHTML=albumHeader(albInfo)+renderTable('album',filtered,'');
-    updateHighlights();updateBulkBar();return;
+    if(!filteredTracks.length){vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
+    _calcListCompact('album');
+    const cols=getViewCols('album');
+    const template=buildGridTemplate(cols);
+    const rows=filteredTracks.map((t,i)=>{
+      if(t.owned){const s=lib.get(t.song_id);if(s)return songRow(s,t.track_num||i+1,'',{view:'album',cols,template});}
+      const ghostSong={id:t.id,title:t.title,artist:t.artist||'',cover_path:albInfo.cover_path||null,_cover_id:albInfo.id,album:null,album_id:null,source:null,featuring_artists:null,play_count:0,added_at:null,duration:null};
+      return songRow(ghostSong,t.track_num||i+1,'',{view:'album',cols,template},undefined,'ghost');
+    }).join('');
+    vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+renderTable('album',S.viewSongs,'',null,rows);
+    _precoverSongs(S.viewSongs);
+    updateHighlights();updateBulkBar();
+  };
+
+  const cached=(S._albTracks||{})[aid];
+  if(cached){
+    await draw(cached);
+    if(skipLoadingScreen)return;
+    const fresh=await fetched;
+    if(_viewStale('album',aid)||!fresh||_albSig(fresh)===_albSig(cached))return;
+    const st=vc.scrollTop;
+    await draw(fresh);
+    if(!_viewStale('album',aid))vc.scrollTop=st;
+    return;
   }
-  const ownedCount=allTracks.filter(t=>t.owned).length;
-  const filteredTracks=q?allTracks.filter(t=>((t.title||'')+(t.artist||'')).toLowerCase().includes(q)):allTracks;
-  S.viewSongs=allTracks.filter(t=>t.owned).map(t=>S.library.find(s=>s.id===t.song_id)).filter(Boolean);
-  _rebuildViewIdx();
-  if(!filteredTracks.length){vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
-  _calcListCompact('album');
-  const cols=getViewCols('album');
-  const template=buildGridTemplate(cols);
-  const rows=filteredTracks.map((t,i)=>{
-    if(t.owned){const s=S.library.find(sg=>sg.id===t.song_id);if(s)return songRow(s,t.track_num||i+1,'',{view:'album',cols,template});}
-    const ghostSong={id:t.id,title:t.title,artist:t.artist||'',cover_path:albInfo.cover_path||null,_cover_id:albInfo.id,album:null,album_id:null,source:null,featuring_artists:null,play_count:0,added_at:null,duration:null};
-    return songRow(ghostSong,t.track_num||i+1,'',{view:'album',cols,template},undefined,'ghost');
-  }).join('');
-  vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+renderTable('album',S.viewSongs,'',null,rows);
-  _precoverSongs(S.viewSongs);
-  updateHighlights();updateBulkBar();
+  if(!skipLoadingScreen) vc.innerHTML=albumHeader(albInfo)+_albSkel(aid);
+  const allTracks=await fetched;
+  if(_viewStale('album',aid))return;
+  await draw(allTracks);
 }
 
 // queue x button: on a selected row it removes the whole selection
@@ -22331,7 +22427,7 @@ async function restoreSession() {
 
 function albumCard(a) {
   const cov = a.cover_path ? `<img src="/cover/${a.id}" alt="" onerror="this.style.display='none'">` : '💿';
-  return `<div class="lib-album ui-panel mu-ripple" data-ripple onclick="setView('album',null,'${a.id}')">
+  return `<div class="lib-album ui-panel mu-ripple" data-ripple onpointerenter="_albPrefetch('${a.id}')" onclick="setView('album',null,'${a.id}')">
     <div class="lib-album-cover">${cov}</div>
     <div class="lib-album-info">
       <div class="lib-album-title">${esc(a.title)}</div>
@@ -25334,11 +25430,12 @@ async function renderArtistPage(aid) {
     aid = real;
   }
 
-  const [artist, songs, localAlbums] = await Promise.all([
-    api('GET', '/api/artists/' + aid),
-    api('GET', '/api/artists/' + aid + '/songs'),
-    api('GET', '/api/artists/' + aid + '/albums'),
-  ]);
+  const pg = await api('GET', '/api/artists/' + aid + '/page');
+  const artist = pg && !pg.error ? pg.artist : pg;
+  const songs = (pg && pg.songs) || [];
+  const localAlbums = (pg && pg.albums) || [];
+  const appearsSongs = (pg && pg.appears_songs) || [];
+  const appearsAlbums = (pg && pg.appears_albums) || [];
 
   if (_viewStale('artist', aid)) return; // left the artist page while it was loading
   if (!artist || artist.error) {
@@ -25379,6 +25476,7 @@ async function renderArtistPage(aid) {
           ${statChip(tracksInLib,'tracks',false)}
           ${totalPlays ? statChip(totalPlays,'plays',false) : ''}
           ${(localAlbums||[]).length ? statChip(localAlbums.length,'albums',false) : ''}
+          ${appearsSongs.length ? statChip(appearsSongs.length,'appears on',false) : ''}
         </div>
       </div>
     </div>
@@ -25399,8 +25497,29 @@ async function renderArtistPage(aid) {
       <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">tracks in library</div>
       ${renderTable('library', songs, '')}
     </div>`;
-  } else {
+  } else if (!appearsSongs.length && !appearsAlbums.length) {
     html += `<div class="empty" style="padding:32px 0"><div class="ei">🎤</div><p>no tracks in library yet</p></div>`;
+  }
+
+  if (appearsAlbums.length) {
+    html += `<div style="margin-bottom:28px">
+      <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">appears on · albums</div>
+      <div class="albums-grid">${appearsAlbums.map(a=>albumCard(a)).join('')}</div>
+    </div>`;
+  }
+
+  if (appearsSongs.length) {
+    S.viewSongs = [...songs, ...appearsSongs];
+    _rebuildViewIdx();
+    const _aCompact = _calcListCompact('library');
+    const _aCols = getViewCols('library');
+    const _aTpl = buildGridTemplate(_aCols);
+    const _aRows = appearsSongs.map((s, i) => songRow(s, i + 1, '', {view:'library', cols:_aCols, template:_aTpl}, songs.length + i)).join('');
+    const _aHdr = (tracksInLib || _aCompact) ? '' : `<div class="list-header">${buildHeaderCells(_aCols)}</div>`;
+    html += `<div style="margin-bottom:16px">
+      <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">appears on · tracks</div>
+      <div class="song-table" style="${_tableStyle(_aCols)}">${_aHdr}<div class="song-list">${_aRows}</div></div>
+    </div>`;
   }
 
   html += `<div id="artist-bio-section"></div>`;
@@ -25408,11 +25527,14 @@ async function renderArtistPage(aid) {
   vc.innerHTML = html;
   updateHighlights();
   updateBulkBar();
+  if (appearsSongs.length && !tracksInLib) requestAnimationFrame(() => { _initListHeaderPin(); _initColResizeObserver(); });
 
-  if (artist.ytm_channel_id) {
-    _loadArtistYtmProfile(aid, artist);
-  } else if (CFG.genius_token) {
-    _loadArtistGeniusFallback(aid, artist);
+  if (CFG.artist_extra_info) {
+    if (artist.ytm_channel_id) {
+      _loadArtistYtmProfile(aid, artist);
+    } else if (CFG.genius_token) {
+      _loadArtistGeniusFallback(aid, artist);
+    }
   }
 }
 
@@ -27580,7 +27702,7 @@ function songCtx(e, sid, pid) {
   if (!multi) items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><defs><mask id="ctx-m"><rect width="48" height="48" x="-12" y="-12" fill="white"/><rect x="5" y="6" width="14" height="2" rx="1" fill="black"/><rect x="5" y="10" width="8" height="2" rx="1" fill="black"/><rect x="5" y="14" width="6" height="2" rx="1" fill="black"/><rect x="5" y="18" width="12" height="2" rx="1" fill="black"/></mask></defs><rect x="0" y="0" width="24" height="24" rx="4.5" fill="currentColor" mask="url(#ctx-m)"/></svg>', label:'show details', fn:()=> showSongDetails(sid)});
   if (!multi) items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>', label:'edit', fn:()=> editSong(sid)});
   if (!multi && song.album_id) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-alb-m"><rect width="20" height="20" fill="white"/><circle cx="10" cy="10" r="3.6" fill="black"/><circle cx="10" cy="10" r="1.1" fill="white"/></mask></defs><circle cx="10" cy="10" r="9" mask="url(#ctx-alb-m)"/></svg>', label:'go to album', fn:()=> setView('album',null,song.album_id)});
-  if (!multi && song.artist) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="7" r="3.5"/><rect x="3.5" y="13.5" width="13" height="7" rx="3"/></svg>', label:'go to artist', fn:()=> navigateToArtist(song.artist.split(',')[0].trim(), false, null, song.artist)});
+  if (!multi && song.artist) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="7" r="3.5"/><rect x="3.5" y="13.5" width="13" height="7" rx="3"/></svg>', label:'go to artist', fn:()=> _songArtistGo(song, e)});
   items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>', label:'fix genius metadata', fn:()=> showGeniusFix(sid)});
   items.push({icon:'<svg style="display:block;width:20px;height:20px;overflow:visible;translate:-1px;" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-lyr-note-mask"><rect width="20" height="20" fill="white"/><path d="M 12.5 12.58 c -7.5 -3.5 -9.17 5.75 -2.58 5.75 c 2.92 0 4.58 -1.5 4.58 -4.17 c 0 -0.08 0 -7.83 0 -9.33 c 0 0 2 0.42 3.17 3.33 c 2.67 -4.5 -5.25 -8.17 -5.25 -5.58 c 0 2.33 0.08 7.25 0.08 10.08 Z" fill="black" stroke="black" stroke-width="3.5" stroke-linejoin="round"/></mask></defs><g mask="url(#ctx-lyr-note-mask)"><rect x="1.5" y="4.5" width="14" height="2.2" rx="1.1" fill="currentColor"/><rect x="1.5" y="9" width="14" height="2.2" rx="1.1" fill="currentColor"/><rect x="1.5" y="13.5" width="14" height="2.2" rx="1.1" fill="currentColor"/></g><path d="M 12.5 12.58 c -7.5 -3.5 -9.17 5.75 -2.58 5.75 c 2.92 0 4.58 -1.5 4.58 -4.17 c 0 -0.08 0 -7.83 0 -9.33 c 0 0 2 0.42 3.17 3.33 c 2.67 -4.5 -5.25 -8.17 -5.25 -5.58 c 0 2.33 0.08 7.25 0.08 10.08 Z" fill="currentColor"/></svg>', label:'open genius lyrics', fn:()=> openGeniusLyrics(sid)});
   if (!multi) items.push({icon:'<svg viewBox="0 0 28 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block" shape-rendering="geometricPrecision"><circle cx="12" cy="12" r="11" stroke-dasharray="54 15" stroke-dashoffset="-12"></circle><path d="M 21 10.5 L 23 12.5 L 25 10.5" fill="none" style="transform: rotate(355deg);transform-origin: 12px 12px;"></path></svg>', label:'rescan metadata', fn:()=> rescanSong(sid)});
@@ -27588,6 +27710,18 @@ function songCtx(e, sid, pid) {
   items.push({sep:true});
   items.push({icon: ICON_DELETE, label: multi ? `delete (${ids.length})` : 'delete from library', err:true, fn:()=> multi ? bulkDelete() : delSong(sid)});
   showCtx(e, items);
+}
+
+function _songArtistGo(song, e) {
+  const split = s => (s || '').split(', ').map(x => x.trim()).filter(Boolean);
+  const names = [...new Set([...split(song.artist), ...split(song.featuring_artists)])];
+  if (!isMobile() || names.length < 2) {
+    navigateToArtist(song.artist.split(',')[0].trim(), false, null, song.artist);
+    return;
+  }
+  const icon = '<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="7" r="3.5"/><rect x="3.5" y="13.5" width="13" height="7" rx="3"/></svg>';
+  const items = [{_header: true, label: 'go to artist'}, ...names.map(n => ({icon, label: n, fn: () => navigateToArtist(n, false, null, n)}))];
+  setTimeout(() => showCtx(e, items), 40);
 }
 
 function plCtx(e, pid) {
@@ -30187,6 +30321,7 @@ async function loadData() {
   S._lastLibIds = ''; // reset after fetch so renderLibrary mid-flight sees stale, not empty
   S.playlists = await api('GET', '/api/playlists') || [];
   S.albums = await api('GET', '/api/albums') || [];
+  S._albTracks = {};
   const validIds = new Set(S.library.map(s => s.id));
   for (const pid of Object.keys(S.plSongs)) {
     if (!S.playlists.find(p => p.id === pid)) {
@@ -31786,6 +31921,7 @@ function renderSettings() {
           </div>
         `)}
         ${row('cover art bleed', 'nice colors around the currently playing song cover art :3', toggle('cover_art_bleed', CFG.cover_art_bleed, 'refreshBleed()'))}
+        ${row('extra info on artist page', 'pull genius / youtube music stuff on artist pages (bio, top songs, discography, related). off = only your library', toggle('artist_extra_info', CFG.artist_extra_info))}
         ${row('sync hue to cover', 'make interface colors match the song cover art', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.cover_art_hue_sync ? 'checked' : ''} onchange="_onHueSyncToggle(this.checked)" onclick="event.stopPropagation()">
