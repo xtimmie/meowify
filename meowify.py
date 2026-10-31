@@ -12240,6 +12240,8 @@ html:not(.nav-slide) #app.mobile .mob-lens:not(.mob-lens-slide),html.nav-slide #
 html.nav-slide #app.mobile .mob-lens-slide.on{transition:opacity .15s,visibility 0s}
 html body.design-glassy #app.mobile .mob-lens{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04));box-shadow:var(--glass-spec-panel)}
 html.lg-lens body.design-glassy #app.mobile .mob-lens{backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+html.lg-lens-over #app.mobile .mob-lens{z-index:2}
+html.lg-lens-over body.design-glassy #app.mobile .mob-lens{backdrop-filter:saturate(var(--glass-sat,1.4));-webkit-backdrop-filter:saturate(var(--glass-sat,1.4))}
 html.nb-nav .mob-nav-glass,html.nb-nav .mob-lens{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .lg-chips{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0 4px}
 .lg-chip{padding:6px 12px;border-radius:9999px;border:1px solid var(--line-container);background:transparent;color:var(--color-on-surface);font:var(--type-label-medium);cursor:pointer}
@@ -29274,7 +29276,7 @@ var LG_PARTS = [
   ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
 ];
 var _LG_LS = 'meowify_lg';
-var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1 };
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, lensOver: false, lensStr: .4 };
 function _lgPrefs() { const v = DevPrefs.get('lg'); return Object.assign({}, _LG_DEF, v && typeof v === 'object' ? v : {}); }
 function _lgSave(s) { DevPrefs.set('lg', s); }
 function _lgFmt(u, v) {
@@ -29297,11 +29299,14 @@ function applyLG() {
   L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q });
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
   const lensOn = on && !s.off.includes('lens');
-  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn : on && !s.off.includes(k) });
+  const over = lensOn && !!s.lensOver;
+  _lensOverLG(over);
+  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) });
   L.enable(on);
   document.querySelectorAll('.list-header').forEach(_pinLG);
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
   document.documentElement.classList.toggle('lg-lens', lensOn);
+  document.documentElement.classList.toggle('lg-lens-over', over);
   applyNavPill();
 }
 // mobile nav pill style: one shared pill that slides between tabs (spring) or a pill per tab that pops in.
@@ -29315,6 +29320,18 @@ function applyNavPill() {
   const root = document.documentElement, slide = _navPillSlide();
   root.classList.toggle('nav-slide', slide);
   _lensInit(); if (window._lensGo) _lensGo();
+}
+function _lensOverLG(over) {
+  const L = window.MU && MU.liquidGlass; if (!L) return;
+  window._lensOverWant = over;
+  const els = document.querySelectorAll('#mobile-nav .mob-lens');
+  if (!over) { els.forEach(el => { if (el._lgO) { el._lgO.detach(); el._lgO = null; } }); return; }
+  requestAnimationFrame(() => {
+    if (!window._lensOverWant) return;
+    const s = _lgPrefs(), p = Object.assign({}, L.defaults, L.looks[s.look], s.p), f = Math.max(0, Math.min(1, s.lensStr));
+    const own = { scale: p.scale * f, maxScale: p.maxScale * f };
+    els.forEach(el => { if (el._lgO) el._lgO.update(own); else el._lgO = L.attach(el, { params: own }); });
+  });
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
@@ -29509,6 +29526,8 @@ function lgSettingsHtml(sq) {
         ${sl('contrast', 'punchier or flatter backdrop', .5, 1.5, .05, s.ct, 'f100', "lgSet('ct',+this.value)")}
         <div class="sb-grp">panels</div>
         ${parts}
+        ${line('nav pill above buttons', 'pill sits over the tab icons and text so it refracts them too, no blur or brightness and contrast on it, saturation stays', sw(s.lensOver, "lgSet('lensOver',this.checked);renderSettings()"), off)}
+        ${s.lensOver ? sl('nav pill refraction', 'how much of the normal refraction the pill keeps, lower keeps the labels more readable', 0, 1, .05, s.lensStr, 'f100', "lgSet('lensStr',+this.value)") : ''}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset liquid glass</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="lgReset()">reset</button></div>
       </div>
     </details>`;
