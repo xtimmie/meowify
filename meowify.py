@@ -29300,8 +29300,8 @@ function applyLG() {
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
   const lensOn = on && !s.off.includes('lens');
   const over = lensOn && !!s.lensOver;
-  _lensOverLG(over);
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) });
+  _lensOverLG(over);
   L.enable(on);
   document.querySelectorAll('.list-header').forEach(_pinLG);
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
