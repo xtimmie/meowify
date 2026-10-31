@@ -23844,9 +23844,10 @@ const NAV = (() => {
   const top = () => { const s = stack(active); return s.entries[s.idx]; };
 
   function cssTime(name, fb) {
-    const v = cssVar(name), x = parseFloat(v);
+    const raw = String(name == null ? '' : name).trim(), isVar = raw.startsWith('--');
+    const v = isVar ? cssVar(raw) : raw, x = parseFloat(v);
     if (!isFinite(x)) return fb;
-    return /ms$/.test(v) ? x : /s$/.test(v) ? x * 1000 : fb;
+    return /ms$/.test(v) ? x : /s$/.test(v) ? x * 1000 : (!isVar && /^-?[\d.]+$/.test(v)) ? x : fb;
   }
 
   function animate(el, frames, o) {
