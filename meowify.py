@@ -5587,7 +5587,7 @@ def api_song_stats_detail(sid):
 
 @app.route('/api/playlists', methods=['GET'])
 def api_pls():
-    with db() as c: return jsonify([dict(r) for r in c.execute("SELECT * FROM playlists ORDER BY created_at DESC")])
+    with db() as c: return jsonify([dict(r) for r in c.execute("SELECT p.*, COUNT(s.id) AS song_count FROM playlists p LEFT JOIN playlist_songs ps ON ps.playlist_id=p.id LEFT JOIN songs_display s ON s.id=ps.song_id GROUP BY p.id ORDER BY p.created_at DESC")])
 
 @app.route('/api/playlists', methods=['POST'])
 def api_create_pl():
@@ -14430,7 +14430,7 @@ function renderMobilePlaylists(){
     return;
   }
   vc.innerHTML='<div class="song-list">'+S.playlists.map(p=>{
-    const cnt=(S.plSongs[p.id]||[]).length;
+    const cnt=S.plSongs[p.id]?S.plSongs[p.id].length:(p.song_count|0);
     return`<div class=\"song-row-mobile ui-list-item ui-list-item mu-ripple${S.selected.has(p.id)?' selected':''}\" data-pl=\"${p.id}\" onclick=\"_plRowClick(event,'${p.id}')\" oncontextmenu=\"plCtx(event,'${p.id}')\">
       <div class="sthumb" style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--color-surface-container-high);border-radius:var(--radius-sm);color:var(--color-on-surface-variant)"><svg width="24" height="20" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg></div>
       <div class="sinfo-mob"><div class="stitle-mob">${esc(p.name)}</div><div class="sartist-mob">${cnt?cnt+' songs':''}</div></div>
@@ -14438,6 +14438,7 @@ function renderMobilePlaylists(){
     </div>`;
   }).join('')+'</div>';
   _plSelRefresh();
+  _plPrefetch();
 }
 
 function openSortDrawer() {
@@ -19299,12 +19300,51 @@ function renderLibrary(){
 const _VIEW_ID_KEY = {playlist:'activePid', album:'activeAid', artist:'activeArtid'};
 function _viewStale(view, id) { return S.view !== view || S[_VIEW_ID_KEY[view]] !== id; }
 
+const _plInflight = {};
+function _plLoad(pid) {
+  if (S.plSongs[pid]) return Promise.resolve(S.plSongs[pid]);
+  if (_plInflight[pid]) return _plInflight[pid];
+  const p = api('GET', '/api/playlists/' + pid + '/songs').then(r => {
+    delete _plInflight[pid];
+    if (!S.plSongs[pid]) S.plSongs[pid] = r || [];
+    return S.plSongs[pid];
+  }, e => { delete _plInflight[pid]; throw e; });
+  _plInflight[pid] = p;
+  return p;
+}
+
+function _plUpdateCounts() {
+  document.querySelectorAll('[data-pl]').forEach(row => {
+    const list = S.plSongs[row.dataset.pl], el = row.querySelector('.sartist-mob');
+    if (!list || !el) return;
+    const n = list.length;
+    const txt = n ? n + (n === 1 ? ' song' : ' songs') : '';
+    if (el.textContent !== txt) el.textContent = txt;
+  });
+}
+
+let _plPrefetching = false;
+async function _plPrefetch() {
+  if (_plPrefetching) return;
+  _plPrefetching = true;
+  try {
+    for (const p of [...(S.playlists || [])]) {
+      if (S.plSongs[p.id]) continue;
+      try { await _plLoad(p.id); } catch {}
+      _plUpdateCounts();
+      await new Promise(r => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 400 }) : setTimeout(r, 30)));
+    }
+  } finally { _plPrefetching = false; }
+}
+
 async function renderPlaylist(pid){
   const vc=document.getElementById('vc');
   if(!S.plSongs[pid]){
     vc.innerHTML='<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
-    const res=await api('GET','/api/playlists/'+pid+'/songs');S.plSongs[pid]=res||[];
+    await _plLoad(pid);
     if(_viewStale('playlist',pid))return; // left while loading
+    await NAV.settled();
+    if(_viewStale('playlist',pid))return;
   }
   let songs=S.plSongs[pid];
   const q=(S.globalSearch||'').trim().toLowerCase();
@@ -32482,6 +32522,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   S.library = lib || [];
   S.playlists = pls || [];
+  if (window.requestIdleCallback) requestIdleCallback(() => _plPrefetch(), { timeout: 4000 }); else setTimeout(() => _plPrefetch(), 2500);
   S.albums = albs || [];
   // same truthy-error-object guard as loadData() above
   if (cfg && !cfg.error) {
