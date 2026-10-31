@@ -29421,7 +29421,7 @@ function _applyDesignImpl(design) {
   if (design === 'glassy') { MU.setDesign('glassy'); document.body.classList.add('design-glassy');
   el.textContent = `
   body.design-glassy #app{position:relative;z-index:1}
-  body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
+  body.design-glassy #sidebar{background:var(--glass-bg)!important;backdrop-filter:none;-webkit-backdrop-filter:none;border-right:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy #app:not(.mobile) #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy #app.mobile #main{background:transparent!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)!important}
