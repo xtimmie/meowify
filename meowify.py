@@ -26470,6 +26470,7 @@ function _hideDlPanel() {
   } else {
     panel.style.left = '';
     panel.style.top = '';
+    bounceStop(panel);
     panel.classList.remove('on', 'no-anim');
     document.getElementById('dl-panel-btn')?.classList.remove('active');
   }
@@ -26615,10 +26616,13 @@ function _renderDlPanel(opening) {
     if (left < 8) left = 8;
     panel.style.left = left + 'px';
     panel.style.top = top + 'px';
+    const _bn = bounceOn();
     panel.style.transformOrigin = 'top right';
     panel.classList.remove('on', 'no-anim');
+    if (_bn) panel.classList.add('no-anim');
     void panel.offsetHeight;
     panel.classList.add('on');
+    if (_bn) bounceIn(panel, { dist: .18, ty: -8 });
     document.getElementById('dl-panel-btn')?.classList.add('active');
     document.addEventListener('click', _dlPanelOutsideClick, true);
   }
@@ -27729,7 +27733,9 @@ function showCtx(e, items, opts) {
   }
 
   // ── desktop: floating popup ──────────────────────────────────────────────
+  const _bn = bounceOn();
   ctx.classList.remove('on', 'no-anim', 'closing');
+  if (_bn) ctx.classList.add('no-anim');
   void ctx.offsetHeight;
   ctx.classList.add('on');
 
@@ -27749,6 +27755,7 @@ function showCtx(e, items, opts) {
   ctx.style.top  = top  + 'px';
   ctx.style.transformOrigin = (mx - left) + 'px ' + (my - top) + 'px';
   ctx.style.visibility = '';
+  if (_bn) bounceIn(ctx, { dist: .18, ty: -8 });
 }
 
 function hideCtx() {
@@ -27765,6 +27772,7 @@ function hideCtx() {
     ctx.classList.remove('on', 'no-anim', 'mob-ctx-active');
     _unregisterDrawer(ctx);
   } else {
+    bounceStop(ctx);
     ctx.classList.remove('on', 'no-anim', 'mob-ctx-active', 'closing');
   }
 }
@@ -27774,6 +27782,7 @@ function closeCtxAnimated() {
   const ctx = document.getElementById('ctx');
   if (isMobile() || !ctx.classList.contains('on')) { hideCtx(); return; }
   const gen = _ctxGeneration; // a newly opened menu bumps this, so we never hide it by mistake
+  bounceStop(ctx);
   ctx.style.transformOrigin = 'center center';
   ctx.classList.add('closing');
   Promise.allSettled(ctx.getAnimations().map(a => a.finished))
@@ -29319,6 +29328,7 @@ function _navPillSlide() {
 function applyNavPill() {
   const root = document.documentElement, slide = _navPillSlide();
   root.classList.toggle('nav-slide', slide);
+  bounceSync();
   _lensInit(); if (window._lensGo) _lensGo();
 }
 function _lensOverLG(over) {
@@ -29389,6 +29399,11 @@ var _POP = { set: new Set(), raf: 0, t: 0 };
 function popPaint(el) {
   const p = el._pop, F = POP_FX;
   el.style.scale = (p.x * (1 + p.s)).toFixed(4) + ' ' + (p.x / (1 + p.s * F.squash)).toFixed(4);
+  if (p.pop) {
+    const t = Math.max(0, Math.min(1, (p.x - p.pop.from) / (1 - p.pop.from)));
+    el.style.opacity = Math.min(1, t * 1.8).toFixed(3);
+    el.style.translate = '0 ' + ((1 - t) * p.pop.ty).toFixed(2) + 'px';
+  }
 }
 function popTick(t) {
   const P = _POP, F = POP_FX; P.raf = 0;
@@ -29401,6 +29416,7 @@ function popTick(t) {
     p.s += (want - p.s) * Math.min(1, dt * F.follow);
     if (Math.abs(p.x - p.tgt) < F.settle && Math.abs(p.v) < F.settle * 20 && Math.abs(p.s) < .002) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
     popPaint(el);
+    if (p.end && !P.set.has(el)) p.end(el);
   });
   if (P.set.size) P.raf = requestAnimationFrame(popTick); else P.t = 0;
 }
@@ -29415,6 +29431,62 @@ function popTo(el, on, instant) {
   _POP.set.add(el);
   if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
 }
+var _BN_DEF = { on: true, str: 1, b: .5 };
+var _BN_BASE = null;
+function _bnPrefs() { const v = DevPrefs.get('bounce'); return Object.assign({}, _BN_DEF, v && typeof v === 'object' ? v : {}); }
+function bounceOn() { return !!_bnPrefs().on; }
+function bounceSync() {
+  const s = _bnPrefs(), m = s.b / .5;
+  if (!_BN_BASE) _BN_BASE = { pk: POP_FX.stiffness, pd: POP_FX.damping, ps: POP_FX.stretch, pf: POP_FX.from, lk: LENS_FX.stiffness, ld: LENS_FX.damping, ls: LENS_FX.stretch };
+  const B = _BN_BASE;
+  const damp = (k, d) => { const c = 2 * Math.sqrt(k), z0 = d / c; return c * (s.on ? Math.max(.12, Math.min(1, 1 - (1 - z0) * m)) : 1); };
+  POP_FX.damping = damp(B.pk, B.pd);
+  POP_FX.stretch = s.on ? B.ps * s.str : 0;
+  POP_FX.from = s.on ? Math.max(.05, Math.min(.98, 1 - (1 - B.pf) * s.str)) : B.pf;
+  LENS_FX.damping = damp(B.lk, B.ld);
+  LENS_FX.stretch = s.on ? B.ls * s.str : 0;
+}
+function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
+function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
+function bounceIn(el, o = {}) {
+  const s = _bnPrefs(), from = Math.max(.05, Math.min(.98, 1 - (o.dist == null ? .18 : o.dist) * s.str));
+  el._pop = { x: from, v: 0, tgt: 1, s: 0, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
+  popPaint(el); _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
+}
+function bounceSet(k, v) { const s = _bnPrefs(); s[k] = v; DevPrefs.set('bounce', s); bounceSync(); }
+function bounceReset() { DevPrefs.del('bounce'); bounceSync(); renderSettings(); }
+function bounceSettingsHtml(sq) {
+  if (sq && !'bounce bouncy spring animation pop stretch wobble jelly menu popup nav pill'.includes(sq)) return '';
+  const s = _bnPrefs();
+  const sl = (name, sub, min, max, step, val, key) => `
+    <div class="sb-line ${s.on ? '' : 'off'}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_lgFmt('f100',+this.value);bounceSet('${key}',+this.value)">
+        <span class="sb-meta" style="min-width:52px;text-align:right">${_lgFmt('f100', val)}</span>
+      </div>
+    </div>`;
+  return `
+    <details class="set-blur" ${window._bnOpen ? 'open' : ''} ontoggle="window._bnOpen=this.open">
+      <summary>
+        <div class="set-title-cell"><div class="set-lbl">bouncy animations</div><div class="set-sub">springy pop with a jelly stretch for the context menu, downloads popup and the mobile nav pill</div></div>
+        <span class="sb-meta">${s.on ? 'on' : 'off'}</span>
+        <svg class="sb-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="sb-body">
+        <div class="sb-line"><div class="sb-l"><div class="sb-n">enable bounce</div><div class="sb-s">off = menus use the old css pop and the nav pill stops wobbling</div></div>
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${s.on ? 'checked' : ''} onchange="bounceSet('on',this.checked);renderSettings()" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
+        </div>
+        ${sl('strength', 'how far the pop starts and how much it stretches', 0, 2, .05, s.str, 'str')}
+        ${sl('bounciness', 'how long it keeps wobbling, 0 settles with no overshoot', 0, 1, .05, s.b, 'b')}
+        <div class="sb-line"><div class="sb-l"><div class="sb-n">reset bounce</div><div class="sb-s">back to the defaults</div></div><button class="lg-chip" onclick="bounceReset()">reset</button></div>
+      </div>
+    </details>`;
+}
+bounceSync();
 function lensLayout() {
   const nav = document.getElementById('mobile-nav'), root = document.documentElement;
   if (!nav) return;
@@ -29526,7 +29598,7 @@ function lgSettingsHtml(sq) {
         ${sl('contrast', 'punchier or flatter backdrop', .5, 1.5, .05, s.ct, 'f100', "lgSet('ct',+this.value)")}
         <div class="sb-grp">panels</div>
         ${parts}
-        ${line('nav pill above buttons', 'pill sits over the tab icons and text so it refracts them too, no blur or brightness and contrast on it, saturation stays', sw(s.lensOver, "lgSet('lensOver',this.checked);renderSettings()"), off)}
+        ${line('nav pill above buttons (broken)', 'pill sits over the tab icons and text so it refracts them too, no blur or brightness and contrast on it, saturation stays', sw(s.lensOver, "lgSet('lensOver',this.checked);renderSettings()"), off)}
         ${s.lensOver ? sl('nav pill refraction', 'how much of the normal refraction the pill keeps, lower keeps the labels more readable', 0, 1, .05, s.lensStr, 'f100', "lgSet('lensStr',+this.value)") : ''}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset liquid glass</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="lgReset()">reset</button></div>
       </div>
@@ -31769,6 +31841,7 @@ function renderSettings() {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
+        ${bounceSettingsHtml(_sq)}
         ${row('keep toggle menus open', 'right click menus with checkboxes or radio buttons stay open after you pick something and get a close button in the top right instead. changes still save instantly', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.ctx_keep_open?'checked':''} onchange="saveSetting('ctx_keep_open',this.checked)" onclick="event.stopPropagation()">
