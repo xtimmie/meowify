@@ -16847,7 +16847,7 @@ class AudioEngine {
   window._nmSetting = async function (key, val) {
     await saveSetting(key, val); CFG[key] = val;
     let r = null;
-    try { r = await api('POST', '/api/native/apply'); } catch (e) {}
+    try: r = await api('POST', '/api/native/apply'); } catch (e) {}
     if (r && r.installing) {
       _showSyncToast('installing windows media packages...');
       for (let i = 0; i < 200; i++) {
@@ -34143,36 +34143,6 @@ class _NmThumb:
             cb = None
             o32.CoUninitialize()
 
-def _nm_missing(want):
-    import importlib.util
-    def has(mod):
-        try: return importlib.util.find_spec(mod) is not None
-        except Exception: return False
-    need = []
-    if want.get('widget') and not all(has(m) for m in ('winrt.windows.media', 'winrt.windows.media.playback', 'winrt.windows.storage.streams', 'winrt.windows.foundation')):
-        need += ['winrt-runtime', 'winrt-Windows.Foundation', 'winrt-Windows.Foundation.Collections',
-                 'winrt-Windows.Media', 'winrt-Windows.Media.Playback', 'winrt-Windows.Storage.Streams']
-    if (want.get('tray') or want.get('thumb')) and not has('PIL'): need.append('pillow')
-    if want.get('tray') and not has('pystray'): need.append('pystray')
-    return need
-
-def _nm_install(pkgs):
-    if _NM_ST['installing']: return
-    _NM_ST['installing'] = True; _NM_ST['err'] = ''
-    def _w():
-        try:
-            _upd_pip(['install'] + pkgs)
-        except Exception as e:
-            _NM_ST['err'] = f'install failed: {e}'[:200]
-        finally:
-            _NM_ST['installing'] = False
-        try:
-            import importlib; importlib.invalidate_caches()
-            _nm_rebuild()
-        except Exception as e:
-            _log_server.warning(f'[native] rebuild after install failed: {e}')
-    threading.Thread(target=_w, daemon=True).start()
-
 def _nm_rebuild():
     """(re)build the native features from settings, safe to call any time"""
     if sys.platform != 'win32': return {}
@@ -34181,10 +34151,6 @@ def _nm_rebuild():
         want = {'widget': bool(CFG.get('win_native_widget')),
                 'tray': bool(CFG.get('win_tray') or CFG.get('win_tray_ctrl')),
                 'thumb': bool(CFG.get('win_thumb'))}
-        need = _nm_missing(want)
-        if need:
-            _nm_install(need)
-            return {'installing': True}
         w = _NM_ST['widget']
         if want['widget'] and not w:
             try:
