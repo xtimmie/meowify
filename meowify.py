@@ -11428,7 +11428,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .mob-np-plain-circle, .mob-np-playbtn,
   input[type=range].vol,
   input[type=range].vol::-webkit-slider-thumb,
-  .playbtn, .cbtn { --corner-shape: round; }
+  .playbtn, .cbtn, .cbtn-badge { --corner-shape: round; }
 }
 
 /* ── glassy slider skin v3 - only active under body.design-glassy ─────── */
