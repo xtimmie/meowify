@@ -29433,18 +29433,20 @@ function popTo(el, on, instant) {
 }
 var _BN_DEF = { on: true, str: 1, b: .5 };
 var _BN_BASE = null;
+var _BN_SLIDE = 3;
 function _bnPrefs() { const v = DevPrefs.get('bounce'); return Object.assign({}, _BN_DEF, v && typeof v === 'object' ? v : {}); }
 function bounceOn() { return !!_bnPrefs().on; }
 function bounceSync() {
   const s = _bnPrefs(), m = s.b / .5;
-  if (!_BN_BASE) _BN_BASE = { pk: POP_FX.stiffness, pd: POP_FX.damping, ps: POP_FX.stretch, pf: POP_FX.from, lk: LENS_FX.stiffness, ld: LENS_FX.damping, ls: LENS_FX.stretch };
+  if (!_BN_BASE) _BN_BASE = { pk: POP_FX.stiffness, pd: POP_FX.damping, ps: POP_FX.stretch, pf: POP_FX.from, lk: LENS_FX.stiffness, ld: LENS_FX.damping, ls: LENS_FX.stretch, lm: LENS_FX.maxStretch };
   const B = _BN_BASE;
   const damp = (k, d) => { const c = 2 * Math.sqrt(k), z0 = d / c; return c * (s.on ? Math.max(.12, Math.min(1, 1 - (1 - z0) * m)) : 1); };
   POP_FX.damping = damp(B.pk, B.pd);
   POP_FX.stretch = s.on ? B.ps * s.str : 0;
   POP_FX.from = s.on ? Math.max(.05, Math.min(.98, 1 - (1 - B.pf) * s.str)) : B.pf;
   LENS_FX.damping = damp(B.lk, B.ld);
-  LENS_FX.stretch = s.on ? B.ls * s.str : 0;
+  LENS_FX.stretch = s.on ? B.ls * s.str * _BN_SLIDE : 0;
+  LENS_FX.maxStretch = B.lm * _BN_SLIDE;
 }
 function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
