@@ -14697,57 +14697,88 @@ function _initMobRowInteraction(){
 }
 
 (function _initSelZoneDrag(){
-  const HOLD_MS = 220, SLOP = 8, ZONE = 48, EDGE_MAX = 120, SPEED = 0.6;
-  let row0 = null, timer = 0, armed = false, active = false, raf = 0, tPrev = 0;
-  let sx = 0, sy = 0, lx = 0, ly = 0, want = true, lastIdx = -1, prevSB = '';
+  const SLOP = 8, ZONE = 48, EDGE_MAX = 130, SPEED = 0.9, SMOOTH_MS = 90;
+  const ROW = '#vc .song-row-mobile[data-mob-play]';
+  const orig = new Map();
+  let row0 = null, active = false, raf = 0, tPrev = 0, vel = 0;
+  let sx = 0, sy = 0, ly = 0, anchor = -1, lo = 0, hi = -1, prevSB = '';
 
   const vcEl = () => document.getElementById('vc');
   const okRow = r => !!(r && r.dataset.id && !r.dataset.ghostId && !r.classList.contains('dl-active') && !r.classList.contains('dl-unavailable'));
-  const clampY = y => { const r = vcEl().getBoundingClientRect(); return Math.max(r.top + 2, Math.min(r.bottom - 2, y)); };
-  const rowAt = (x, y) => {
-    const el = document.elementFromPoint(x, y);
-    const r = el && el.closest && el.closest('#vc .song-row-mobile[data-mob-play]');
-    return okRow(r) ? r : null;
-  };
+  const idxOf = r => okRow(r) ? _viewSongIdx.get(r.dataset.id) : undefined;
+  const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch (_) {} };
 
-  function reset(){
-    clearTimeout(timer); timer = 0;
-    cancelAnimationFrame(raf); raf = 0;
-    if (active) { const v = vcEl(); if (v) v.style.scrollBehavior = prevSB; }
-    row0 = null; armed = false; active = false; lastIdx = -1;
+  function rowIdxAt(y){
+    const vc = vcEl(), r = vc.getBoundingClientRect();
+    const yy = Math.max(r.top + 2, Math.min(r.bottom - 2, y));
+    for (const el of document.elementsFromPoint(sx, yy)) {
+      const row = el.closest && el.closest(ROW);
+      if (!row) continue;
+      const i = idxOf(row);
+      if (i !== undefined) return i;
+    }
+    let best = -1, bd = 1e9;
+    for (const row of vc.querySelectorAll(ROW)) {
+      const i = idxOf(row);
+      if (i === undefined) continue;
+      const b = row.getBoundingClientRect();
+      const d = Math.abs((b.top + b.bottom) / 2 - yy);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
   }
 
-  function apply(row){
-    const i = _viewSongIdx.get(row.dataset.id);
-    if (i === undefined) return;
-    const a = lastIdx < 0 ? i : lastIdx;
-    const lo = Math.min(a, i), hi = Math.max(a, i);
+  function setRange(i){
+    if (i < 0 || anchor < 0) return;
+    const nlo = Math.min(anchor, i), nhi = Math.max(anchor, i);
+    if (nlo === lo && nhi === hi) return;
     let changed = false;
+    const put = (s, on) => {
+      if (!s || S.selected.has(s.id) === on) return;
+      if (on) S.selected.add(s.id); else S.selected.delete(s.id);
+      changed = true;
+    };
     for (let k = lo; k <= hi; k++) {
+      if (k >= nlo && k <= nhi) continue;
+      const s = S.viewSongs[k];
+      if (s && orig.has(s.id)) put(s, orig.get(s.id));
+    }
+    for (let k = nlo; k <= nhi; k++) {
       const s = S.viewSongs[k];
       if (!s) continue;
-      if (want) { if (!S.selected.has(s.id)) { S.selected.add(s.id); changed = true; } }
-      else if (S.selected.delete(s.id)) changed = true;
+      if (!orig.has(s.id)) orig.set(s.id, S.selected.has(s.id));
+      put(s, !orig.get(s.id));
     }
-    lastIdx = i;
-    if (want) _lastSelectedId = row.dataset.id;
+    lo = nlo; hi = nhi;
+    const cs = S.viewSongs[i];
+    if (cs && S.selected.has(cs.id)) _lastSelectedId = cs.id;
     if (changed) refreshSelectionUI();
+  }
+
+  function reset(){
+    cancelAnimationFrame(raf); raf = 0;
+    if (active) { const v = vcEl(); if (v) v.style.scrollBehavior = prevSB; }
+    orig.clear();
+    row0 = null; active = false; anchor = -1; lo = 0; hi = -1; vel = 0;
   }
 
   function tick(ts){
     raf = 0;
     if (!active) return;
+    if (!S.selectMode) { reset(); return; }
     const vc = vcEl(), r = vc.getBoundingClientRect();
     const z = Math.min(EDGE_MAX, r.height / 3);
-    const dt = Math.min(40, tPrev ? ts - tPrev : 16);
+    const dt = Math.min(32, tPrev ? ts - tPrev : 16);
     tPrev = ts;
-    let v = 0;
-    if (ly < r.top + z) v = -((r.top + z - ly) / z);
-    else if (ly > r.bottom - z) v = (ly - (r.bottom - z)) / z;
-    v = Math.max(-1.4, Math.min(1.4, v));
-    if (v) vc.scrollTop += Math.sign(v) * Math.pow(Math.abs(v), 1.6) * SPEED * dt;
-    const row = rowAt(lx, clampY(ly));
-    if (row) apply(row);
+    let d = 0;
+    if (ly < r.top + z) d = -(r.top + z - ly) / z;
+    else if (ly > r.bottom - z) d = (ly - (r.bottom - z)) / z;
+    d = Math.max(-1.5, Math.min(1.5, d));
+    const target = Math.sign(d) * Math.pow(Math.abs(d), 1.5) * SPEED;
+    vel += (target - vel) * Math.min(1, dt / SMOOTH_MS);
+    if (Math.abs(vel) < 0.01) vel = 0;
+    if (vel) vc.scrollTop += vel * dt;
+    setRange(rowIdxAt(ly));
     raf = requestAnimationFrame(tick);
   }
 
@@ -14756,40 +14787,35 @@ function _initMobRowInteraction(){
     if (!S.selectMode || e.touches.length !== 1 || !isMobile()) return;
     const el = e.target;
     if (!el.closest || el.closest('.sel-handle,.smenu-btn')) return;
-    const row = el.closest('#vc .song-row-mobile[data-mob-play]');
+    const row = el.closest(ROW);
     if (!okRow(row)) return;
     const t = e.touches[0], rc = row.getBoundingClientRect();
     const sc = row.offsetHeight ? rc.height / row.offsetHeight : 1;
     if (t.clientX - rc.left > ZONE * sc) return;
-    row0 = row; sx = lx = t.clientX; sy = ly = t.clientY;
-    timer = setTimeout(() => {
-      if (!row0) return;
-      armed = true;
-      try { navigator.vibrate && navigator.vibrate(18); } catch (_) {}
-    }, HOLD_MS);
-  }, { passive: true, capture: true });
+    const i = idxOf(row);
+    if (i === undefined) return;
+    row0 = row; anchor = i; sx = t.clientX; sy = ly = t.clientY;
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false, capture: true });
 
   document.addEventListener('touchmove', e => {
     if (!row0) return;
+    if (e.touches.length !== 1) { reset(); return; }
     const t = e.touches[0];
-    lx = t.clientX; ly = t.clientY;
-    const far = Math.hypot(lx - sx, ly - sy) > SLOP;
-    if (!armed) { if (far) reset(); return; }
+    ly = t.clientY;
     if (e.cancelable) e.preventDefault();
     if (!active) {
-      if (!far) return;
+      if (Math.hypot(t.clientX - sx, t.clientY - sy) <= SLOP) return;
       active = true;
-      want = !S.selected.has(row0.dataset.id);
-      lastIdx = -1;
-      tPrev = 0;
+      orig.clear(); lo = 0; hi = -1; vel = 0; tPrev = 0;
       const vc = vcEl();
       prevSB = vc.style.scrollBehavior;
       vc.style.scrollBehavior = 'auto';
-      apply(row0);
+      buzz(12);
+      setRange(anchor);
       raf = requestAnimationFrame(tick);
     }
-    const row = rowAt(lx, clampY(ly));
-    if (row) apply(row);
+    setRange(rowIdxAt(ly));
   }, { passive: false, capture: true });
 
   document.addEventListener('touchend', reset, { passive: true, capture: true });
