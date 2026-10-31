@@ -16347,6 +16347,11 @@ class AudioEngine {
   })();
 
   const LOCK_MS = 300;
+  // browser/OS widgets (chrome global controls, linux mpris shells, android) read play/pause from the real state of
+  // the media element, not from mediaSession.playbackState. so the decoy has to really pause when the app pauses.
+  // windows keeps the old always-playing decoy for now (its smtc widget tears down when the element pauses),
+  // that gets its own native integration later. flip this to true to test pause following there too
+  const _MS_FOLLOW_PAUSE = !/windows/i.test(navigator.userAgent);
 
   const engine = new AudioEngine();
   let _progLastUiT = -1;
@@ -16385,8 +16390,9 @@ class AudioEngine {
         if (r && typeof r.then === 'function') r.catch(()=>{});
       } catch(e) { console.error(e); }
     };
-    navigator.mediaSession.setActionHandler('play', safe(togglePlay));
-    navigator.mediaSession.setActionHandler('pause', safe(togglePlay));
+    // explicit and idempotent: a widget that is out of sync can never flip the wrong way (play while playing = nothing)
+    navigator.mediaSession.setActionHandler('play', safe(() => { if (!S.isPlaying) return togglePlay(); }));
+    navigator.mediaSession.setActionHandler('pause', safe(() => { if (S.isPlaying) return togglePlay(); }));
     navigator.mediaSession.setActionHandler('previoustrack', safe(prevSong));
     navigator.mediaSession.setActionHandler('nexttrack', safe(nextSong));
     navigator.mediaSession.setActionHandler('seekbackward', safe(() => seekRel(-10)));
@@ -16521,10 +16527,11 @@ class AudioEngine {
     }
     _mediaAudio._lastSongId = song.id;
     _mediaAudio._paused = !!paused;
-    // always keep the decoy genuinely playing while a song is loaded -
-    // logical pause/play state is tracked separately via _paused above and
-    // via navigator.mediaSession.playbackState (set in updatePlayBtn), never
-    // by actually pausing this element.
+    if (paused && _MS_FOLLOW_PAUSE) {
+      // really pause the decoy so every widget flips to the paused icon, the session stays alive while paused
+      if (!_mediaAudio.paused) { try { _mediaAudio.pause(); } catch(e) {} }
+      return;
+    }
     if (_mediaAudio.paused) _mediaAudio.play().catch(() => {});
   }
 
@@ -16541,7 +16548,7 @@ class AudioEngine {
   // playing through pause too, see syncMediaAudio above for why.
   function _ensureMediaAudioAlive() {
     if (engine.ctx && engine.ctx.state === 'suspended') engine.ctx.resume().catch(()=>{});
-    if (S.cur && _mediaAudio.paused) {
+    if (S.cur && _mediaAudio.paused && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
       _mediaAudio.play().catch(() => {
         // if blocked, retry once after a short delay (handles browser autoplay policy)
         setTimeout(() => { if (S.cur) _mediaAudio.play().catch(()=>{}); }, 500);
@@ -16580,8 +16587,8 @@ class AudioEngine {
   // pause too now (see syncMediaAudio), so any unexpected pause while a
   // song is loaded, playing or not, should trigger a resume attempt.
   _mediaAudio.addEventListener('pause', () => {
-    if (S.cur) {
-      setTimeout(() => { if (S.cur && _mediaAudio.paused) _mediaAudio.play().catch(()=>{}); }, 100);
+    if (S.cur && (S.isPlaying || !_MS_FOLLOW_PAUSE)) {
+      setTimeout(() => { if (S.cur && _mediaAudio.paused && (S.isPlaying || !_MS_FOLLOW_PAUSE)) _mediaAudio.play().catch(()=>{}); }, 100);
     }
   });
 
@@ -18281,7 +18288,9 @@ function updatePlayBtn() {
   btn.classList.toggle('playing', S.isPlaying);
   btn.classList.toggle('has-song', !!(S.cur || engine.hasPaused));
   if ('mediaSession' in navigator) {
+    if (S.cur) syncMediaAudio(S.cur, !S.isPlaying); // backstop: the decoy always ends up matching the real state
     navigator.mediaSession.playbackState = S.isPlaying ? 'playing' : 'paused';
+    if (S.cur) updatePositionState(); // position + rate (0 while paused) refreshed on every play/pause, not only some paths
   }
     updateSpikyBtn();
     _updateMobNpSpiky();
