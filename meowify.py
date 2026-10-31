@@ -23806,6 +23806,7 @@ const NAV_DEFAULTS = {
   nav_dur_var: '--dur-8',
   nav_ease_var: 'cubic-bezier(0.3,1.22,.2,1)',
   nav_tab_pad: 100,
+  nav_clip_sync: 'auto',
   nav_overshoot_ref: 400,
   nav_overshoot_max: 1,
   nav_back_overshoot: 2,
@@ -23895,6 +23896,69 @@ const NAV = (() => {
     };
     titleRaf = requestAnimationFrame(tick);
     titleTimer = setTimeout(apply, ms + 700);
+  }
+
+  function cubicFn(ease) {
+    const m = /cubic-bezier\(([^)]+)\)/.exec(ease), p = m && m[1].split(',').map(parseFloat);
+    if (!p || p.length < 4 || p.some(isNaN)) return x => x;
+    const [x1, y1, x2, y2] = p;
+    const bx = t => 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t;
+    const by = t => 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t;
+    return x => {
+      if (x <= 0) return 0;
+      if (x >= 1) return 1;
+      let lo = 0, hi = 1, t = x;
+      for (let i = 0; i < 24; i++) {
+        const v = bx(t);
+        if (Math.abs(v - x) < 1e-5) break;
+        if (v < x) lo = t; else hi = t;
+        t = (lo + hi) / 2;
+      }
+      return by(t);
+    };
+  }
+
+  const syncOn = () => { const m = opt('nav_clip_sync'); return m === 'auto' ? isMobile() : !!m && m !== 'false'; };
+
+  function driveLayers(items, duration) {
+    let raf = 0, t0 = 0, stopped = false, done;
+    const finished = new Promise(res => { done = res; });
+    const apply = p => items.forEach(it => {
+      const e = it.f(p);
+      if (it.tx) it.el.style.transform = `translateX(${it.tx[0] + (it.tx[1] - it.tx[0]) * e}%)`;
+      if (it.clip) it.el.style.clipPath = `inset(0 ${it.clip[0] + (it.clip[1] - it.clip[0]) * e}% 0 0)`;
+      if (it.fade) it.el.style.opacity = it.fade(e);
+    });
+    apply(0);
+    const tick = ts => {
+      if (stopped) return;
+      if (!t0) t0 = ts;
+      const p = Math.min(1, (ts - t0) / duration);
+      apply(p);
+      if (p < 1) raf = requestAnimationFrame(tick); else done();
+    };
+    raf = requestAnimationFrame(tick);
+    return {
+      finished,
+      cancel() {
+        stopped = true;
+        cancelAnimationFrame(raf);
+        items.forEach(it => ['transform', 'clip-path', 'opacity'].forEach(p => it.el.style.removeProperty(p)));
+      },
+    };
+  }
+
+  function syncAnims(kind, vc, ghost, shade, par, base, ref, Wpx, duration) {
+    const fwd = kind.type === 'fwd';
+    const f = px => cubicFn(scaleEase(base, px, ref));
+    const items = fwd
+      ? [{ el: vc, tx: [100, 0], f: f(Wpx) }, { el: ghost, tx: [0, -par], clip: [0, 100 - par], f: f(Wpx * par / 100) }]
+      : [{ el: ghost, tx: [0, 100], f: f(Wpx) }, { el: vc, tx: [-par, 0], clip: [100 - par, 0], f: f(Wpx * par / 100) }];
+    if (shade) items.push({
+      el: shade, tx: fwd ? [100, 0] : [0, 100], f: f(Wpx),
+      fade: fwd ? e => Math.max(0, Math.min(1, e / .25)) : e => Math.max(0, Math.min(1, (1 - e) / .25)),
+    });
+    return [driveLayers(items, duration)];
   }
 
   function navEase() {
@@ -24011,8 +24075,11 @@ const NAV = (() => {
       Object.assign(shade.style, { left: (vc.offsetLeft - vc.offsetWidth) + 'px', top: vc.offsetTop + 'px', width: vc.offsetWidth + 'px', height: vc.offsetHeight + 'px' });
       wrap.appendChild(shade);
     }
-    const anims = layers.map(([el, kf, px]) => animate(el, kf, { ...o, easing: scaleEase(base, px, ref) }));
-    if (shade) {
+    const sync = (kind.type === 'fwd' || kind.type === 'back') && syncOn();
+    const anims = sync
+      ? syncAnims(kind, vc, ghost, shade, par, base, ref, Wpx, o.duration)
+      : layers.map(([el, kf, px]) => animate(el, kf, { ...o, easing: scaleEase(base, px, ref) }));
+    if (shade && !sync) {
       const fwd = kind.type === 'fwd';
       anims.push(animate(shade, fwd
         ? [{ ...T(100), opacity: 0, offset: 0 }, { opacity: 1, offset: .25 }, { ...T(0), opacity: 1, offset: 1 }]
