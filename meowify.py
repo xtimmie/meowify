@@ -13710,7 +13710,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 /* sort trigger button */
 .mob-sort-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 12px 5px 10px; border-radius: var(--radius-full);
+  padding: 4px 12px 4px 10px; border-radius: var(--radius-full);
   font-size: 12px; font-weight: 500; letter-spacing: .2px;
   background: var(--color-primary-container);
   color: var(--color-on-primary-container);
@@ -19035,8 +19035,10 @@ const TITLE_ANIM = { strength: .1, duration: 350, easing: [.2, 3, .2, 1] }; // c
 (() => {
   const el = document.getElementById('vtitle');
   el.style.transformOrigin = 'left center';
-  let w0 = el.offsetWidth;
+  let w0 = el.offsetWidth, t0 = el.textContent;
   new MutationObserver(() => {
+    if (el.textContent === t0) return;
+    t0 = el.textContent;
     const w1 = el.offsetWidth, r = w0 / w1, damp = Math.min(r, 1 / r), { strength, duration, easing: [x1, y1, x2, y2] } = TITLE_ANIM;
     if (w0 && w1 && w0 !== w1 && performance.now() > (window._noTitleMorph || 0))
       el.animate({ scale: [`${Math.max(0, (r - 1) * strength + 1)} 1`, '1 1'] }, { duration, easing: `cubic-bezier(${x1},${(y1 - 1) * damp + 1},${x2},${y2})` });
@@ -23852,7 +23854,7 @@ const NAV = (() => {
     catch { return el.animate(frames, { ...o, easing: EASE_FALLBACK }); }
   }
 
-  let prevTitle = null, titleTimer = 0;
+  let prevTitle = null, titleTimer = 0, titleRaf = 0;
 
   function peakTime(ease) {
     const m = /cubic-bezier\(([^)]+)\)/.exec(ease);
@@ -23871,14 +23873,27 @@ const NAV = (() => {
     return at;
   }
 
-  function holdTitle(ms) {
+  function holdTitle(ms, anim) {
     const el = $('vtitle');
     if (!el || prevTitle == null) return;
     const next = el.textContent, old = prevTitle;
     if (next === old) return;
     el.textContent = old;
     clearTimeout(titleTimer);
-    titleTimer = setTimeout(() => { if (el.textContent === old) el.textContent = next; }, ms);
+    cancelAnimationFrame(titleRaf);
+    const apply = () => {
+      clearTimeout(titleTimer);
+      if (el.textContent !== old) return;
+      window._noTitleMorph = performance.now() + 50;
+      el.textContent = next;
+    };
+    const tick = () => {
+      const ct = anim && anim.currentTime;
+      if (!anim || anim.playState === 'idle' || anim.playState === 'finished' || (typeof ct === 'number' && ct >= ms)) return apply();
+      titleRaf = requestAnimationFrame(tick);
+    };
+    titleRaf = requestAnimationFrame(tick);
+    titleTimer = setTimeout(apply, ms + 700);
   }
 
   function navEase() {
@@ -24112,6 +24127,7 @@ const NAV = (() => {
 
   function show(e, kind) {
     clearTimeout(titleTimer);
+    cancelAnimationFrame(titleRaf);
     prevTitle = $('vtitle') ? $('vtitle').textContent : null;
     swap(kind, () => render(e));
     syncChrome();
@@ -24148,7 +24164,6 @@ const NAV = (() => {
     const away = { opacity: 0, transform: 'translateX(-14px) scale(.55)' }, here = { opacity: 1, transform: 'none' };
     const o = { duration: TITLE_ANIM.duration, easing: boostEase(navEase(), +opt('nav_back_overshoot')), fill: show ? 'none' : 'forwards' };
     window._noTitleMorph = performance.now() + o.duration;
-    holdTitle(peakTime(o.easing) * o.duration);
     let after;
     if (show) after = lefts();
     else { w.classList.remove('on'); after = lefts(); w.classList.add('on'); }
@@ -24158,6 +24173,7 @@ const NAV = (() => {
       return animate(s, show ? [{ translate: `${-d}px 0` }, { translate: '0 0' }] : [{ translate: '0 0' }, { translate: `${d}px 0` }], o);
     });
     backAnims = [animate(btn, show ? [away, here] : [here, away], o), ...sibAnims];
+    holdTitle(peakTime(o.easing) * o.duration, backAnims[0]);
     Promise.all(backAnims.map(a => a.finished)).then(() => { w.style.overflow = ''; }).catch(() => {});
     if (!show) {
       Promise.all(backAnims.map(a => a.finished))
