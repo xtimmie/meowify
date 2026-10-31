@@ -16526,6 +16526,14 @@ class AudioEngine {
       // loop so the UI/session-save heartbeat doesn't stay dark after resume.
       // _startProgress() is now safe to call even if a stale chain is alive.
       if (S.isPlaying) engine._startProgress();
+      // resync hue sync / bleed with whatever is playing now in case songs changed while hidden
+      if (S.cur && (CFG.cover_art_hue_sync || CFG.cover_art_bleed)) {
+        const _cur = S.cur;
+        _colorPredict = null; _colorSongId = _cur.id;
+        _coverColorForSong(_cur).then(col => {
+          if (S.cur?.id === _cur.id && _colorSongId === _cur.id) _applyCoverColor(col, 400);
+        });
+      }
     }
   });
   // also recover on page restore from bfcache (mobile browsers)
@@ -18415,7 +18423,14 @@ function _animateBleed(el, tR, tG, tB, dur = 950, tA = 0.34) {
   const [tL,ta,tb] = _rgb2oklab(tR,tG,tB);
   let state = _bleedState.get(el);
   if (!state) { state={L:tL,a:ta,b:tb,A:tA,raf:null}; _bleedState.set(el,state); }
-  if (state.raf) cancelAnimationFrame(state.raf);
+  if (state.raf) { cancelAnimationFrame(state.raf); state.raf = null; }
+  // hidden/minimized: rAF is paused, snap to the target so the bleed isnt left half way
+  if (document.hidden) {
+    state.L = tL; state.a = ta; state.b = tb; state.A = tA;
+    const [r0,g0,b0] = _oklab2rgb(tL,ta,tb);
+    el.style.setProperty('--cov-bleed-rgba',`rgba(${r0},${g0},${b0},${tA.toFixed(3)})`);
+    return;
+  }
   const DUR = dur;
   const start = performance.now();
   const sL=state.L, sa=state.a, sb=state.b, sA=state.A ?? 0.34;
@@ -18491,14 +18506,18 @@ function _coverColorForSong(song) {
     const img = new Image(); img.crossOrigin = 'anonymous';
     img.onload = () => {
       // canvas readback is a gpu round-trip, keep it out of the song-change tick
-      requestAnimationFrame(() => {
+      // rAF never fires while minimized/hidden so race it with a timer, otherwise this promise hangs and hue sync skips
+      let _done = false;
+      const _run = () => {
+        if (_done) return; _done = true;
         let col = null;
         try { col = _extractCoverColor(img); } catch(e) { /* tainted canvas */ }
         _coverColorCache.set(song.id, col);
         if (_coverColorCache.size > 24) _coverColorCache.delete(_coverColorCache.keys().next().value);
         _coverColorPending.delete(song.id);
         res(col);
-      });
+      };
+      if (document.hidden) _run(); else { requestAnimationFrame(_run); setTimeout(_run, 150); }
     };
     img.onerror = () => { _coverColorPending.delete(song.id); res(null); };
     img.src = '/cover/' + song.id;
