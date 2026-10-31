@@ -16349,9 +16349,9 @@ class AudioEngine {
   const LOCK_MS = 300;
   // browser/OS widgets (chrome global controls, linux mpris shells, android) read play/pause from the real state of
   // the media element, not from mediaSession.playbackState. so the decoy has to really pause when the app pauses.
-  // windows keeps the old always-playing decoy for now (its smtc widget tears down when the element pauses),
-  // that gets its own native integration later. flip this to true to test pause following there too
-  const _MS_FOLLOW_PAUSE = !/windows/i.test(navigator.userAgent);
+  // windows follows pause too now. if its widget ever disappears the moment u pause (old smtc teardown behavior),
+  // set this back to: !/windows/i.test(navigator.userAgent)
+  const _MS_FOLLOW_PAUSE = true;
 
   const engine = new AudioEngine();
   let _progLastUiT = -1;
@@ -16390,9 +16390,10 @@ class AudioEngine {
         if (r && typeof r.then === 'function') r.catch(()=>{});
       } catch(e) { console.error(e); }
     };
-    // explicit and idempotent: a widget that is out of sync can never flip the wrong way (play while playing = nothing)
-    navigator.mediaSession.setActionHandler('play', safe(() => { if (!S.isPlaying) return togglePlay(); }));
-    navigator.mediaSession.setActionHandler('pause', safe(() => { if (S.isPlaying) return togglePlay(); }));
+    // both buttons toggle: a widget that shows a stale state (windows kept saying "playing" while paused) only ever sends
+    // "pause", so ignoring it when we are already paused made unpausing from the widget impossible
+    navigator.mediaSession.setActionHandler('play', safe(togglePlay));
+    navigator.mediaSession.setActionHandler('pause', safe(togglePlay));
     navigator.mediaSession.setActionHandler('previoustrack', safe(prevSong));
     navigator.mediaSession.setActionHandler('nexttrack', safe(nextSong));
     navigator.mediaSession.setActionHandler('seekbackward', safe(() => seekRel(-10)));
