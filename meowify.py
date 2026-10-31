@@ -34227,6 +34227,7 @@ class _NmWidget:
 
     def __init__(self):
         self.win = None; self.h = 0; self.run = True
+        self.ready = threading.Event()   # set when the widget page finished loading
         self.mode = ''; self.last = None; self.sc = 1.0; self.err = ''
         self.win11 = False
         try: self.win11 = sys.getwindowsversion().build >= 22000
@@ -34253,6 +34254,12 @@ class _NmWidget:
                     if not drop: raise
                     _log_server.info(f'[native] widget: dropping window option {drop[0]} ({e})')
                     kw.pop(drop[0])
+            try:
+                def _ld(*a): self.ready.set()
+                self.win.events.loaded += _ld
+            except Exception as e:
+                _log_server.info(f'[native] widget: no loaded event ({e})')
+                self.ready.set()
             h = 0
             for _ in range(80):
                 if not self.run: return
@@ -34265,6 +34272,9 @@ class _NmWidget:
             u.SetWindowLongPtrW(h, -20, (ex | 0x80) & ~0x40000)   # tool window, no taskbar button of its own
             try: self.sc = (u.GetDpiForWindow(h) or 96) / 96.0
             except Exception: self.sc = 1.0
+            if not self.ready.wait(25):
+                _log_server.warning('[native] widget: page did not finish loading in 25s, embedding anyway')
+            if not self.run: return
             self.h = h
         except Exception as e:
             self._fail(f'widget: {e}')
