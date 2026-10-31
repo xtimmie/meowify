@@ -34243,8 +34243,8 @@ class _NmWidget:
         try:
             import webview
             url = _NM_URL[0].rstrip('/') + '/native/widget'
-            kw = dict(width=300, height=40, frameless=True, hidden=True, resizable=False,
-                      easy_drag=False, focus=False, background_color='#202020')
+            kw = dict(width=300, height=40, x=-4000, y=-4000, frameless=True, hidden=False, resizable=False,
+                      easy_drag=False, focus=False, background_color='#202020')   # visible but parked off screen, webview2 wont init in a never shown window
             while True:
                 try:
                     self.win = webview.create_window(self.TITLE, url, **kw)
