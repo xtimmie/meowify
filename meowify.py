@@ -16847,7 +16847,7 @@ class AudioEngine {
   window._nmSetting = async function (key, val) {
     await saveSetting(key, val); CFG[key] = val;
     let r = null;
-    try: r = await api('POST', '/api/native/apply'); } catch (e) {}
+    try { r = await api('POST', '/api/native/apply'); } catch (e) {}
     if (r && r.error) _showSyncToast(r.error);
     await window._nativeReload();
     renderSettings();
