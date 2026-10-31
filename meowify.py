@@ -16865,7 +16865,7 @@ class AudioEngine {
       + row('tray icon color', 'auto follows the windows taskbar theme', `<div style="display:flex;gap:6px">${[['auto', 'auto'], ['white', 'white'], ['black', 'black']].map(([v, l]) => chip((CFG.win_tray_style || 'auto') === v, `_nmSetting('win_tray_style','${v}')`, l)).join('')}</div>`)
       + row('taskbar preview buttons', 'prev / play / next under the window preview when you hover the taskbar icon, changing which buttons needs a restart', sw('win_thumb', !!CFG.win_thumb))
       + row('preview buttons shown', 'pick which controls show in the taskbar preview', btnChips('win_thumb_btns'))
-      + row('close to taskbar', 'the x button minimizes meowify to the taskbar instead of quitting, quit from the tray menu or by closing it from the taskbar while minimized (webview mode only)', sw('win_close_min', !!CFG.win_close_min));
+      + row('close to tray', 'the x button hides meowify into the tray instead of quitting, the tray icon shows up for this even if its turned off. quit from the tray menu (webview mode only)', sw('win_close_min', !!CFG.win_close_min));
   };
   setInterval(() => { if (_nmOn) _nativePush(); }, 500);   // catches play / pause changes that dont go through updatePositionState
   setTimeout(_nativeInit, 3000);
@@ -33821,11 +33821,38 @@ def _nm_on_closing():
         import ctypes
         u = ctypes.windll.user32
         h = _NM_HW[0]
-        if not h or u.IsIconic(ctypes.c_void_p(h)) or not u.IsWindowVisible(ctypes.c_void_p(h)): return True
-        u.ShowWindowAsync(ctypes.c_void_p(h), 6)   # SW_MINIMIZE
+        if not h or not u.IsWindowVisible(ctypes.c_void_p(h)): return True
+        threading.Thread(target=_nm_hide_to_tray, daemon=True).start()   # tray icon + hide happen off the ui thread
         return False
     except Exception:
         return True
+
+def _nm_hide_window():
+    """the one place that hides the window into the tray (tray menu and close button both use it)"""
+    import ctypes
+    h = _nm_hwnd()
+    if h: ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(h), 0)   # SW_HIDE, lives in the tray
+
+def _nm_ensure_tray():
+    """close to tray needs an icon to bring the window back, make the app icon even if the tray setting is off"""
+    try:
+        with _NM_REB:
+            t = _NM_ST['tray']
+            if t is None:
+                t = _NmTray(); _NM_ST['tray'] = t
+            t.ensure_app()
+    except Exception as e:
+        _NM_ST['err'] = f'tray: {e}'[:200]; _log_server.warning(f'[native] forced tray icon failed: {e}')
+
+def _nm_hide_to_tray():
+    import ctypes
+    _nm_ensure_tray()
+    t = _NM_ST['tray']
+    if t and t.icons.get('app'):
+        _nm_hide_window()
+    else:   # no tray icon, never hide the window without a way back
+        h = _nm_hwnd()
+        if h: ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(h), 6)   # SW_MINIMIZE
 
 def _nm_tray_sig():
     b = CFG.get('win_tray_btns')
@@ -33838,7 +33865,7 @@ def _nm_toggle_window():
     h = _nm_hwnd()
     if not h: return
     if u.IsWindowVisible(h) and not u.IsIconic(h):
-        u.ShowWindow(h, 0)    # SW_HIDE, lives in the tray
+        _nm_hide_window()
     else:
         u.ShowWindow(h, 9)    # SW_RESTORE
         u.SetForegroundWindow(h)
@@ -33907,6 +33934,9 @@ class _NmTray:
         self.icons[name] = ic
         th = threading.Thread(target=self._run, args=(ic, name), daemon=True)
         th.start(); self.threads.append(th)
+
+    def ensure_app(self):
+        if 'app' not in self.icons: self._add('app')
 
     def _run(self, ic, name):
         try:
