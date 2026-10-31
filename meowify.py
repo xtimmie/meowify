@@ -14696,6 +14696,106 @@ function _initMobRowInteraction(){
   }, {passive:true});
 }
 
+(function _initSelZoneDrag(){
+  const HOLD_MS = 220, SLOP = 8, ZONE = 48, EDGE_MAX = 120, SPEED = 0.6;
+  let row0 = null, timer = 0, armed = false, active = false, raf = 0, tPrev = 0;
+  let sx = 0, sy = 0, lx = 0, ly = 0, want = true, lastIdx = -1, prevSB = '';
+
+  const vcEl = () => document.getElementById('vc');
+  const okRow = r => !!(r && r.dataset.id && !r.dataset.ghostId && !r.classList.contains('dl-active') && !r.classList.contains('dl-unavailable'));
+  const clampY = y => { const r = vcEl().getBoundingClientRect(); return Math.max(r.top + 2, Math.min(r.bottom - 2, y)); };
+  const rowAt = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const r = el && el.closest && el.closest('#vc .song-row-mobile[data-mob-play]');
+    return okRow(r) ? r : null;
+  };
+
+  function reset(){
+    clearTimeout(timer); timer = 0;
+    cancelAnimationFrame(raf); raf = 0;
+    if (active) { const v = vcEl(); if (v) v.style.scrollBehavior = prevSB; }
+    row0 = null; armed = false; active = false; lastIdx = -1;
+  }
+
+  function apply(row){
+    const i = _viewSongIdx.get(row.dataset.id);
+    if (i === undefined) return;
+    const a = lastIdx < 0 ? i : lastIdx;
+    const lo = Math.min(a, i), hi = Math.max(a, i);
+    let changed = false;
+    for (let k = lo; k <= hi; k++) {
+      const s = S.viewSongs[k];
+      if (!s) continue;
+      if (want) { if (!S.selected.has(s.id)) { S.selected.add(s.id); changed = true; } }
+      else if (S.selected.delete(s.id)) changed = true;
+    }
+    lastIdx = i;
+    if (want) _lastSelectedId = row.dataset.id;
+    if (changed) refreshSelectionUI();
+  }
+
+  function tick(ts){
+    raf = 0;
+    if (!active) return;
+    const vc = vcEl(), r = vc.getBoundingClientRect();
+    const z = Math.min(EDGE_MAX, r.height / 3);
+    const dt = Math.min(40, tPrev ? ts - tPrev : 16);
+    tPrev = ts;
+    let v = 0;
+    if (ly < r.top + z) v = -((r.top + z - ly) / z);
+    else if (ly > r.bottom - z) v = (ly - (r.bottom - z)) / z;
+    v = Math.max(-1.4, Math.min(1.4, v));
+    if (v) vc.scrollTop += Math.sign(v) * Math.pow(Math.abs(v), 1.6) * SPEED * dt;
+    const row = rowAt(lx, clampY(ly));
+    if (row) apply(row);
+    raf = requestAnimationFrame(tick);
+  }
+
+  document.addEventListener('touchstart', e => {
+    reset();
+    if (!S.selectMode || e.touches.length !== 1 || !isMobile()) return;
+    const el = e.target;
+    if (!el.closest || el.closest('.sel-handle,.smenu-btn')) return;
+    const row = el.closest('#vc .song-row-mobile[data-mob-play]');
+    if (!okRow(row)) return;
+    const t = e.touches[0], rc = row.getBoundingClientRect();
+    const sc = row.offsetHeight ? rc.height / row.offsetHeight : 1;
+    if (t.clientX - rc.left > ZONE * sc) return;
+    row0 = row; sx = lx = t.clientX; sy = ly = t.clientY;
+    timer = setTimeout(() => {
+      if (!row0) return;
+      armed = true;
+      try { navigator.vibrate && navigator.vibrate(18); } catch (_) {}
+    }, HOLD_MS);
+  }, { passive: true, capture: true });
+
+  document.addEventListener('touchmove', e => {
+    if (!row0) return;
+    const t = e.touches[0];
+    lx = t.clientX; ly = t.clientY;
+    const far = Math.hypot(lx - sx, ly - sy) > SLOP;
+    if (!armed) { if (far) reset(); return; }
+    if (e.cancelable) e.preventDefault();
+    if (!active) {
+      if (!far) return;
+      active = true;
+      want = !S.selected.has(row0.dataset.id);
+      lastIdx = -1;
+      tPrev = 0;
+      const vc = vcEl();
+      prevSB = vc.style.scrollBehavior;
+      vc.style.scrollBehavior = 'auto';
+      apply(row0);
+      raf = requestAnimationFrame(tick);
+    }
+    const row = rowAt(lx, clampY(ly));
+    if (row) apply(row);
+  }, { passive: false, capture: true });
+
+  document.addEventListener('touchend', reset, { passive: true, capture: true });
+  document.addEventListener('touchcancel', reset, { passive: true, capture: true });
+})();
+
 // ── unified seek helpers ───────────────────────────────────────────────────────
 // set true while dragging any seekbar - gates updateProg so the engine tick
 // doesn't overwrite the visual position during a drag
