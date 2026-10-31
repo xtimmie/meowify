@@ -33879,7 +33879,7 @@ class _NmTray:
         else:
             label, cmd = {'prev': ('previous', 'prev'), 'play': ('play / pause', 'toggle'), 'next': ('next', 'next')}[name]
             menu = pystray.Menu(M(label, send(cmd), default=True),
-                                M('hide this button', lambda icon, item, n=name: self._hide(n)))
+                                M('hide this button', lambda icon, item: self._hide(name)))
             kind = 'pause' if (name == 'play' and _NM['playing']) else name
             img, title = _nm_glyph(kind, col), label
         _NM_GEN[0] += 1
