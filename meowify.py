@@ -21333,6 +21333,23 @@ function _probeZoom(el) {
   return d > 1 ? d / 100 : (_zoom || 1);
 }
 
+// row height in plain layout px. offsetHeight ignores transforms, so zoom/dpr/tab-switch animations cant skew it,
+// unlike getBoundingClientRect / guessed zoom. mobile rows also can never be shorter than thumb + padding,
+// so any smaller read is a bad measurement and gets lifted to that floor
+function _probeRowH(el) {
+  let h = el.offsetHeight;
+  if (!(h > 0)) h = el.getBoundingClientRect().height / (_probeZoom(el) || 1);
+  if (el.classList.contains('song-row-mobile')) {
+    const th = el.querySelector('.sthumb');
+    if (th) {
+      const cs = getComputedStyle(el);
+      const floor = th.offsetHeight + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      if (floor > h) h = floor;
+    }
+  }
+  return h;
+}
+
 function _queueRemoveGhost(i) {
   if (!S.queueOpen || (S.shuffle && S.shuffleMode === 'chaos')) return null;
   if (typeof Element.prototype.animate !== 'function') return null;
@@ -24594,7 +24611,7 @@ class VirtualList {
     probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
     this._inner.appendChild(probeEl);
     void this._inner.offsetHeight;
-    const h = probeEl.getBoundingClientRect().height / _probeZoom(probeEl);
+    const h = _probeRowH(probeEl);
     probeEl.remove();
     if (!(h > 0)) return;
     VirtualList._rhCache[VirtualList._rhKey()] = h;
@@ -24690,11 +24707,11 @@ class VirtualList {
       }
       const probeEl = _cached > 0 ? null : this._makeRow(0);
       if (probeEl) {
-        probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none';
+        probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
         this._inner.appendChild(probeEl);
         // force layout so getBoundingClientRect is accurate
         void this._inner.offsetHeight;
-        const measured = probeEl.getBoundingClientRect().height, _pz = _probeZoom(probeEl);
+        const measured = _probeRowH(probeEl), _pz = 1;
         probeEl.remove();
         if (measured > 0) {
           // divide by zoom so row positioning math (i * ROW_H) works in
@@ -24721,10 +24738,10 @@ class VirtualList {
           if (!_self._inner || !_self._inner.isConnected) return;
           const reProbeEl = _self._makeRow(0);
           if (!reProbeEl) return;
-          reProbeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none';
+          reProbeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;height:auto';
           _self._inner.appendChild(reProbeEl);
           void _self._inner.offsetHeight;
-          const reMeasured = reProbeEl.getBoundingClientRect().height, _rz = _probeZoom(reProbeEl);
+          const reMeasured = _probeRowH(reProbeEl), _rz = 1;
           reProbeEl.remove();
           if (reMeasured > 0 && Math.abs(reMeasured / _rz - _self.ROW_H) > 2) {
             _self.ROW_H = reMeasured / _rz;
@@ -24949,10 +24966,10 @@ class VirtualList {
     this._remeasure();
     const probeEl = this._makeRow(0);
     if (probeEl) {
-      probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden';
+      probeEl.style.cssText += ';position:absolute;top:0;left:0;right:0;visibility:hidden;height:auto';
       this._inner.appendChild(probeEl);
       void this._inner.offsetHeight;
-      const measured = probeEl.getBoundingClientRect().height, _pz = _probeZoom(probeEl);
+      const measured = _probeRowH(probeEl), _pz = 1;
       if (measured > 0) {
         this.ROW_H = measured / _pz;
         this._inner.style.height = (this.songs.length * this.ROW_H + this._extraBottom) + 'px';
