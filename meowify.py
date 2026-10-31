@@ -336,6 +336,7 @@ def db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.create_function('_canonical', 1, _canonical)
     conn.create_function('_ulower', 1, _ulower, deterministic=True)
@@ -1119,7 +1120,8 @@ def init_db():
                 WHERE at.song_id = songs.id AND at.track_num > 0
                 LIMIT 1
             )
-            WHERE track_num = 0 OR track_num IS NULL
+            WHERE (track_num = 0 OR track_num IS NULL)
+              AND EXISTS (SELECT 1 FROM album_tracks at2 WHERE at2.song_id = songs.id AND at2.track_num > 0)
         """)
 
 
@@ -1650,6 +1652,8 @@ def _dedupe_album_tracks(album_id=None):
             if album_id:
                 q += " AND album_id=?"
                 params = (album_id,)
+            # only groups that actually have dupes, not one query per distinct (album, track)
+            q += " GROUP BY album_id, track_num HAVING COUNT(*) > 1"
             groups = c.execute(q, params).fetchall()
             removed = 0
             for aid, tnum in groups:
@@ -1693,8 +1697,16 @@ def _relink_album_tracks(album_id=None):
             songs = c.execute("SELECT id, title, artist FROM songs WHERE source != 'downloading'").fetchall()
             for at_id, at_title, at_artist, at_aid in unlinked:
                 best_sid, best_score = None, 0.0
+                _at_l = (at_title or '').lower()
+                _la = len(_at_l)
                 for s_id, s_title, s_artist in songs:
-                    ts = _fuzzy((at_title or '').lower(), (s_title or '').lower())
+                    # SequenceMatcher.ratio() can never exceed 2*min(len)/(len_a+len_b), so skip the
+                    # expensive call when lengths cant reach 0.80. exact bound, cant miss a match
+                    _sl = (s_title or '').lower()
+                    _lb = len(_sl)
+                    if _la and _lb and (2 * min(_la, _lb) / (_la + _lb)) < 0.80:
+                        continue
+                    ts = _fuzzy(_at_l, _sl)
                     if ts < 0.80:
                         continue
                     if at_artist and s_artist:
@@ -4541,6 +4553,12 @@ def cleanup_orphans():
     except Exception as e:
         _log_cleanup.warning('cleanup err: %s', e)
     return stats
+def _cleanup_due(hours=12):
+    try:
+        return time.time() - float((ddir() / '.last_cleanup').read_text()) > hours * 3600
+    except Exception:
+        return True
+
 def _touch_cleanup():
     try: (ddir() / '.last_cleanup').write_text(str(time.time()))
     except Exception: pass
@@ -4667,9 +4685,13 @@ def cover(sid):
             # fallback: if sid looks like a song, try its album cover
             _alb = c.execute("SELECT a.cover_path FROM albums a JOIN songs s ON s.album_id=a.id WHERE s.id=?", (sid,)).fetchone()
             if _alb and _alb[0] and Path(_alb[0]).exists():
-                return send_file(_alb[0], mimetype='image/jpeg', conditional=True)
+                _cr = send_file(_alb[0], mimetype='image/jpeg', conditional=True)
+                _cr.headers['Cache-Control'] = 'private, max-age=600'
+                return _cr
             return '', 404
-    return send_file(row[0], mimetype='image/jpeg', conditional=True)
+    _cr = send_file(row[0], mimetype='image/jpeg', conditional=True)
+    _cr.headers['Cache-Control'] = 'private, max-age=600'
+    return _cr
 
 @app.route('/api/import-spotify-history', methods=['POST'])
 def api_import_spotify_history():
@@ -5326,7 +5348,9 @@ def api_lib():
         _active_song_ids = {d.get('song_id') for d in _dls.values()
                              if d.get('song_id') and d.get('status') not in ('done', 'error')}
     with db() as c:
-        rows = [dict(r) for r in c.execute("SELECT * FROM songs_display ORDER BY added_at DESC LIMIT 50000")]
+        # lyrics text isnt used from the list (loaded per song via /api/songs/<sid>/lyrics), dont ship it for every song
+        _cols = ', '.join(r[1] for r in c.execute("PRAGMA table_info(songs_display)").fetchall() if r[1] != 'lyrics')
+        rows = [dict(r) for r in c.execute(f"SELECT {_cols} FROM songs_display ORDER BY added_at DESC LIMIT 50000")]
     for r in rows:
         if r['id'] in _active_song_ids:
             r['dl_state'] = 'downloading'
@@ -33199,8 +33223,12 @@ def main():
     except Exception: pass
     def _run_cleanup():
         time.sleep(5)          # let flask finish starting first
-        # lightweight - runs every startup
+        # cheap - runs every startup
         _dedupe_album_tracks()
+        # everything below is heavy (o(n*m) fuzzy matching, file scans, o(n^2) dupe pass) and was running on
+        # every launch right as the ui loads. redo it every ~12h instead, the manual cleanup endpoint still does it all on demand
+        if not _cleanup_due():
+            return
         time.sleep(1)
         _relink_album_tracks()
         # heavy but throttled - sleeps 5ms every outer iteration so requests always get CPU
