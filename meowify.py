@@ -19482,6 +19482,7 @@ function _removeQueueMany(idxs) {
   for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
   // when the playing row is gone this is the first survivor after it (== queue.length if there is none)
   S.qi = S.qi - below;
+  if (S.nowPlayingOpen && !curRemoved) renderNowPlaying();
   if (S.queueOpen) {
     // destroy vlist before rebuild so it doesn't reference stale indices
     const _qInner = document.getElementById('queue-inner');
@@ -21452,6 +21453,13 @@ document.addEventListener('dragstart', e => {
 
 // call after S.queue got new songs at idx..idx+count-1
 function _queueAdded(idx, count) {
+  // next up card in now playing + gapless/crossfade preload must follow the queue change
+  if (S.nowPlayingOpen) { try { renderNowPlaying(); } catch (e) {} }
+  if (engine.ctx && engine.cur && idx <= S.qi + 1 && (!engine.nxt || engine.nxt.srcStartedAt > engine.ctx.currentTime)) {
+    clearTimeout(engine._pt); engine._pt = null;
+    engine._stopNxt();
+    engine._schedPreload(getNextId);
+  }
   if (!S.queueOpen) return;
   _qAddAnim = {idx, count};
   renderQueueSidebar();
@@ -30030,7 +30038,13 @@ async function loadData() {
     }
   }
   const oldCurId = S.cur?.id;
-  S.queue = S.queue.filter(s => validIds.has(s.id));
+  // remap to the fresh library objects so edits (title/artist/cover etc) reach queue, cur and next up
+  const _libById = new Map(S.library.map(s => [s.id, s]));
+  S.queue = S.queue.filter(s => validIds.has(s.id)).map(s => _libById.get(s.id));
+  if (S.cur && _libById.has(S.cur.id)) S.cur = _libById.get(S.cur.id);
+  if (S._continueFrom && _libById.has(S._continueFrom.startId)) S._continueFrom.start = _libById.get(S._continueFrom.startId);
+  if (S._chaosNext && _libById.has(S._chaosNext.id)) S._chaosNext = _libById.get(S._chaosNext.id);
+  if (Array.isArray(S._chaosHistory)) S._chaosHistory = S._chaosHistory.filter(s => _libById.has(s.id)).map(s => _libById.get(s.id));
   if (oldCurId) {
     const newQi = S.queue.findIndex(s => s.id === oldCurId);
     S.qi = newQi !== -1 ? newQi : Math.max(0, Math.min(S.qi, S.queue.length - 1));
@@ -30077,6 +30091,9 @@ async function loadData() {
   if (S.cur && validIds.has(S.cur.id)) {
     updatePlayerUI(S.cur);
     updateHighlights();
+    _qSig = null; // force the queue to rebuild from the fresh song objects
+    if (S.queueOpen) renderQueueSidebar();
+    if (S.nowPlayingOpen) renderNowPlaying();
   } else if (S.cur) {
     // the currently-playing song dropped out of the library (most likely a
     // peer deleted it via Dropbox sync) - stop playback now instead of
