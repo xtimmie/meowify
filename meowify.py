@@ -34171,7 +34171,7 @@ def _nm_u32():
         u.SetWindowPos.argtypes = [V, V, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
         u.GetWindowRect.argtypes = [V, ctypes.POINTER(w.RECT)]
         u.SetParent.argtypes = [V, V]; u.SetParent.restype = V
-        u.GetParent.argtypes = [V]; u.GetParent.restype = V
+        u.GetAncestor.argtypes = [V, ctypes.c_uint]; u.GetAncestor.restype = V
         u.GetWindowLongPtrW.argtypes = [V, ctypes.c_int]; u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
         u.SetWindowLongPtrW.argtypes = [V, ctypes.c_int, ctypes.c_ssize_t]; u.SetWindowLongPtrW.restype = ctypes.c_ssize_t
         u.SetWindowRgn.argtypes = [V, V, w.BOOL]
@@ -34287,7 +34287,7 @@ class _NmWidget:
     def _embed(self, tb):
         u = _nm_u32(); h = self.h
         u.SetParent(h, tb)
-        if u.GetParent(h) != tb:
+        if u.GetAncestor(h, 1) != tb:   # GA_PARENT, GetParent would hand back the owner for a popup window
             self.mode = 'overlay'
             _log_server.info('[native] widget: taskbar refused the embed, using the overlay fallback')
             return
@@ -34313,7 +34313,7 @@ class _NmWidget:
         if not u.IsWindow(h): return False
         tb = u.FindWindowW('Shell_TrayWnd', None)
         if not tb: return True   # explorer is restarting, try again next tick
-        if not self.mode or (self.mode == 'embed' and u.GetParent(h) != tb):
+        if not self.mode or (self.mode == 'embed' and u.GetAncestor(h, 1) != tb):
             self._embed(tb)
         rc = w.RECT(); u.GetWindowRect(tb, ctypes.byref(rc))
         tbw, tbh = rc.right - rc.left, rc.bottom - rc.top
