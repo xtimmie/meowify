@@ -16848,13 +16848,7 @@ class AudioEngine {
     await saveSetting(key, val); CFG[key] = val;
     let r = null;
     try: r = await api('POST', '/api/native/apply'); } catch (e) {}
-    if (r && r.installing) {
-      _showSyncToast('installing windows media packages...');
-      for (let i = 0; i < 200; i++) {
-        await new Promise(res => setTimeout(res, 3000));
-        try { const c = await (await fetch('/api/native/caps')).json(); if (!c.installing) { if (c.err) _showSyncToast(c.err); break; } } catch (e) {}
-      }
-    }
+    if (r && r.error) _showSyncToast(r.error);
     await window._nativeReload();
     renderSettings();
   };
@@ -16870,7 +16864,7 @@ class AudioEngine {
     const chip = (on, js, label) => `<button class="btn ${on ? 'btn-filled' : 'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="${js}">${label}</button>`;
     const list = (key) => Array.isArray(CFG[key]) ? CFG[key] : ['prev', 'play', 'next'];
     const btnChips = (key) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']].map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
-    const status = c.installing ? 'installing packages, this can take a minute...' : (c.err ? esc(c.err) : '');
+    const status = c.err ? esc(c.err) : '';
     return row('native media widget', 'windows media widget made by meowify itself, right name, cover and controls' + (status ? '<br>' + status : ''), sw('win_native_widget', !!CFG.win_native_widget))
       + row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls', sw('win_tray', !!CFG.win_tray))
       + row('tray media buttons', 'separate tray icons for the controls, drag them out of the tray overflow onto the taskbar', sw('win_tray_ctrl', !!CFG.win_tray_ctrl))
