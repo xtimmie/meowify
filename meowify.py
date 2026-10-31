@@ -16619,12 +16619,10 @@ class AudioEngine {
     try {
       navigator.mediaSession.setPositionState({
         duration: Math.max(0, dur || 0),
-        // 0 while paused - the OS extrapolates position forward over time
-        // using playbackRate between our updates, so a nonzero rate while
-        // paused makes the widget seekbar visibly drift/teleport forward
-        // even though nothing is playing. 1 while actually playing so the
-        // OS advances the bar smoothly between our (infrequent) updates.
-        playbackRate: engine.hasPaused ? 0 : 1,
+        // a rate of exactly 0 is invalid for setPositionState (the spec makes it throw, and the catch below
+        // swallowed it), so while paused the widget never received the new position. a tiny positive rate is
+        // accepted and means "not moving", the decoy element is really paused now so nothing drifts anyway
+        playbackRate: engine.hasPaused ? 0.000001 : 1,
         position: Math.max(0, Math.min(pos, dur || 0))
       });
     } catch(e) {}
@@ -17963,7 +17961,12 @@ function updateProg(t, d) {
   if (npCur) npCur.textContent = fmt(t);
   if (npDur) npDur.textContent = fmt(d);
   if (CFG.wavy_seekbar) {
-    // position handled by _wavyAnimTick
+    // while playing _wavyAnimTick paints it, but that loop is idle while paused, so a seek from the media widget,
+    // keyboard or android bridge (they all go through updateProg) has to repaint the wavy bars directly
+    if (!S.isPlaying) {
+      if (!isMobile()) updateWavySeek(pct / 100);
+      if (S.nowPlayingOpen) _updateMobNpWavy(pct / 100);
+    }
   } else {
     const ff = document.getElementById('mob-np-flat-fill');
     const ft = document.getElementById('mob-np-flat-thumb');
