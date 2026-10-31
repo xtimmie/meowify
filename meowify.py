@@ -16867,6 +16867,7 @@ class AudioEngine {
       + row('preview buttons shown', 'pick which controls show in the taskbar preview', btnChips('win_thumb_btns'));
   };
   setTimeout(_nativeInit, 3000);
+  setTimeout(() => { if (window._nativeReload) window._nativeReload(); }, 9000);   // re-read status after python built the tray
 
   function updatePositionState() {
     _nativePush();
@@ -33884,8 +33885,17 @@ class _NmTray:
         _NM_GEN[0] += 1
         ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
         self.icons[name] = ic
-        th = threading.Thread(target=ic.run, daemon=True)
+        th = threading.Thread(target=self._run, args=(ic, name), daemon=True)
         th.start(); self.threads.append(th)
+
+    def _run(self, ic, name):
+        try:
+            _log_server.info(f'[native] tray icon {name} starting')
+            ic.run()
+            _log_server.info(f'[native] tray icon {name} stopped')
+        except Exception as e:
+            _NM_ST['err'] = f'tray {name}: {e}'[:200]
+            _log_server.warning(f'[native] tray icon {name} crashed: {e}')
 
     def update(self, playing):
         ic = self.icons.get('play')
