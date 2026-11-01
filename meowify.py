@@ -7267,6 +7267,19 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
         _log_dbx.info(f'[dbx cleanup] removed {deleted} delivered files, freed {freed} bytes')
     return deleted, freed
 
+_dbx_synced = {'remote': None, 'stamp': None}
+
+def _dbx_db_stamp():
+    dp = str(db_path())
+    out = []
+    for p in (dp, dp + '-wal'):
+        try:
+            st = os.stat(p)
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
 def _dbx_log_timing(t0, marks):
     end = _time.time()
     phases = []
@@ -7308,6 +7321,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
     if dbx is None:
         return {'error': 'dropbox not connected'}
     results = {'pushed': [], 'pulled': [], 'errors': []}
+    _db_stamp_pre = _dbx_db_stamp()
     _device_register()
     device_id = _dbx_get_device_id()
     # idle detection state is captured BEFORE anything is read, so a change that lands
@@ -7351,7 +7365,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             remote_hash = _dbx_remote_hash(dbx, remote_db)
             _remote_db_hash_after_pull = remote_hash
             if remote_hash:
-                if _dbx_db_hash(local_db) != remote_hash:
+                if _dbx_db_hash(local_db) != remote_hash and remote_hash != _dbx_synced['remote']:
                     _status('merging remote library...')
                     tmp = Path(local_db).parent / 'library_remote.db'
                     if _dbx_pull_file(dbx, remote_db, tmp):
@@ -7363,6 +7377,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                             results['errors'].append('db merge failed or was skipped (low storage?) and nothing was changed; library upload skipped (see [dbx merge] in the log)')
                         else:
                             results['pulled'].append('library.db')
+                            _dbx_synced['remote'] = remote_hash
                         _remote_db_hash_after_pull = None  # merged locally, remote is now stale
         except Exception as e:
             results['errors'].append(f'db pull: {e}')
@@ -7395,7 +7410,8 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             # reuse hash from step 1 if available (saves one API round-trip)
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
                            else _dbx_remote_hash(dbx, remote_db)
-            if local_hash_now != known_remote and not _db_merge_failed:
+            _unchanged = bool(known_remote) and _dbx_synced['stamp'] is not None and _db_stamp_pre == _dbx_synced['stamp']
+            if local_hash_now != known_remote and not _db_merge_failed and not _unchanged:
                 # run lightweight integrity cleanup before upload so peers don't
                 # inherit duplicate album_tracks rows or stale pref_reset storms
                 try:
@@ -7406,6 +7422,11 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                 _status('uploading library...')
                 _dbx_upload(dbx, local_db, remote_db)
                 results['pushed'].append('library.db')
+                _dbx_synced['remote'] = _dbx_db_hash(local_db)
+            elif known_remote and not _db_merge_failed:
+                _dbx_synced['remote'] = known_remote
+            if not _db_merge_failed:
+                _dbx_synced['stamp'] = _dbx_db_stamp()
             with _cfg_lock:
                 CFG['dropbox_last_sync'] = int(_time.time())
                 save_cfg(CFG)
