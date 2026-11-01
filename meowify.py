@@ -16895,7 +16895,7 @@ class AudioEngine {
     const wgYesNo = (key) => `<div style="display:flex;gap:6px">${chip(!!CFG[key], `_nmSetting('${key}', true)`, 'on')}${chip(!CFG[key], `_nmSetting('${key}', false)`, 'off')}</div>`;
     const wgRows = mode !== 'widget' ? '' :
       row('widget items', 'tick what shows, up / down changes the order. title and artist always share one block, lyrics are their own block and can go anywhere, even before the cover', wgItems)
-      + row('widget background', 'auto follows the windows theme, accent uses your meowify color', wgOpt('win_wg_bg', 'auto', [['auto', 'auto'], ['dark', 'dark'], ['light', 'light'], ['accent', 'accent']]))
+      + row('widget background', 'auto follows the windows theme, accent uses your meowify color, transparent has no background at all so it blends into the taskbar', wgOpt('win_wg_bg', 'auto', [['auto', 'auto'], ['dark', 'dark'], ['light', 'light'], ['accent', 'accent'], ['none', 'transparent']]))
       + row('widget text size', 'shrinks on its own if the taskbar is too thin for it', wgOpt('win_wg_fs', 'm', [['s', 'small'], ['m', 'medium'], ['l', 'large']]))
       + row('widget cover shape', 'shape of the cover art', wgOpt('win_wg_shape', 'round', [['round', 'rounded'], ['circle', 'circle'], ['square', 'square']]))
       + row('lyrics color', 'theme uses your meowify color, text matches the title, custom picks any color', lcolCtl)
@@ -34396,6 +34396,760 @@ class _NmWidget:
         try:
             if self.win: self.win.destroy()
         except Exception: pass
+
+# ── native taskbar widget: a real win32 window drawn with PIL (per pixel alpha), no webview involved ──
+_WG_FB = ['msyh.ttc', 'malgun.ttf', 'YuGothR.ttc', 'seguisym.ttf']   # fallback fonts for cjk / symbols
+_WG_FONTS = {}
+_WG_HAS = {}
+_WG_PICK = {}
+_WG_TW = {}
+
+def _wg_fp(name):
+    return os.path.join(os.environ.get('WINDIR') or 'C:\\Windows', 'Fonts', name)
+
+def _wg_font(px, bold, idx=0):
+    key = (px, bold, idx)
+    if key in _WG_FONTS: return _WG_FONTS[key]
+    from PIL import ImageFont
+    f = None
+    names = (['segoeuib.ttf', 'arialbd.ttf'] if bold else ['segoeui.ttf', 'arial.ttf']) if idx == 0 else [_WG_FB[idx - 1]]
+    for n in names:
+        try:
+            f = ImageFont.truetype(_wg_fp(n), px)
+            break
+        except Exception:
+            f = None
+    if f is None and idx == 0:
+        try: f = ImageFont.load_default(px)
+        except Exception: f = ImageFont.load_default()
+    _WG_FONTS[key] = f
+    return f
+
+def _wg_has(f, ch):
+    if ch == ' ' or ord(ch) < 0x250: return True
+    k = (id(f), ch)
+    r = _WG_HAS.get(k)
+    if r is None:
+        try: r = (f.getlength(ch), f.getbbox(ch)) != (f.getlength('\uffff'), f.getbbox('\uffff'))
+        except Exception: r = True
+        _WG_HAS[k] = r
+    return r
+
+def _wg_pick(ch, px, bold):
+    k = (ch, px, bold)
+    f = _WG_PICK.get(k)
+    if f is None:
+        f = _wg_font(px, bold, 0)
+        if not _wg_has(f, ch):
+            for i in range(1, len(_WG_FB) + 1):
+                g = _wg_font(px, False, i)
+                if g is not None and _wg_has(g, ch):
+                    f = g
+                    break
+        _WG_PICK[k] = f
+    return f
+
+def _wg_runs(text, px, bold):
+    runs = []
+    for ch in text:
+        f = _wg_pick(ch, px, bold)
+        if runs and runs[-1][0] is f: runs[-1][1] += ch
+        else: runs.append([f, ch])
+    return runs
+
+def _wg_tw(text, px, bold=False):
+    if not text: return 0
+    k = (text, px, bold)
+    v = _WG_TW.get(k)
+    if v is None:
+        if len(_WG_TW) > 4000: _WG_TW.clear()
+        v = _WG_TW[k] = sum(f.getlength(r) for f, r in _wg_runs(text, px, bold))
+    return v
+
+def _wg_text(d, x, base, text, px, bold, fill):
+    for f, r in _wg_runs(text, px, bold):
+        d.text((x, base), r, font=f, fill=fill, anchor='ls')
+        x += f.getlength(r)
+
+def _wg_trim(text, maxw, px, bold=False):
+    if maxw <= 0 or not text: return ''
+    if _wg_tw(text, px, bold) <= maxw: return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _wg_tw(text[:mid].rstrip() + '\u2026', px, bold) <= maxw: lo = mid
+        else: hi = mid - 1
+    if lo: return text[:lo].rstrip() + '\u2026'
+    return '\u2026' if _wg_tw('\u2026', px, bold) <= maxw else ''
+
+def _wg_wrap(text, maxw, px, n=2):
+    """greedy word wrap to at most n lines, the last line gets an ellipsis when there is more"""
+    if maxw <= 0 or not text: return []
+    lines, cur = [], ''
+    for wd in text.split(' '):
+        trial = (cur + ' ' + wd) if cur else wd
+        if _wg_tw(trial, px) <= maxw:
+            cur = trial
+            continue
+        if cur:
+            lines.append(cur)
+            cur = ''
+        while _wg_tw(wd, px) > maxw and len(wd) > 1:   # one word wider than the block (cjk has no spaces), split by chars
+            lo, hi = 1, len(wd)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if _wg_tw(wd[:mid], px) <= maxw: lo = mid
+                else: hi = mid - 1
+            lines.append(wd[:lo])
+            wd = wd[lo:]
+        cur = wd
+    if cur: lines.append(cur)
+    if len(lines) > n:
+        lines = lines[:n - 1] + [_wg_trim(' '.join(lines[n - 1:]), maxw, px)]
+    return lines
+
+def _wg_parse_lrc(text):
+    """same parsing as the player: plain lrc, and word by word files grouped into lines"""
+    import re
+    if not text: return []
+    raw = []
+    for line in text.split('\n'):
+        m = re.match(r'^\[(\d+):(\d+(?:\.\d+)?)\](.*)', line)
+        if m:
+            s = m.group(3).strip()
+            if s: raw.append((int(m.group(1)) * 60 + float(m.group(2)), s))
+    if not raw: return []
+    raw.sort(key=lambda r: r[0])
+    single = sum(1 for r in raw if not re.search(r'\s', r[1]))
+    if single / len(raw) <= 0.6: return raw
+    gaps = [raw[i][0] - raw[i - 1][0] for i in range(1, len(raw))]
+    srt = sorted(gaps)
+    med = srt[len(srt) // 2] if srt else 0.5
+    brk, cap_brk = max(med * 3.0, 0.6), max(med * 1.5, 0.3)
+    lines, cur = [], [raw[0]]
+    for i in range(1, len(raw)):
+        th = cap_brk if re.match(r'^[A-Z]', raw[i][1]) else brk
+        if gaps[i - 1] >= th:
+            lines.append(cur)
+            cur = [raw[i]]
+        else:
+            cur.append(raw[i])
+    if cur: lines.append(cur)
+    return [(ln[0][0], ' '.join(x[1] for x in ln)) for ln in lines]
+
+def _wg_hsl(h, s, l):
+    import colorsys
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360.0, l / 100.0, max(0, min(100, s)) / 100.0)
+    return (int(r * 255), int(g * 255), int(b * 255), 255)
+
+def _wg_colors(c, sys_light):
+    """bg, text, muted text, accent, lyrics color"""
+    mode, hue, sat = c['bg'], c['hue'], c['sat']
+    light = mode == 'light' or (mode in ('auto', 'none') and sys_light)
+    if mode == 'accent':
+        bg, fg, mut, acc = _wg_hsl(hue, min(sat, 60), 22), (255, 255, 255, 255), (255, 255, 255, 179), _wg_hsl(hue, sat, 78)
+    elif light:
+        bg, fg, mut, acc = (243, 243, 243, 255), (27, 27, 27, 255), (0, 0, 0, 153), _wg_hsl(hue, sat, 30)
+    else:
+        bg, fg, mut, acc = (32, 32, 32, 255), (255, 255, 255, 255), (255, 255, 255, 166), _wg_hsl(hue, sat, 72)
+    if mode == 'none': bg = (bg[0], bg[1], bg[2], 1)   # alpha 1 so the window still catches clicks
+    lc = fg if c['lmode'] == 'text' else acc
+    if c['lmode'] == 'custom' and c['lcol']:
+        v = c['lcol']
+        lc = (int(v[1:3], 16), int(v[3:5], 16), int(v[5:7], 16), 255)
+    return bg, fg, mut, acc, lc
+
+def _wg_blocks(items):
+    out = []
+    for k in items:
+        b = 'text' if k in ('title', 'artist') else k
+        if b not in out: out.append(b)
+    return out
+
+def _wg_m(sp):
+    sc, H = sp['sc'], sp['H']
+    base = {'s': 11, 'm': 12.5, 'l': 14}.get(sp['fs'], 12.5) * sc
+    return {'pad': int(8 * sc), 'gap': int(8 * sc), 'cs': max(8, H - int(8 * sc)), 'bs': int(30 * sc),
+            'fs': max(6, int(round(min(base, (H - 8 * sc) / 1.25)))),
+            'lfs': max(6, int(round(min(base, (H - 6 * sc) / 2 / 1.2)))),
+            'lfix': int(220 * sc), 'sep': int(19 * sc), 'lmin': int(120 * sc)}
+
+def _wg_text_nat(sp, m):
+    showt = 'title' in sp['items']
+    showa = 'artist' in sp['items'] and bool(sp['artist'])
+    t = _wg_tw(sp['title'], m['fs'], True) if showt else 0
+    a = _wg_tw(sp['artist'], m['fs']) if showa else 0
+    return int(t + a + (m['sep'] if (showt and showa) else 0)) + 2
+
+def _wg_natural(sp):
+    """width the widget wants for its content (auto width)"""
+    m = _wg_m(sp)
+    blocks = _wg_blocks(sp['items'])
+    w = 2 * m['pad'] + m['gap'] * max(0, len(blocks) - 1)
+    for b in blocks:
+        if b == 'cover': w += m['cs']
+        elif b == 'controls': w += 3 * m['bs']
+        elif b == 'text': w += _wg_text_nat(sp, m)
+        elif b == 'lyrics': w += max(m['lmin'], int(_wg_tw(sp['lyric'], m['lfs'])) + 2) if sp['autolyr'] else m['lfix']
+    return w
+
+def _wg_layout(sp, W):
+    m = _wg_m(sp)
+    blocks = _wg_blocks(sp['items'])
+    fixed = (m['cs'] if 'cover' in blocks else 0) + (3 * m['bs'] if 'controls' in blocks else 0)
+    R = max(0, W - 2 * m['pad'] - m['gap'] * max(0, len(blocks) - 1) - fixed)
+    has_t, has_l = 'text' in blocks, 'lyrics' in blocks
+    if has_t and has_l:
+        if sp['auto'] and not sp['autolyr']:
+            lw = min(m['lfix'], int(R * 0.7)); tw_ = R - lw
+        else:
+            tw_ = max(int(40 * sp['sc']), min(_wg_text_nat(sp, m), R - int(R * 0.35))); lw = R - tw_
+    elif has_t: tw_, lw = R, 0
+    elif has_l: tw_, lw = 0, R
+    else: tw_, lw = 0, 0
+    pos, x = [], m['pad']
+    for b in blocks:
+        wd = {'cover': m['cs'], 'controls': 3 * m['bs'], 'text': tw_, 'lyrics': lw}[b]
+        pos.append((b, x, wd))
+        x += wd + m['gap']
+    return m, pos
+
+def _wg_icon(sd, kind, cx, cy, isz, fill, S):
+    u = isz * S / 24.0
+    ox, oy = cx * S - 12 * u, cy * S - 12 * u
+    def P(*pts): return [(ox + x * u, oy + y * u) for x, y in pts]
+    def R(x0, y0, x1, y1): sd.rectangle([ox + x0 * u, oy + y0 * u, ox + x1 * u, oy + y1 * u], fill=fill)
+    if kind == 'play': sd.polygon(P((8, 5), (8, 19), (19, 12)), fill=fill)
+    elif kind == 'pause': R(6, 5, 10, 19); R(14, 5, 18, 19)
+    elif kind == 'prev': R(6, 6, 8, 18); sd.polygon(P((9.5, 12), (18, 18), (18, 6)), fill=fill)
+    else: R(16, 6, 18, 18); sd.polygon(P((6, 18), (14.5, 12), (6, 6)), fill=fill)
+
+def _wg_render(sp, W, hover, press):
+    """draws the whole widget, returns (RGBA image, button rects [(x0, y0, x1, y1, cmd)])"""
+    from PIL import Image, ImageDraw, ImageChops
+    H, sc = sp['H'], sp['sc']
+    m, pos = _wg_layout(sp, W)
+    bg, fg, mut, acc, lc = sp['colors']
+    img = Image.new('RGBA', (W, H), bg)
+    S = 4
+    if sp['radius'] > 0:
+        mk = Image.new('L', (W * S, H * S), 0)
+        ImageDraw.Draw(mk).rounded_rectangle([0, 0, W * S - 1, H * S - 1], radius=sp['radius'] * S, fill=255)
+        img.putalpha(ImageChops.multiply(img.getchannel('A'), mk.resize((W, H), Image.LANCZOS)))
+    sh = Image.new('RGBA', (W * S, H * S), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sh)
+    btns, texts, dots, cover_at = [], [], [], None
+    for b, x, wd in pos:
+        if b == 'cover':
+            cover_at = (x, (H - m['cs']) // 2)
+        elif b == 'controls':
+            bs = m['bs']
+            y0 = (H - bs) // 2
+            for i, (kind, cmd) in enumerate((('prev', 'prev'), ('pause' if sp['playing'] else 'play', 'toggle'), ('next', 'next'))):
+                x0 = x + i * bs
+                btns.append((x0, y0, x0 + bs, y0 + bs, cmd))
+                idx = len(btns) - 1
+                if idx == hover:
+                    sd.ellipse([x0 * S, y0 * S, (x0 + bs) * S - 1, (y0 + bs) * S - 1], fill=(128, 128, 128, 102 if press == idx else 71))
+                _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, fg, S)
+        elif b == 'text' and wd > 0:
+            px = m['fs']
+            a, dsc = _wg_font(px, True, 0).getmetrics()
+            base = int((H - (a + dsc)) / 2 + a)
+            showt = 'title' in sp['items']
+            showa = 'artist' in sp['items'] and bool(sp['artist'])
+            if showt and showa:
+                tt = _wg_trim(sp['title'], wd, px, True)
+                texts.append((x, base, tt, px, True, fg))
+                if tt == sp['title']:
+                    x1 = x + _wg_tw(tt, px, True)
+                    rem = wd - (x1 - x) - m['sep']
+                    if rem >= 24 * sc:
+                        r = max(1.5, 1.5 * sc)
+                        dots.append((x1 + int(8 * sc) + r, H / 2.0, r))
+                        texts.append((x1 + m['sep'], base, _wg_trim(sp['artist'], rem, px), px, False, mut))
+            elif showt: texts.append((x, base, _wg_trim(sp['title'], wd, px, True), px, True, fg))
+            elif showa: texts.append((x, base, _wg_trim(sp['artist'], wd, px), px, False, mut))
+        elif b == 'lyrics' and wd > 0 and sp['lyric']:
+            px = m['lfs']
+            a, dsc = _wg_font(px, False, 0).getmetrics()
+            pitch = max(a + dsc, int(px * 1.2))
+            lines = _wg_wrap(sp['lyric'], wd, px, 2)
+            top = (H - pitch * len(lines)) / 2.0
+            for i, ln in enumerate(lines):
+                texts.append((x, int(top + i * pitch + (pitch - (a + dsc)) / 2.0 + a), ln, px, False, lc))
+    for cx, cy, r in dots:
+        sd.ellipse([(cx - r) * S, (cy - r) * S, (cx + r) * S, (cy + r) * S], fill=mut)
+    cv_mask = None
+    if cover_at:
+        cs = m['cs']
+        cm = Image.new('L', (cs * S, cs * S), 0)
+        cd = ImageDraw.Draw(cm)
+        if sp['shape'] == 'circle': cd.ellipse([0, 0, cs * S - 1, cs * S - 1], fill=255)
+        elif sp['shape'] == 'square': cd.rectangle([0, 0, cs * S - 1, cs * S - 1], fill=255)
+        else: cd.rounded_rectangle([0, 0, cs * S - 1, cs * S - 1], radius=int(6 * sc * S), fill=255)
+        cv_mask = cm.resize((cs, cs), Image.LANCZOS)
+    sh = sh.resize((W, H), Image.LANCZOS)
+    img = Image.alpha_composite(img, sh)
+    if cover_at:
+        cs = m['cs']
+        if sp['cover'] is not None:
+            c = sp['cover']
+            side = min(c.size)
+            c = c.crop(((c.width - side) // 2, (c.height - side) // 2, (c.width + side) // 2, (c.height + side) // 2)).resize((cs, cs), Image.LANCZOS)
+            img.paste(c.convert('RGBA'), cover_at, cv_mask)
+        else:
+            ph = Image.new('RGBA', (cs, cs), (128, 128, 128, 64))
+            img.paste(ph, cover_at, cv_mask)
+    d = ImageDraw.Draw(img, 'RGBA')
+    for x, base, t, px, bold, col in texts:
+        _wg_text(d, x, base, t, px, bold, col)
+    return img, btns
+
+def _wg_bgra(img):
+    """premultiplied BGRA bytes for UpdateLayeredWindow"""
+    from PIL import Image, ImageChops
+    r, g, b, a = img.split()
+    return Image.merge('RGBA', (ImageChops.multiply(r, a), ImageChops.multiply(g, a), ImageChops.multiply(b, a), a)).tobytes('raw', 'BGRA')
+
+_WG_API = [None]
+
+def _wg_api():
+    """user32 / gdi32 with 64 bit safe signatures, kept apart from the shared handles other code has changed"""
+    if _WG_API[0] is None:
+        import ctypes
+        from ctypes import wintypes as w
+        V = ctypes.c_void_p
+        u = ctypes.WinDLL('user32', use_last_error=True)
+        g = ctypes.WinDLL('gdi32', use_last_error=True)
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, V, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
+        class WNDCLASSW(ctypes.Structure):
+            _fields_ = [('style', ctypes.c_uint), ('lpfnWndProc', WNDPROC), ('cbClsExtra', ctypes.c_int), ('cbWndExtra', ctypes.c_int),
+                        ('hInstance', V), ('hIcon', V), ('hCursor', V), ('hbrBackground', V),
+                        ('lpszMenuName', w.LPCWSTR), ('lpszClassName', w.LPCWSTR)]
+        class BLEND(ctypes.Structure):
+            _fields_ = [('BlendOp', ctypes.c_ubyte), ('BlendFlags', ctypes.c_ubyte), ('SourceConstantAlpha', ctypes.c_ubyte), ('AlphaFormat', ctypes.c_ubyte)]
+        class BIH(ctypes.Structure):
+            _fields_ = [('biSize', w.DWORD), ('biWidth', ctypes.c_long), ('biHeight', ctypes.c_long), ('biPlanes', w.WORD),
+                        ('biBitCount', w.WORD), ('biCompression', w.DWORD), ('biSizeImage', w.DWORD), ('biXPelsPerMeter', ctypes.c_long),
+                        ('biYPelsPerMeter', ctypes.c_long), ('biClrUsed', w.DWORD), ('biClrImportant', w.DWORD)]
+        class TME(ctypes.Structure):
+            _fields_ = [('cbSize', w.DWORD), ('dwFlags', w.DWORD), ('hwndTrack', V), ('dwHoverTime', w.DWORD)]
+        class MSG(ctypes.Structure):
+            _fields_ = [('hwnd', V), ('message', ctypes.c_uint), ('wParam', ctypes.c_size_t), ('lParam', ctypes.c_ssize_t), ('time', w.DWORD), ('pt', w.POINT)]
+        u.DefWindowProcW.argtypes = [V, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]; u.DefWindowProcW.restype = ctypes.c_ssize_t
+        u.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]; u.RegisterClassW.restype = w.ATOM
+        u.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, V, V, V, V]
+        u.CreateWindowExW.restype = V
+        u.DestroyWindow.argtypes = [V]
+        u.PeekMessageW.argtypes = [ctypes.POINTER(MSG), V, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
+        u.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
+        u.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]; u.DispatchMessageW.restype = ctypes.c_ssize_t
+        u.UpdateLayeredWindow.argtypes = [V, V, ctypes.POINTER(w.POINT), ctypes.POINTER(w.SIZE), V, ctypes.POINTER(w.POINT), w.DWORD, ctypes.POINTER(BLEND), w.DWORD]
+        u.GetDC.argtypes = [V]; u.GetDC.restype = V
+        u.ReleaseDC.argtypes = [V, V]
+        u.TrackMouseEvent.argtypes = [ctypes.POINTER(TME)]
+        u.SetCursor.argtypes = [V]
+        u.SetCapture.argtypes = [V]; u.SetCapture.restype = V
+        u.ReleaseCapture.argtypes = []
+        u.LoadCursorW.argtypes = [V, V]; u.LoadCursorW.restype = V
+        u.WindowFromPoint.argtypes = [w.POINT]; u.WindowFromPoint.restype = V
+        u.GetClassNameW.argtypes = [V, w.LPWSTR, ctypes.c_int]
+        g.CreateCompatibleDC.argtypes = [V]; g.CreateCompatibleDC.restype = V
+        g.CreateDIBSection.argtypes = [V, ctypes.POINTER(BIH), ctypes.c_uint, ctypes.POINTER(V), V, w.DWORD]; g.CreateDIBSection.restype = V
+        g.SelectObject.argtypes = [V, V]; g.SelectObject.restype = V
+        g.DeleteObject.argtypes = [V]
+        g.DeleteDC.argtypes = [V]
+        k.GetModuleHandleW.argtypes = [w.LPCWSTR]; k.GetModuleHandleW.restype = V
+        _WG_API[0] = dict(u=u, g=g, k=k, w=w, WNDPROC=WNDPROC, WNDCLASSW=WNDCLASSW, BLEND=BLEND, BIH=BIH, TME=TME, MSG=MSG)
+    return _WG_API[0]
+
+class _NmWidget:
+    """native media widget in the taskbar, just left of the tray icons. a real win32 window (layered, per pixel alpha) that
+    python draws with PIL, so no webview is involved. the taskbar is found the same way on win 10 and 11 (Shell_TrayWnd +
+    TrayNotifyWnd), win 11 gets rounded corners. it is parented into the taskbar, or floats on top of it in overlay mode"""
+    TITLE = 'meowify widget'
+
+    def __init__(self):
+        self.h = 0; self.run = True; self.paused = False; self.fell = False
+        self.mode = ''; self.last = None; self.sc = 1.0
+        self.win11 = False
+        try: self.win11 = sys.getwindowsversion().build >= 22000
+        except Exception: pass
+        self.hover = -1; self.press = -1; self.tracking = False; self.btn = []
+        self.opt = None; self.cb = None
+        self.sig = None; self.sp = None; self.nat = 0; self.W = 0; self.H = 0
+        self.tbi = None; self.dirty = True; self.shown = False; self.diag = None
+        self.cover = None; self.cover_for = None; self.cover_busy = None
+        self.lrc = []; self.lrc_for = None; self.lrc_busy = None
+        self.light = (0.0, False)
+        self.nx_geo = 0.0; self.nx_raise = 0.0; self.nx_diag = 0.0; self.err_t = 0.0
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def stop(self):
+        self.run = False
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.last = None; self.paused = False
+
+    def _fail(self, msg):
+        _NM_ST['err'] = msg[:200]; _log_server.warning(f'[native] {msg}')
+
+    # ── window ──
+    def _create(self):
+        import ctypes
+        a = _wg_api(); u = a['u']
+        _NM_GEN[0] += 1
+        name = f'meowify_widget_{_NM_GEN[0]}'
+        wc = a['WNDCLASSW']()
+        self.cb = a['WNDPROC'](self._wndproc)
+        wc.lpfnWndProc = self.cb
+        wc.hInstance = a['k'].GetModuleHandleW(None)
+        wc.hCursor = u.LoadCursorW(None, 32512)   # IDC_ARROW
+        wc.lpszClassName = name
+        if not u.RegisterClassW(ctypes.byref(wc)):
+            raise RuntimeError(f'RegisterClassW failed ({ctypes.get_last_error()})')
+        # layered + tool window (no taskbar button) + no activate (clicks never steal focus), starts hidden as a popup
+        h = u.CreateWindowExW(0x00080000 | 0x00000080 | 0x08000000, name, self.TITLE, 0x80000000, 0, 0, 1, 1, None, None, wc.hInstance, None)
+        if not h: raise RuntimeError(f'CreateWindowExW failed ({ctypes.get_last_error()})')
+        self.h = h
+        _log_server.info('[native] widget window created (native)')
+
+    def _wndproc(self, h, msg, wp, lp):
+        try:
+            if msg == 0x0021: return 3   # WM_MOUSEACTIVATE -> MA_NOACTIVATE
+            if msg == 0x0014: return 1   # WM_ERASEBKGND
+            if msg == 0x0200: self._on_move(lp); return 0
+            if msg == 0x02A3: self.tracking = False; self.hover = -1; self.dirty = True; return 0   # WM_MOUSELEAVE
+            if msg == 0x0201: self._on_down(lp); return 0
+            if msg == 0x0202: self._on_up(lp); return 0
+            if msg == 0x0020 and self.hover >= 0:   # WM_SETCURSOR, hand over the buttons
+                a = _wg_api()
+                a['u'].SetCursor(a['u'].LoadCursorW(None, 32649))
+                return 1
+        except Exception as e:
+            _log_server.warning(f'[native] widget input failed: {e}')
+        return _wg_api()['u'].DefWindowProcW(h, msg, wp, lp)
+
+    @staticmethod
+    def _xy(lp):
+        import ctypes
+        return ctypes.c_short(lp & 0xFFFF).value, ctypes.c_short((lp >> 16) & 0xFFFF).value
+
+    def _hit(self, x, y):
+        for i, b in enumerate(self.btn):
+            if b[0] <= x < b[2] and b[1] <= y < b[3]: return i
+        return -1
+
+    def _on_move(self, lp):
+        import ctypes
+        a = _wg_api()
+        if not self.tracking:
+            t = a['TME'](ctypes.sizeof(a['TME']), 2, self.h, 0)   # TME_LEAVE
+            a['u'].TrackMouseEvent(ctypes.byref(t))
+            self.tracking = True
+        i = self._hit(*self._xy(lp))
+        if i != self.hover:
+            self.hover = i; self.dirty = True
+
+    def _on_down(self, lp):
+        i = self._hit(*self._xy(lp))
+        self.press = i if i >= 0 else -2
+        _wg_api()['u'].SetCapture(self.h)
+        self.dirty = True
+
+    def _on_up(self, lp):
+        _wg_api()['u'].ReleaseCapture()
+        x, y = self._xy(lp)
+        i = self._hit(x, y); p = self.press
+        self.press = -1; self.dirty = True
+        if p >= 0 and i == p:
+            cmd = self.btn[p][4]
+            _log_server.info(f'[native] widget click {cmd}')
+            if cmd == 'toggle':
+                playing = bool(_NM.get('playing'))
+                self.opt = (not playing, time.time() + 1.2)   # flip the icon right away, the page confirms a moment later
+            _nm_cmd(cmd)
+        elif p == -2 and i < 0 and 0 <= x < self.W and 0 <= y < self.H:
+            threading.Thread(target=_nm_raise_window, daemon=True).start()
+
+    # ── data ──
+    def _cfg(self):
+        items = CFG.get('win_wg_items')
+        if not isinstance(items, list): items = ['cover', 'title', 'artist', 'controls']
+        seen = []
+        for i in items:
+            if i in ('cover', 'title', 'artist', 'lyrics', 'controls') and i not in seen: seen.append(i)
+        lc = str(CFG.get('win_wg_lcol') or '')
+        if not (len(lc) == 7 and lc[0] == '#' and all(ch in '0123456789abcdefABCDEF' for ch in lc[1:])): lc = ''
+        def f(k, d):
+            try: return float(CFG.get(k, d))
+            except Exception: return d
+        return {'items': tuple(seen), 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
+                'shape': CFG.get('win_wg_shape') or 'round', 'lmode': CFG.get('win_wg_lmode') or 'theme', 'lcol': lc,
+                'auto': bool(CFG.get('win_wg_auto')), 'autolyr': bool(CFG.get('win_wg_autolyr')),
+                'hue': f('theme_hue', 145), 'sat': f('theme_sat', 50), 'place': CFG.get('win_wg_place') or 'embed'}
+
+    def _state(self):
+        n = _NM
+        sid = n.get('id')
+        playing = bool(n.get('playing'))
+        if self.opt and time.time() < self.opt[1]: playing = self.opt[0]
+        dur = float(n.get('dur') or 0)
+        pos = float(n.get('pos') or 0)
+        if n.get('playing') and n.get('at'): pos += max(0.0, time.time() - n['at'])
+        if dur: pos = min(pos, dur)
+        return {'id': sid, 'title': (n.get('title') or 'untitled') if sid else 'nothing playing', 'artist': n.get('artist') or '',
+                'playing': playing, 'pos': pos, 'dur': dur}
+
+    def _sys_light(self, now):
+        if now - self.light[0] > 3:
+            try: self.light = (now, bool(_nm_theme_light()))
+            except Exception: self.light = (now, False)
+        return self.light[1]
+
+    def _lyric(self, st, cfg):
+        if 'lyrics' not in cfg['items'] or not st['id']: return ''
+        if self.lrc_for != st['id']:
+            if self.lrc_busy != st['id']:
+                self.lrc_busy = st['id']
+                threading.Thread(target=self._load_lrc, args=(st['id'], st['dur']), daemon=True).start()
+            return ''
+        p = st['pos'] + 0.15
+        cur = ''
+        for t, s in self.lrc:
+            if t <= p: cur = s
+            else: break
+        return cur
+
+    def _load_lrc(self, sid, dur):
+        data = None
+        for _ in range(3):
+            try:
+                with app.test_request_context():
+                    r = api_get_lyrics(sid)
+                    if isinstance(r, tuple): r = r[0]
+                    data = r.get_json()
+                break
+            except Exception as e:
+                _log_server.info(f'[native] widget lyrics fetch failed: {e}')
+                time.sleep(3)
+        lines = []
+        try:
+            if data and data.get('lrc'):
+                src = data.get('source_duration') or 0
+                if not (dur > 0 and src > 0 and abs(dur - src) > 5): lines = _wg_parse_lrc(data['lrc'])
+        except Exception: pass
+        if self.lrc_busy == sid:
+            self.lrc = lines; self.lrc_for = sid
+
+    def _load_cover(self, sid):
+        img = None
+        try:
+            from PIL import Image
+            p = None
+            with db() as c:
+                row = c.execute("SELECT cover_path FROM songs WHERE id=?", (sid,)).fetchone()
+                if not row or not row[0]:
+                    row = c.execute("SELECT cover_path FROM albums WHERE id=?", (sid,)).fetchone()
+                if row and row[0] and Path(row[0]).exists(): p = row[0]
+                if not p:
+                    alb = c.execute("SELECT a.cover_path FROM albums a JOIN songs s ON s.album_id=a.id WHERE s.id=?", (sid,)).fetchone()
+                    if alb and alb[0] and Path(alb[0]).exists(): p = alb[0]
+            if p:
+                im = Image.open(p); im.load()
+                img = im.convert('RGB'); img.thumbnail((256, 256))
+        except Exception as e:
+            _log_server.info(f'[native] widget cover failed: {e}')
+        if self.cover_busy == sid:
+            self.cover = img; self.cover_for = sid; self.dirty = True
+
+    # ── taskbar placement ──
+    def _embed(self, tb):
+        u = _nm_u32(); h = self.h
+        u.SetParent(h, tb)
+        if u.GetAncestor(h, 1) != tb:   # GA_PARENT, GetParent would hand back the owner for a popup window
+            self.mode = 'overlay'; self.fell = True
+            _log_server.info('[native] widget: taskbar refused the embed, using the overlay fallback')
+            return
+        st = u.GetWindowLongPtrW(h, -16) & 0xFFFFFFFF
+        st &= ~(0x80000000 | 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000)
+        st |= 0x40000000 | 0x10000000   # WS_CHILD | WS_VISIBLE
+        u.SetWindowLongPtrW(h, -16, st)
+        self.mode = 'embed'; self.last = None
+
+    def _unembed(self):
+        u = _nm_u32(); h = self.h
+        u.SetParent(h, None)
+        st = u.GetWindowLongPtrW(h, -16) & 0xFFFFFFFF
+        u.SetWindowLongPtrW(h, -16, (st & ~0x40000000) | 0x80000000 | 0x10000000)
+        self.mode = ''; self.last = None
+
+    def _taskbar(self, cfg):
+        """finds the taskbar + tray area, (re)embeds when needed, stores what the placement needs"""
+        import ctypes
+        from ctypes import wintypes as w
+        u = _nm_u32(); h = self.h
+        tb = u.FindWindowW('Shell_TrayWnd', None)
+        if not tb:
+            self.tbi = None   # explorer is restarting
+            return
+        want = 'overlay' if cfg['place'] == 'overlay' else 'embed'
+        if self.mode == 'embed' and (want == 'overlay' or u.GetAncestor(h, 1) != tb): self._unembed()
+        if self.mode == 'overlay' and want == 'embed' and not self.fell: self.mode = ''
+        if not self.mode:
+            if want == 'embed': self._embed(tb)
+            else: self.mode = 'overlay'; self.last = None
+        rc = w.RECT(); u.GetWindowRect(tb, ctypes.byref(rc))
+        tbw, tbh = rc.right - rc.left, rc.bottom - rc.top
+        if tbh > tbw:
+            self._fail('taskbar widget needs the taskbar at the bottom or top of the screen')
+            self.tbi = None
+            return
+        try: self.sc = (u.GetDpiForWindow(tb) or 96) / 96.0
+        except Exception: pass
+        nrc = None
+        tn = u.FindWindowExW(tb, None, 'TrayNotifyWnd', None)
+        if tn:
+            r2 = w.RECT()
+            if u.GetWindowRect(tn, ctypes.byref(r2)) and (r2.right - r2.left) > 30 * self.sc: nrc = r2
+        right = nrc.left if nrc else rc.right - int(220 * self.sc)
+        self.tbi = (rc.left, rc.top, tbh, right)
+
+    def _place(self, x, y, W, H, rl, rt):
+        u = _nm_u32()
+        first = self.last is None
+        flags = 0x0010 | 0x0040 | (0x0020 if first else 0)   # NOACTIVATE | SHOWWINDOW | FRAMECHANGED on the first placement
+        if self.mode == 'embed': u.SetWindowPos(self.h, 0, x - rl, y - rt, W, H, flags)   # HWND_TOP, client coords of the taskbar
+        else: u.SetWindowPos(self.h, -1, x, y, W, H, flags)   # HWND_TOPMOST, screen coords
+        self.last = (x, y, W, H, rl, rt)
+        self.W, self.H = W, H
+        self.dirty = True
+
+    def _present(self, img):
+        import ctypes
+        a = _wg_api(); u, g, w = a['u'], a['g'], a['w']
+        W, H = img.size
+        data = _wg_bgra(img)
+        sdc = u.GetDC(None)
+        mem = hbm = old = None
+        try:
+            mem = g.CreateCompatibleDC(sdc)
+            bmi = a['BIH']()
+            bmi.biSize = ctypes.sizeof(a['BIH']); bmi.biWidth = W; bmi.biHeight = -H; bmi.biPlanes = 1; bmi.biBitCount = 32; bmi.biCompression = 0
+            bits = ctypes.c_void_p()
+            hbm = g.CreateDIBSection(sdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+            if not hbm or not bits.value: raise RuntimeError('CreateDIBSection failed')
+            ctypes.memmove(bits.value, data, len(data))
+            old = g.SelectObject(mem, hbm)
+            size = w.SIZE(W, H); src = w.POINT(0, 0)
+            bl = a['BLEND'](0, 0, 255, 1)   # AC_SRC_OVER, per pixel alpha
+            if not u.UpdateLayeredWindow(self.h, sdc, None, ctypes.byref(size), mem, ctypes.byref(src), 0, ctypes.byref(bl), 2):
+                raise RuntimeError(f'UpdateLayeredWindow failed ({ctypes.get_last_error()})')
+        finally:
+            if mem and old: g.SelectObject(mem, old)
+            if hbm: g.DeleteObject(hbm)
+            if mem: g.DeleteDC(mem)
+            u.ReleaseDC(None, sdc)
+
+    def _log_hit(self, x, y, W, H):
+        """logs which window owns the middle of the widget, if its not ours something in the taskbar is eating the clicks"""
+        import ctypes
+        a = _wg_api(); u, w = a['u'], a['w']
+        hw = u.WindowFromPoint(w.POINT(x + W // 2, y + H // 2))
+        if not hw: r = 'nothing'
+        elif hw == self.h: r = 'ours'
+        else:
+            buf = ctypes.create_unicode_buffer(128)
+            u.GetClassNameW(hw, buf, 128)
+            r = 'taken by ' + buf.value
+        if r != self.diag:
+            self.diag = r
+            _log_server.info(f'[native] widget hit test ({self.mode}): {r}')
+
+    # ── main loop, runs on the window's own thread ──
+    def _step(self, now):
+        u = _nm_u32(); h = self.h
+        if self.paused:
+            if self.shown:
+                u.ShowWindow(h, 0); self.shown = False; self.last = None
+            return
+        cfg = self._cfg()
+        if now >= self.nx_geo:
+            self.nx_geo = now + 0.4
+            self._taskbar(cfg)
+        if not self.tbi: return
+        rl, rt, tbh, right = self.tbi
+        sc = self.sc
+        pad = max(2, int(4 * sc))
+        H = max(16, tbh - 2 * pad)
+        st = self._state()
+        lyr = self._lyric(st, cfg)
+        if 'cover' in cfg['items'] and st['id'] and self.cover_for != st['id'] and self.cover_busy != st['id']:
+            self.cover_busy = st['id']
+            threading.Thread(target=self._load_cover, args=(st['id'],), daemon=True).start()
+        cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
+        light = self._sys_light(now)
+        sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, cfg['items'], cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
+               cfg['auto'], cfg['autolyr'], cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover))
+        if sig != self.sig:
+            self.sig = sig
+            self.sp = {'H': H, 'sc': sc, 'items': list(cfg['items']), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'],
+                       'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
+                       'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
+            self.nat = _wg_natural(self.sp) if cfg['auto'] else 0
+            self.dirty = True
+        mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
+        W = max(int(120 * sc), min(mx, self.nat)) if cfg['auto'] else mx
+        gap = int(_nm_ci('win_wg_gap', 8, 0, 200) * sc)
+        x = max(rl, right - gap - W)
+        y = rt + pad
+        if (x, y, W, H, rl, rt) != self.last: self._place(x, y, W, H, rl, rt)
+        if now >= self.nx_raise:
+            self.nx_raise = now + 0.1
+            # keep us above the taskbar's own layers, otherwise they swallow the clicks
+            u.SetWindowPos(h, 0 if self.mode == 'embed' else -1, 0, 0, 0, 0, 0x0013)   # NOMOVE | NOSIZE | NOACTIVATE
+        if self.dirty and self.sp:
+            self.dirty = False
+            img, self.btn = _wg_render(self.sp, W, self.hover, self.press)
+            self._present(img)
+            self.shown = True
+        if now >= self.nx_diag and self.shown:
+            self.nx_diag = now + 3
+            self._log_hit(x, y, W, H)
+
+    def _run(self):
+        import ctypes
+        try: self._create()
+        except Exception as e:
+            self._fail(f'widget: {e}'); return
+        a = _wg_api(); u = a['u']
+        msg = a['MSG']()
+        try:
+            while self.run:
+                while u.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):   # PM_REMOVE
+                    u.TranslateMessage(ctypes.byref(msg)); u.DispatchMessageW(ctypes.byref(msg))
+                now = time.time()
+                if not _nm_u32().IsWindow(self.h):
+                    _log_server.warning('[native] widget window is gone (explorer restart?), rebuilding')
+                    self.run = False
+                    if _NM_ST['wg'] is self: _NM_ST['wg'] = None
+                    threading.Thread(target=lambda: (time.sleep(3), _nm_rebuild()), daemon=True).start()
+                    return
+                try: self._step(now)
+                except Exception as e:
+                    if now - self.err_t > 5:
+                        self.err_t = now; self._fail(f'widget: {e}')
+                time.sleep(0.016)
+        finally:
+            try: u.DestroyWindow(self.h)
+            except Exception: pass
 
 def _nm_wg_kill(*a):
     """main window closed: the widget window would keep the app alive, so close it too"""
