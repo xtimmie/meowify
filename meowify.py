@@ -35317,7 +35317,7 @@ class _NmWidget:
         self.W, self.H = W, H
         self.dirty = True
 
-    def _present(self, img):
+    def _present(self, img, before=None):
         import ctypes
         a = _wg_api(); u, g, w = a['u'], a['g'], a['w']
         W, H = img.size
@@ -35333,6 +35333,7 @@ class _NmWidget:
             if not hbm or not bits.value: raise RuntimeError('CreateDIBSection failed')
             ctypes.memmove(bits.value, data, len(data))
             old = g.SelectObject(mem, hbm)
+            if before: before()   # move / resize the window right before the new frame goes in, so no frame shows the old picture at the new size
             size = w.SIZE(W, H); src = w.POINT(0, 0)
             bl = a['BLEND'](0, 0, 255, 1)   # AC_SRC_OVER, per pixel alpha
             if not u.UpdateLayeredWindow(self.h, sdc, None, ctypes.byref(size), mem, ctypes.byref(src), 0, ctypes.byref(bl), 2):
@@ -35424,7 +35425,10 @@ class _NmWidget:
         gap = int(_nm_ci('win_wg_gap', 8, 0, 200) * sc)
         x = max(rl, right - gap - W)
         y = rt + pad
-        if (x, y, W, H, rl, rt) != self.last: self._place(x, y, W, H, rl, rt)
+        moved = (x, y, W, H, rl, rt) != self.last
+        if moved:
+            self.dirty = True   # a new size / position needs a fresh frame
+            if not self.sp: self._place(x, y, W, H, rl, rt)   # nothing to draw yet, just move
         if now >= self.nx_raise:
             self.nx_raise = now + 0.1
             # keep us above the taskbar's own layers, otherwise they swallow the clicks
@@ -35432,7 +35436,9 @@ class _NmWidget:
         if self.dirty and self.sp:
             self.dirty = False
             img, self.btn = _wg_render(self.sp, W, self.hover, self.press)
-            self._present(img)
+            def _go():
+                self._place(x, y, W, H, rl, rt); self.dirty = False   # _place marks dirty, the frame we are presenting is already the new one
+            self._present(img, _go if moved else None)
             self.shown = True
         if now >= self.nx_diag and self.shown:
             self.nx_diag = now + 3
