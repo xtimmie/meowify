@@ -34702,10 +34702,23 @@ def _wg_render(sp, W, hover, press):
         else:
             ph = Image.new('RGBA', (cs, cs), (128, 128, 128, 64))
             img.paste(ph, cover_at, cv_mask)
-    d = ImageDraw.Draw(img, 'RGBA')
-    for x, base, t, px, bold, col in texts:
-        _wg_text(d, x, base, t, px, bold, col)
+    img = _wg_draw_texts(img, texts)
     return img, btns
+
+def _wg_draw_texts(img, texts):
+    """text as a coverage mask per color, composited with real alpha (drawing straight into the rgba image blends the edges with the bg rgb, which looks faint on a transparent bg)"""
+    from PIL import Image, ImageDraw, ImageChops
+    by = {}
+    for x, base, t, px, bold, col in texts: by.setdefault(col, []).append((x, base, t, px, bold))
+    for col, items in by.items():
+        mk = Image.new('L', img.size, 0)
+        d = ImageDraw.Draw(mk)
+        for x, base, t, px, bold in items: _wg_text(d, x, base, t, px, bold, 255)
+        if col[3] < 255: mk = ImageChops.multiply(mk, Image.new('L', img.size, col[3]))
+        layer = Image.new('RGBA', img.size, tuple(col[:3]) + (0,))
+        layer.putalpha(mk)
+        img = Image.alpha_composite(img, layer)
+    return img
 
 def _wg_bgra(img):
     """premultiplied BGRA bytes for UpdateLayeredWindow"""
