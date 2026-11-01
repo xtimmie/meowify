@@ -7404,9 +7404,10 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
     # ── 2. push merged db (skip if remote was already identical) ──────────────
     if push_db:
         try:
+            _cp = None
             try:
                 with contextlib.closing(sqlite3.connect(str(local_db), timeout=10)) as _ck:
-                    _ck.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    _cp = _ck.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             except Exception:
                 pass
             _stamp_dec = _dbx_db_stamp()
@@ -7429,6 +7430,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                 _dbx_synced['remote'] = _dbx_db_hash(local_db)
             elif known_remote and not _db_merge_failed:
                 _dbx_synced['remote'] = known_remote
+            _log_dbx.info('[dbx db] checkpoint=%s hash_differs=%s stamp_unchanged=%s merge_failed=%s', _cp, local_hash_now != known_remote, _unchanged, _db_merge_failed)
             if not _db_merge_failed:
                 _dbx_synced['stamp'] = _stamp_dec
             with _cfg_lock:
