@@ -16828,14 +16828,16 @@ class AudioEngine {
     const pos = !s ? 0 : engine.hasPaused ? (engine._pausedAt || 0)
       : (engine._restoredPosition !== undefined ? engine._restoredPosition : engine.curTime);
     const playing = !!(s && S.isPlaying);
-    const key = (s ? s.id + '|' + (s.title || '') + '|' + (s.artist || '') + '|' + (s.album || '') + '|' + (s.cover_path || '') : '') + '|' + (playing ? 1 : 0) + '|' + Math.round(dur);
+    const thHue = Math.round(CFG.theme_hue ?? 145);
+    const thSat = Math.round((typeof _bwSync !== 'undefined' && _bwSync) ? _bwEffSat(CFG.theme_bri ?? 1.0) : (CFG.theme_sat ?? 50));
+    const key = (s ? s.id + '|' + (s.title || '') + '|' + (s.artist || '') + '|' + (s.album || '') + '|' + (s.cover_path || '') : '') + '|' + (playing ? 1 : 0) + '|' + Math.round(dur) + '|' + thHue + '|' + thSat;
     // only resend when something changed or the position jumped (a seek), plain playback is extrapolated natively
     const exp = _nmLastPlaying ? _nmLastPos + (now - _nmLastAt) / 1000 : _nmLastPos;
     if (!force && key === _nmLast && Math.abs(pos - exp) < 1.5) return;
     _nmLast = key; _nmLastPos = pos; _nmLastAt = now; _nmLastPlaying = playing;
     fetch('/api/native/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
       body: JSON.stringify({ id: s ? s.id : null, title: s ? (s.title || '') : '', artist: s ? (s.artist || '') : '',
-        album: s ? (s.album || '') : '', dur, pos, playing, cover: !!(s && s.cover_path) }) }).catch(() => {});
+        album: s ? (s.album || '') : '', dur, pos, playing, cover: !!(s && s.cover_path), hue: thHue, sat: thSat }) }).catch(() => {});
   }
 
   window._nmSetting = async function (key, val) {
@@ -16899,7 +16901,6 @@ class AudioEngine {
       + row('widget text size', 'shrinks on its own if the taskbar is too thin for it', wgOpt('win_wg_fs', 'm', [['s', 'small'], ['m', 'medium'], ['l', 'large']]))
       + row('widget cover shape', 'shape of the cover art', wgOpt('win_wg_shape', 'round', [['round', 'rounded'], ['circle', 'circle'], ['square', 'square']]))
       + row('lyrics color', 'theme uses your meowify color, text matches the title, custom picks any color', lcolCtl)
-      + row('widget placement', 'embedded lives inside the taskbar, overlay floats on top of it (try this one if the buttons dont react to clicks)', wgOpt('win_wg_place', 'embed', [['embed', 'embedded'], ['overlay', 'overlay']]))
       + row('auto width', 'widget sizes itself to what it shows, the width below is then the max', wgYesNo('win_wg_auto'))
       + (CFG.win_wg_auto ? row('count lyrics in auto width', 'on: width follows the current lyric line. off: lyrics get a fixed block so the width only changes with title and artist', wgYesNo('win_wg_autolyr')) : '')
       + row('widget width', 'fixed width, or the max width when auto width is on', wgSlider('win_wg_w', 300, 120, 900, 10))
@@ -34894,7 +34895,8 @@ class _NmWidget:
         return {'items': tuple(seen), 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
                 'shape': CFG.get('win_wg_shape') or 'round', 'lmode': CFG.get('win_wg_lmode') or 'theme', 'lcol': lc,
                 'auto': bool(CFG.get('win_wg_auto')), 'autolyr': bool(CFG.get('win_wg_autolyr')),
-                'hue': f('theme_hue', 145), 'sat': f('theme_sat', 50), 'place': CFG.get('win_wg_place') or 'embed'}
+                'hue': f('theme_hue', 145) if _NM.get('hue') is None else float(_NM['hue']),
+                'sat': f('theme_sat', 50) if _NM.get('sat') is None else float(_NM['sat']), 'place': 'embed'}
 
     def _state(self):
         n = _NM
@@ -35000,7 +35002,7 @@ class _NmWidget:
         if not tb:
             self.tbi = None   # explorer is restarting
             return
-        want = 'overlay' if cfg['place'] == 'overlay' else 'embed'
+        want = 'embed'   # no placement setting anymore, overlay is only the automatic fallback when the taskbar refuses the embed
         if self.mode == 'embed' and (want == 'overlay' or u.GetAncestor(h, 1) != tb): self._unembed()
         if self.mode == 'overlay' and want == 'embed' and not self.fell: self.mode = ''
         if not self.mode:
@@ -35091,16 +35093,17 @@ class _NmWidget:
         H = max(16, tbh - 2 * pad)
         st = self._state()
         lyr = self._lyric(st, cfg)
+        items = tuple(i for i in cfg['items'] if i != 'lyrics' or (st['id'] and self.lrc_for == st['id'] and self.lrc))   # no synced lyrics = no lyrics block
         if 'cover' in cfg['items'] and st['id'] and self.cover_for != st['id'] and self.cover_busy != st['id']:
             self.cover_busy = st['id']
             threading.Thread(target=self._load_cover, args=(st['id'],), daemon=True).start()
         cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
         light = self._sys_light(now)
-        sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, cfg['items'], cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
+        sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, items, cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
                cfg['auto'], cfg['autolyr'], cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover))
         if sig != self.sig:
             self.sig = sig
-            self.sp = {'H': H, 'sc': sc, 'items': list(cfg['items']), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'],
+            self.sp = {'H': H, 'sc': sc, 'items': list(items), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'],
                        'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
                        'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
             self.nat = _wg_natural(self.sp) if cfg['auto'] else 0
@@ -35231,6 +35234,7 @@ def api_native_apply():
 def api_native_state():
     d = request.get_json(silent=True) or {}
     _NM.update({'id': d.get('id'), 'title': d.get('title') or '', 'artist': d.get('artist') or '', 'album': d.get('album') or '',
+                'hue': d.get('hue'), 'sat': d.get('sat'),
                 'dur': float(d.get('dur') or 0), 'pos': float(d.get('pos') or 0),
                 'playing': bool(d.get('playing')), 'cover': bool(d.get('cover')), 'at': time.time()})
     try:
