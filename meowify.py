@@ -16907,6 +16907,15 @@ class AudioEngine {
     const wgOpt = (key, def, opts) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${opts.map(([v, l]) => chip((CFG[key] || def) === v, `_nmSetting('${key}','${v}')`, l)).join('')}</div>`;
     const wgAll = [['cover', 'cover'], ['title', 'title'], ['artist', 'artist'], ['lyrics', 'lyrics'], ['controls', 'buttons']];
     const wgOn = _nmWgList();
+    const txCur = (v => ['inline', 'stacked', 'lyrics'].includes(v) ? v : CFG.win_wg_lp === 'below' ? 'lyrics' : CFG.win_wg_tl === 'stacked' ? 'stacked' : 'inline')(CFG.win_wg_tx);
+    const txBar = (w, o, h, pri) => `<i style="display:block;width:${w}px;height:${h}px;border-radius:2px;background:${pri ? 'var(--color-primary)' : 'currentColor'};opacity:${o}"></i>`;
+    const txArt = {
+      inline: `<div style="display:flex;align-items:center;gap:6px"><div style="display:flex;align-items:center;gap:3px">${txBar(15, .9, 4)}${txBar(9, .4, 3)}</div>${txBar(14, 1, 3, 1)}</div>`,
+      stacked: `<div style="display:flex;align-items:center;gap:6px"><div style="display:flex;flex-direction:column;gap:2px">${txBar(18, .9, 4)}${txBar(12, .4, 3)}</div>${txBar(14, 1, 3, 1)}</div>`,
+      lyrics: `<div style="display:flex;flex-direction:column;gap:3px"><div style="display:flex;align-items:center;gap:3px">${txBar(18, .9, 4)}${txBar(11, .4, 3)}</div>${txBar(32, 1, 3, 1)}</div>`
+    };
+    const txOk = { inline: true, stacked: wgOn.includes('title') && wgOn.includes('artist'), lyrics: wgOn.includes('lyrics') };
+    const txCards = `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${[['inline', 'side by side'], ['stacked', 'stacked'], ['lyrics', 'lyrics under']].map(([v, l]) => `<button class="mu-ripple" ${txOk[v] ? '' : 'disabled'} onclick="_nmSetting('win_wg_tx','${v}')" style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:8px;min-width:78px;padding:10px 10px 8px;border-radius:12px;border:1.5px solid ${txCur === v ? 'var(--color-primary)' : 'rgba(128,128,128,.35)'};background:${txCur === v ? 'color-mix(in srgb, var(--color-primary) 14%, transparent)' : 'transparent'};color:var(--color-on-surface);opacity:${txOk[v] ? 1 : .35};cursor:${txOk[v] ? 'pointer' : 'default'}"><div style="min-height:24px;display:flex;align-items:center">${txArt[v]}</div><span style="font:var(--type-label-small)">${l}</span></button>`).join('')}</div>`;
     const wgItems = `<div style="display:flex;flex-direction:column;gap:6px">${[...wgOn, ...wgAll.map(a => a[0]).filter(k => !wgOn.includes(k))].map(k => { const on = wgOn.includes(k); return `<div style="display:flex;gap:6px;align-items:center">${chip(on, `_nmWgToggle('${k}')`, wgAll.find(a => a[0] === k)[1])}${on ? chip(false, `_nmWgMove('${k}',-1)`, 'up') + chip(false, `_nmWgMove('${k}',1)`, 'down') : ''}</div>`; }).join('')}</div>`;
     const wgSlider = (key, def, min, max, step) => `<div style="display:flex;gap:8px;align-items:center"><input type="range" class="slider" min="${min}" max="${max}" step="${step}" value="${CFG[key] ?? def}" oninput="this.nextElementSibling.textContent=this.value+'px'" onchange="_nmSetting('${key}', parseInt(this.value))"><span style="font:var(--type-label-small);min-width:44px">${CFG[key] ?? def}px</span></div>`;
     const lcolCtl = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${[['theme', 'theme'], ['text', 'text'], ['custom', 'custom']].map(([v, l]) => chip((CFG.win_wg_lmode || 'theme') === v, `_nmSetting('win_wg_lmode','${v}')`, l)).join('')}${CFG.win_wg_lmode === 'custom' ? `<input type="color" value="${CFG.win_wg_lcol || '#9be3b4'}" onchange="_nmSetting('win_wg_lcol', this.value)">` : ''}</div>`;
@@ -16916,8 +16925,7 @@ class AudioEngine {
     const wgRows = mode !== 'widget' ? '' : (subRow ? subRow('widget', 'taskbar widget', 'what it shows, layout, colors, size and a live preview', () => wgPage()) : wgPage());
     function wgPage() { return prevBox + hd('layout') +
       row('widget items', 'tick what shows, up / down changes the order. title and artist share one block, lyrics can be their own block anywhere in the order or sit under the text', wgItems)
-      + (wgOn.includes('title') && wgOn.includes('artist') ? row('title and artist', 'side by side on one line, or stacked with the artist under the title', wgOpt('win_wg_tl', 'inline', [['inline', 'side by side'], ['stacked', 'stacked']])) : '')
-      + (wgOn.includes('lyrics') ? row('lyrics position', 'own block is next to the text and wraps to 2 lines, under the text is one line below it (text shrinks to fit the taskbar height)', wgOpt('win_wg_lp', 'side', [['side', 'own block'], ['below', 'under the text']])) : '')
+      + (wgOn.some(k => ['title', 'artist', 'lyrics'].includes(k)) ? row('text layout', 'never more than two lines so it fits the taskbar. stacked needs title and artist ticked, lyrics under needs lyrics ticked', txCards) : '')
       + hd('look')
       + row('widget background', 'auto follows the windows theme, accent uses your meowify color, transparent has no background at all so it blends into the taskbar', wgOpt('win_wg_bg', 'auto', [['auto', 'auto'], ['dark', 'dark'], ['light', 'light'], ['accent', 'accent'], ['none', 'transparent']]))
       + row('widget text size', 'shrinks on its own if the taskbar is too thin for it', wgOpt('win_wg_fs', 'm', [['s', 'small'], ['m', 'medium'], ['l', 'large']]))
@@ -34585,6 +34593,13 @@ def _wg_colors(c, sys_light):
         lc = (int(v[1:3], 16), int(v[3:5], 16), int(v[5:7], 16), 255)
     return bg, fg, mut, acc, lc
 
+def _wg_txmode():
+    """text layout, one setting so there are never 3 rows: inline (title / artist on one line, lyrics next to it), stacked (artist under the title, lyrics next to it), lyrics (title / artist on one line, lyric line under it)"""
+    v = CFG.get('win_wg_tx')
+    if v not in ('inline', 'stacked', 'lyrics'):
+        v = 'lyrics' if CFG.get('win_wg_lp') == 'below' else 'stacked' if CFG.get('win_wg_tl') == 'stacked' else 'inline'
+    return v
+
 def _wg_flags(sp):
     """what the text block holds: title / artist (side by side = one row, stacked = two rows) and the lyric row when lyrics sit under the text"""
     items = sp['items']
@@ -34610,13 +34625,13 @@ def _wg_m(sp):
     fs = max(6, int(round(min(base, (H - 8 * sc) / (1.25 * max(1, f['nl']))))))   # more rows = smaller text
     lfs = max(6, int(round(fs * 0.92))) if f['lb'] else max(6, int(round(min(base, (H - 6 * sc) / 2 / 1.2))))
     return {'pad': int(8 * sc), 'gap': int(8 * sc), 'cs': max(8, H - int(8 * sc)), 'bs': int(30 * sc),
-            'fs': fs, 'lfs': lfs,
+            'fs': fs, 'lfs': lfs, 'afs': max(6, int(round(fs * 0.88))) if f['stk'] else fs,
             'lfix': int(220 * sc), 'sep': int(19 * sc), 'lmin': int(120 * sc)}
 
 def _wg_text_nat(sp, m):
     f = _wg_flags(sp)
     t = _wg_tw(sp['title'], m['fs'], True) if f['showt'] else 0
-    a = _wg_tw(sp['artist'], m['fs']) if f['showa'] else 0
+    a = _wg_tw(sp['artist'], m['afs']) if f['showa'] else 0
     w = max(t, a) if f['stk'] else t + a + (m['sep'] if (f['showt'] and f['showa']) else 0)
     w = int(w) + 2
     if f['lb']:
@@ -34699,13 +34714,13 @@ def _wg_render(sp, W, hover, press):
             f = _wg_flags(sp)
             px, lpx = m['fs'], m['lfs']
             rows = []   # (kind, font px, bold), top to bottom
-            if f['stk']: rows += [('t', px, True), ('a', px, False)]
+            if f['stk']: rows += [('t', px, True), ('a', m['afs'], False)]
             elif f['showt'] or f['showa']: rows.append(('ta', px, True))
             if f['lb']: rows.append(('l', lpx, False))
             mets = []
             for kind, rpx, rb in rows:
                 a, dsc = _wg_font(rpx, rb, 0).getmetrics()
-                mets.append((a, dsc, max(a + dsc, int(rpx * 1.2))))
+                mets.append((a, dsc, int(rpx * 1.12) if len(rows) > 1 else max(a + dsc, int(rpx * 1.2))))   # rows sit closer together when stacked
             y = (H - sum(p for _, _, p in mets)) / 2.0
             for (kind, rpx, rb), (a, dsc, p) in zip(rows, mets):
                 base = int(y + (p - (a + dsc)) / 2.0 + a)
@@ -34963,7 +34978,7 @@ class _NmWidget:
         return {'items': tuple(seen), 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
                 'shape': CFG.get('win_wg_shape') or 'round', 'lmode': CFG.get('win_wg_lmode') or 'theme', 'lcol': lc,
                 'auto': bool(CFG.get('win_wg_auto')), 'autolyr': bool(CFG.get('win_wg_autolyr')),
-                'tl': CFG.get('win_wg_tl') or 'inline', 'lp': CFG.get('win_wg_lp') or 'side',
+                'tl': 'stacked' if _wg_txmode() == 'stacked' else 'inline', 'lp': 'below' if _wg_txmode() == 'lyrics' else 'side',
                 'hue': f('theme_hue', 145) if _NM.get('hue') is None else float(_NM['hue']),
                 'sat': f('theme_sat', 50) if _NM.get('sat') is None else float(_NM['sat']), 'place': 'embed'}
 
