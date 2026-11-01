@@ -13660,7 +13660,7 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
   zoom:var(--ui-zoom,1);
 }
 #dl-panel-float{min-width:320px;max-height:420px;overflow:hidden;padding:0;}
-#ctx.on,#dl-panel-float.on{display:flex;animation:ctx-pop var(--dur-5) var(--ease-spring) both;}
+#ctx.on,#dl-panel-float.on{display:flex;animation:ctx-pop var(--dur-5) var(--ease-spring) both;will-change:transform,opacity;}
 #ctx.on.no-anim,#dl-panel-float.on.no-anim{animation:none;}
 #ctx.on.closing{animation:ctx-out 140ms ease-in both;pointer-events:none;}
 @keyframes ctx-out{to{opacity:0;transform:scale(.88) translateY(-6px);}}
