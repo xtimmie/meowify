@@ -8574,6 +8574,7 @@ def _dbx_bg_poll():
             _why = _dbx_idle_reason(_dc) if _dc is not None else 'unknown'
             if _why == 'idle':
                 continue  # nothing changed locally or on dropbox, skip the full sync
+            _log_dbx.info('[dbx poll] syncing, reason=%s clean=%s', _why, _dbx_idle['clean'])
             if _why in ('local', 'unknown') and _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 30:
                 continue  # only local activity (playback etc), full sync at most every 30s
             _dbx_poll_state['auto'] = True
