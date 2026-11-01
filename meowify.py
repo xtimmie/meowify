@@ -30344,7 +30344,7 @@ function popTick(t) {
     for (let i = 0; i < n; i++) { p.v += (-F.stiffness * (p.x - p.tgt) - F.damping * p.v) * h; p.x += p.v * h; }
     const want = Math.max(-F.maxStretch, Math.min(F.maxStretch, p.v / F.refSpeed * F.stretch));
     p.s += (want - p.s) * Math.min(1, dt * F.follow);
-    if (Math.abs(p.x - p.tgt) < F.settle && Math.abs(p.v) < F.settle * 20 && Math.abs(p.s) < .002) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
+    if (Math.abs(p.x - p.tgt) < F.settle * .1 && Math.abs(p.v) < F.settle * 2 && Math.abs(p.s) < F.settle * .1) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
     popPaint(el);
     if (p.end && !P.set.has(el)) p.end(el);
   });
