@@ -16891,12 +16891,18 @@ class AudioEngine {
     const wgOn = _nmWgList();
     const wgItems = `<div style="display:flex;flex-direction:column;gap:6px">${[...wgOn, ...wgAll.map(a => a[0]).filter(k => !wgOn.includes(k))].map(k => { const on = wgOn.includes(k); return `<div style="display:flex;gap:6px;align-items:center">${chip(on, `_nmWgToggle('${k}')`, wgAll.find(a => a[0] === k)[1])}${on ? chip(false, `_nmWgMove('${k}',-1)`, 'up') + chip(false, `_nmWgMove('${k}',1)`, 'down') : ''}</div>`; }).join('')}</div>`;
     const wgSlider = (key, def, min, max, step) => `<div style="display:flex;gap:8px;align-items:center"><input type="range" class="slider" min="${min}" max="${max}" step="${step}" value="${CFG[key] ?? def}" oninput="this.nextElementSibling.textContent=this.value+'px'" onchange="_nmSetting('${key}', parseInt(this.value))"><span style="font:var(--type-label-small);min-width:44px">${CFG[key] ?? def}px</span></div>`;
+    const lcolCtl = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${[['theme', 'theme'], ['text', 'text'], ['custom', 'custom']].map(([v, l]) => chip((CFG.win_wg_lmode || 'theme') === v, `_nmSetting('win_wg_lmode','${v}')`, l)).join('')}${CFG.win_wg_lmode === 'custom' ? `<input type="color" value="${CFG.win_wg_lcol || '#9be3b4'}" onchange="_nmSetting('win_wg_lcol', this.value)">` : ''}</div>`;
+    const wgYesNo = (key) => `<div style="display:flex;gap:6px">${chip(!!CFG[key], `_nmSetting('${key}', true)`, 'on')}${chip(!CFG[key], `_nmSetting('${key}', false)`, 'off')}</div>`;
     const wgRows = mode !== 'widget' ? '' :
-      row('widget items', 'tick what shows, up / down changes the order. title and artist next to each other share one line, put lyrics between them to split them', wgItems)
+      row('widget items', 'tick what shows, up / down changes the order. title and artist always share one block, lyrics are their own block and can go anywhere, even before the cover', wgItems)
       + row('widget background', 'auto follows the windows theme, accent uses your meowify color', wgOpt('win_wg_bg', 'auto', [['auto', 'auto'], ['dark', 'dark'], ['light', 'light'], ['accent', 'accent']]))
       + row('widget text size', 'shrinks on its own if the taskbar is too thin for it', wgOpt('win_wg_fs', 'm', [['s', 'small'], ['m', 'medium'], ['l', 'large']]))
       + row('widget cover shape', 'shape of the cover art', wgOpt('win_wg_shape', 'round', [['round', 'rounded'], ['circle', 'circle'], ['square', 'square']]))
-      + row('widget width', 'how wide the widget is', wgSlider('win_wg_w', 300, 120, 900, 10))
+      + row('lyrics color', 'theme uses your meowify color, text matches the title, custom picks any color', lcolCtl)
+      + row('widget placement', 'embedded lives inside the taskbar, overlay floats on top of it (try this one if the buttons dont react to clicks)', wgOpt('win_wg_place', 'embed', [['embed', 'embedded'], ['overlay', 'overlay']]))
+      + row('auto width', 'widget sizes itself to what it shows, the width below is then the max', wgYesNo('win_wg_auto'))
+      + (CFG.win_wg_auto ? row('count lyrics in auto width', 'on: width follows the current lyric line. off: lyrics get a fixed block so the width only changes with title and artist', wgYesNo('win_wg_autolyr')) : '')
+      + row('widget width', 'fixed width, or the max width when auto width is on', wgSlider('win_wg_w', 300, 120, 900, 10))
       + row('widget distance from tray', 'gap between the widget and the tray icons', wgSlider('win_wg_gap', 8, 0, 200, 4));
     return row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls' + (status ? '<br>' + status : ''), sw('win_tray', !!CFG.win_tray))
       + row('taskbar controls', 'widget is a mini player embedded in the taskbar left of the tray icons (webview mode only), tray buttons are separate tray icons you can drag out of the overflow onto the taskbar' + (CFG.win_wg ? '' : ''), modeChips)
@@ -33788,6 +33794,7 @@ _NM_ST   = {'tray': None, 'thumb': None, 'wg': None, 'err': ''}
 _NM_URL  = ['']      # base url of the running server, set by main() in webview mode
 _NM_WV   = [False]   # true when meowify runs in the pywebview window (the widget is a second webview window)
 _NM_U32  = [None]
+_NM_WGW  = [0]       # width the widget page asked for (auto width mode), logical px
 _NM_REB  = threading.Lock()
 _NM_GEN  = [0]
 _NM_QUIT = [False]   # set by the tray quit so close-to-taskbar lets that one through
@@ -34228,6 +34235,7 @@ class _NmWidget:
     def __init__(self):
         self.win = None; self.h = 0; self.run = True
         self.ready = threading.Event()   # set when the widget page finished loading
+        self.paused = False; self.fell = False
         self.mode = ''; self.last = None; self.sc = 1.0; self.err = ''
         self.win11 = False
         try: self.win11 = sys.getwindowsversion().build >= 22000
@@ -34269,7 +34277,7 @@ class _NmWidget:
             if not h: raise RuntimeError('widget window never appeared')
             u = _nm_u32()
             ex = u.GetWindowLongPtrW(h, -20)
-            u.SetWindowLongPtrW(h, -20, (ex | 0x80) & ~0x40000)   # tool window, no taskbar button of its own
+            u.SetWindowLongPtrW(h, -20, (ex | 0x80 | 0x08000000) & ~0x40000)   # tool window (no taskbar button) + no activate (clicks dont steal focus)
             try: self.sc = (u.GetDpiForWindow(h) or 96) / 96.0
             except Exception: self.sc = 1.0
             if not self.ready.wait(25):
@@ -34298,7 +34306,7 @@ class _NmWidget:
         u = _nm_u32(); h = self.h
         u.SetParent(h, tb)
         if u.GetAncestor(h, 1) != tb:   # GA_PARENT, GetParent would hand back the owner for a popup window
-            self.mode = 'overlay'
+            self.mode = 'overlay'; self.fell = True
             _log_server.info('[native] widget: taskbar refused the embed, using the overlay fallback')
             return
         st = u.GetWindowLongPtrW(h, -16) & 0xFFFFFFFF
@@ -34306,6 +34314,23 @@ class _NmWidget:
         st |= 0x40000000 | 0x10000000   # WS_CHILD | WS_VISIBLE
         u.SetWindowLongPtrW(h, -16, st)
         self.mode = 'embed'; self.last = None
+
+    def _unembed(self):
+        u = _nm_u32(); h = self.h
+        u.SetParent(h, None)
+        st = u.GetWindowLongPtrW(h, -16) & 0xFFFFFFFF
+        st = (st & ~0x40000000) | 0x80000000 | 0x10000000   # back to a popup
+        u.SetWindowLongPtrW(h, -16, st)
+        self.mode = ''; self.last = None
+
+    def pause(self):
+        """widget off: hide it but keep the window, creating a second webview2 window later fails on some setups"""
+        self.paused = True
+        try: _nm_u32().ShowWindow(self.h, 0)
+        except Exception: pass
+
+    def resume(self):
+        self.last = None; self.paused = False
 
     def _round(self, W, H):
         if not self.win11: return
@@ -34321,10 +34346,15 @@ class _NmWidget:
         from ctypes import wintypes as w
         u = _nm_u32(); h = self.h
         if not u.IsWindow(h): return False
+        if self.paused: return True
         tb = u.FindWindowW('Shell_TrayWnd', None)
         if not tb: return True   # explorer is restarting, try again next tick
-        if not self.mode or (self.mode == 'embed' and u.GetAncestor(h, 1) != tb):
-            self._embed(tb)
+        want = 'overlay' if CFG.get('win_wg_place') == 'overlay' else 'embed'
+        if self.mode == 'embed' and (want == 'overlay' or u.GetAncestor(h, 1) != tb): self._unembed()
+        if self.mode == 'overlay' and want == 'embed' and not self.fell: self.mode = ''
+        if not self.mode:
+            if want == 'embed': self._embed(tb)
+            else: self.mode = 'overlay'; self.last = None
         rc = w.RECT(); u.GetWindowRect(tb, ctypes.byref(rc))
         tbw, tbh = rc.right - rc.left, rc.bottom - rc.top
         if tbh > tbw:
@@ -34339,7 +34369,8 @@ class _NmWidget:
         right = nrc.left if nrc else rc.right - int(220 * sc)
         pad = max(2, int(4 * sc))
         H = max(16, tbh - 2 * pad)
-        W = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
+        mx = _nm_ci('win_wg_w', 300, 120, 900)
+        W = int((max(120, min(mx, _NM_WGW[0])) if (CFG.get('win_wg_auto') and _NM_WGW[0]) else mx) * sc)
         gap = int(_nm_ci('win_wg_gap', 8, 0, 200) * sc)
         x = max(rc.left, right - gap - W)
         y = rc.top + pad
@@ -34401,6 +34432,7 @@ def _nm_rebuild():
                 try: _nm_show_window()   # never leave the window hidden with no tray icon to bring it back
                 except Exception: pass
         wg = _NM_ST['wg']
+        if CFG.get('win_wg') and _NM_WV[0] and wg and wg.paused: wg.resume()
         if CFG.get('win_wg') and _NM_WV[0]:
             if not wg:
                 try:
@@ -34408,8 +34440,7 @@ def _nm_rebuild():
                 except Exception as e:
                     _NM_ST['err'] = f'widget: {e}'[:200]; _log_server.warning(f'[native] widget failed: {e}')
         elif wg:
-            try: wg.stop()
-            finally: _NM_ST['wg'] = None
+            wg.pause()
         if CFG.get('win_wg') and not _NM_WV[0]:
             _NM_ST['err'] = 'taskbar widget needs webview mode'
         th = _NM_ST['thumb']
@@ -34463,12 +34494,13 @@ _WG_HTML = r"""<!doctype html>
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; cursor: default; }
 #w { height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
 .cv { height: calc(100% - 8px); aspect-ratio: 1; flex: none; border-radius: var(--cr); background: rgba(128,128,128,.25) center / cover no-repeat; }
-.tx { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; font-size: var(--fs); line-height: 1.25; }
+.tx { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; font-size: var(--fs); line-height: 1.25; }
+.tx.grow { flex: 1 1 0; }
 .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ln .t { font-weight: 600; }
 .ln .a, .ln.a { color: var(--mut); }
-.ln .t + .a::before, .ln .a + .t::before { content: '\00b7  '; }
-.ln.l { color: var(--a); }
+.ln .t + .a::before, .ln .a + .t::before { content: ''; display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .55; margin: 0 8px; vertical-align: middle; }
+.lyr { flex: 1 1 0; min-width: 35%; align-self: center; font-size: var(--lfs, 12px); line-height: 1.2; color: var(--lc, var(--a)); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .ctl { display: flex; flex: none; align-items: center; }
 .ctl button { border: 0; background: transparent; color: inherit; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; padding: 0; }
 .ctl button:hover { background: rgba(128,128,128,.28); }
@@ -34542,6 +34574,7 @@ function applyTheme() {
     s.setProperty('--a', 'hsl(' + cfg.hue + ' ' + cfg.sat + '% 72%)');
   }
   s.setProperty('--cr', cfg.shape === 'circle' ? '50%' : cfg.shape === 'square' ? '0' : '6px');
+  s.setProperty('--lc', cfg.lmode === 'text' ? 'var(--fg)' : (cfg.lmode === 'custom' && cfg.lcol) ? cfg.lcol : 'var(--a)');
 }
 
 function mk(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -34563,26 +34596,29 @@ function build() {
       refs.bn = b('next', () => { send('next'); setTimeout(poll, 500); }); refs.bn.innerHTML = ICON.next;
       root.appendChild(c);
     } else {
-      if (!tx) { tx = mk('div', 'tx'); root.appendChild(tx); }
-      const nx = items[i + 1];
-      if ((k === 'title' && nx === 'artist') || (k === 'artist' && nx === 'title')) {
-        const ln = mk('div', 'ln'); const a = mk('span', k === 'title' ? 't' : 'a'), b = mk('span', nx === 'title' ? 't' : 'a');
-        ln.appendChild(a); ln.appendChild(b);
-        refs.title = k === 'title' ? a : b; refs.artist = k === 'title' ? b : a;
-        tx.appendChild(ln); i++;
-      } else if (k === 'title') { const ln = mk('div', 'ln'); const s = mk('span', 't'); ln.appendChild(s); refs.title = s; tx.appendChild(ln); }
-      else if (k === 'artist') { const ln = mk('div', 'ln a'); refs.artist = ln; tx.appendChild(ln); }
-      else if (k === 'lyrics') { const ln = mk('div', 'ln l'); refs.lyric = ln; tx.appendChild(ln); }
+      if (k === 'lyrics') {
+        // lyrics are their own block now, they sit wherever you put them in the order
+        refs.lyric = mk('div', 'lyr');
+        if (cfg.auto && !cfg.autolyr) { refs.lyric.style.flex = 'none'; refs.lyric.style.width = LYR_FIXED + 'px'; }
+        root.appendChild(refs.lyric);
+      } else if (!tx) {
+        // title and artist share one text block at the spot of whichever comes first
+        tx = mk('div', 'tx' + (items.includes('lyrics') ? '' : ' grow')); root.appendChild(tx);
+        const ln = mk('div', 'ln'); tx.appendChild(ln);
+        for (const x of items.filter(y => y === 'title' || y === 'artist')) {
+          const sp = mk('span', x === 'title' ? 't' : 'a'); ln.appendChild(sp); refs[x] = sp;
+        }
+      }
     }
   }
   refs.tx = tx;
 }
 function fit() {
-  if (!refs.tx) return;
-  const lines = [...refs.tx.children].filter(e => e.style.display !== 'none').length || 1;
   const base = { s: 11, m: 12.5, l: 14 }[cfg.fs] || 12.5;
-  const px = Math.min(base, (window.innerHeight - 8) / lines / 1.25);
-  document.documentElement.style.setProperty('--fs', px.toFixed(1) + 'px');
+  const h = window.innerHeight - 8;
+  const s = document.documentElement.style;
+  s.setProperty('--fs', Math.min(base, h / 1.25).toFixed(1) + 'px');
+  s.setProperty('--lfs', Math.min(base, h / 2 / 1.2).toFixed(1) + 'px');   // lyrics can wrap to 2 lines
 }
 function curPos() {
   if (!st) return 0;
@@ -34599,7 +34635,7 @@ function lyricNow() {
 }
 function update() {
   if (!st || !cfg) return;
-  const key = JSON.stringify([cfg.items, cfg.bg, cfg.fs, cfg.shape, cfg.light, cfg.hue, cfg.sat]);
+  const key = JSON.stringify([cfg.items, cfg.bg, cfg.fs, cfg.shape, cfg.light, cfg.hue, cfg.sat, cfg.lmode, cfg.lcol, cfg.auto, cfg.autolyr]);
   if (key !== cfgKey) { cfgKey = key; applyTheme(); build(); lastKey = ''; lastPlaying = null; lastLyric = null; fit(); }
   const sk = st.id + '|' + st.title + '|' + st.artist + '|' + st.cover;
   if (sk !== lastKey) {
@@ -34613,9 +34649,36 @@ function update() {
   if (cfg.items.includes('lyrics') && st.id && st.id !== lrcFor) loadLyrics(st.id, st.dur);
   if (refs.lyric) {
     const l = lyricNow();
-    if (l !== lastLyric) { lastLyric = l; refs.lyric.textContent = l; refs.lyric.style.display = l ? '' : 'none'; fit(); }
+    if (l !== lastLyric) { lastLyric = l; refs.lyric.textContent = l; refs.lyric.style.visibility = l ? '' : 'hidden'; }
   }
   if (refs.pp && lastPlaying !== !!st.playing) { lastPlaying = !!st.playing; refs.pp.innerHTML = lastPlaying ? ICON.pause : ICON.play; }
+  measure();
+}
+// auto width: measure how much room the blocks need and tell python, it clamps to the max width from the settings
+const LYR_FIXED = 220;
+const meas = document.createElement('span');
+meas.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;left:-9999px;top:0';
+document.body.appendChild(meas);
+function tw(el, txt) { meas.style.font = getComputedStyle(el).font; meas.textContent = txt; return meas.offsetWidth; }
+let lastW = 0;
+function measure() {
+  if (!cfg || !cfg.auto) return;
+  let w = 16, n = 0;
+  if (refs.cv) { w += window.innerHeight - 8; n++; }
+  if (refs.bp) { w += 90; n++; }
+  if (refs.title || refs.artist) {
+    let t = 0, c = 0;
+    if (refs.title) { t += tw(refs.title, refs.title.textContent); c++; }
+    if (refs.artist && refs.artist.style.display !== 'none') { t += tw(refs.artist, refs.artist.textContent); c++; }
+    if (c === 2) t += 19;
+    w += t + 2; n++;
+  }
+  if (refs.lyric) { w += cfg.autolyr ? Math.max(120, tw(refs.lyric, refs.lyric.textContent || ' ') + 2) : LYR_FIXED; n++; }
+  w = Math.ceil(w + 8 * Math.max(0, n - 1));
+  if (Math.abs(w - lastW) > 2) {
+    lastW = w;
+    fetch('/api/native/wg_width', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ w }) }).catch(() => {});
+  }
 }
 async function poll() {
   try {
@@ -34649,19 +34712,31 @@ def api_native_now():
     seen = []
     for i in items:
         if i in ('cover', 'title', 'artist', 'lyrics', 'controls') and i not in seen: seen.append(i)
+    lc = str(CFG.get('win_wg_lcol') or '')
+    if not (len(lc) == 7 and lc[0] == '#' and all(ch in '0123456789abcdefABCDEF' for ch in lc[1:])): lc = ''
     d['cfg'] = {'items': seen, 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
                 'shape': CFG.get('win_wg_shape') or 'round', 'light': _nm_theme_light(),
-                'hue': CFG.get('theme_hue', 145), 'sat': CFG.get('theme_sat', 50)}
+                'hue': CFG.get('theme_hue', 145), 'sat': CFG.get('theme_sat', 50),
+                'lmode': CFG.get('win_wg_lmode') or 'theme', 'lcol': lc,
+                'auto': bool(CFG.get('win_wg_auto')), 'autolyr': bool(CFG.get('win_wg_autolyr'))}
     return jsonify(d)
 
 @app.route('/api/native/cmd', methods=['POST'])
 def api_native_cmd():
     d = request.get_json(silent=True) or {}
     c = d.get('cmd')
+    _log_server.info(f'[native] widget cmd {c}')
     if c in ('play', 'pause', 'toggle', 'next', 'prev'):
         _nm_cmd(c)
     elif c == 'open':
         threading.Thread(target=_nm_raise_window, daemon=True).start()
+    return jsonify({'ok': True})
+
+@app.route('/api/native/wg_width', methods=['POST'])
+def api_native_wg_width():
+    d = request.get_json(silent=True) or {}
+    try: _NM_WGW[0] = max(0, min(2000, int(d.get('w') or 0)))
+    except Exception: pass
     return jsonify({'ok': True})
 
 @app.route('/api/native/wait')
