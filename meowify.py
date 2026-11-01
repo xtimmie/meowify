@@ -6173,9 +6173,9 @@ _DBX_HEARTBEAT = 1800
 
 def _dbx_workers():
     try:
-        return max(1, min(8, int(CFG.get('dbx_workers', 4))))
+        return max(1, min(8, int(CFG.get('dbx_workers', 6))))
     except Exception:
-        return 4
+        return 6
 
 def _dbx_run_parallel(items, fn, workers=None, stop=None):
     """run fn(item) on a small pool, returns [(item, value, error)] in input order.
@@ -6336,6 +6336,31 @@ def _dbx_idle_skip(dbx):
         return False
     return True
 
+_dbx_stats = {'n': 0, 't': 0.0, 'by': {}}
+_dbx_stats_lock = threading.Lock()
+
+class _DbxCounted:
+    def __init__(self, c):
+        object.__setattr__(self, '_c', c)
+
+    def __getattr__(self, name):
+        a = getattr(self._c, name)
+        if not callable(a) or name.startswith('_') or name == 'files_list_folder_longpoll':
+            return a
+        def _w(*args, **kw):
+            t0 = _time.time()
+            try:
+                return a(*args, **kw)
+            finally:
+                dt = _time.time() - t0
+                with _dbx_stats_lock:
+                    _dbx_stats['n'] += 1
+                    _dbx_stats['t'] += dt
+                    b = _dbx_stats['by'].setdefault(name, [0, 0.0])
+                    b[0] += 1
+                    b[1] += dt
+        return _w
+
 def _dbx():
     try:
         import dropbox
@@ -6356,6 +6381,7 @@ def _dbx():
         except Exception as e:
             _log_dbx.warning(f'[dbx] client init failed: {e}')
             return None
+        _c = _DbxCounted(_c)
         _dbx_client_cache['tok'] = tok
         _dbx_client_cache['client'] = _c
         return _c
@@ -6760,7 +6786,7 @@ def _dbx_peer_cover_names(dbx, own_device_id, peer_manifests=None):
 _COVER_RESERVE = 64 * 1024 * 1024
 _DBX_MAX_ROUNDS = 8
 _DBX_LIVE_MAX = 3600     # hard cap for one live session (s)
-_DBX_LIVE_JOIN = 90      # how long a device waits for the other one to show up (s)
+_DBX_LIVE_JOIN = 15      # how long a device waits for the other one to show up (s)
 _DBX_LIVE_STALL = 240    # end the session when nothing moved on either side for this long (s)
 _dbx_live_flag = [False]
 _dbx_live_ctx = {'ids': None}
@@ -7241,7 +7267,42 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
         _log_dbx.info(f'[dbx cleanup] removed {deleted} delivered files, freed {freed} bytes')
     return deleted, freed
 
+def _dbx_log_timing(t0, marks):
+    end = _time.time()
+    phases = []
+    for i, (t, m) in enumerate(marks):
+        nxt = marks[i + 1][0] if i + 1 < len(marks) else end
+        phases.append((nxt - t, m[:40]))
+    slow = sorted([p for p in phases if p[0] >= 0.5], reverse=True)[:8]
+    with _dbx_stats_lock:
+        by = sorted(_dbx_stats['by'].items(), key=lambda kv: -kv[1][1])[:6]
+        n, tt = _dbx_stats['n'], _dbx_stats['t']
+    _log_dbx.info('[dbx timing] total %.1fs, %d api calls (%.1fs summed) | slowest phases: %s | top calls: %s' % (
+        end - t0, n, tt,
+        ', '.join('%s %.1fs' % (m, d) for d, m in slow) or '-',
+        ', '.join('%s x%d %.1fs' % (k, v[0], v[1]) for k, v in by) or '-'))
+
 def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
+                 sync_settings=True, status_cb=None):
+    marks = []
+    t0 = _time.time()
+    def _cb(m):
+        marks.append((_time.time(), str(m)))
+        if status_cb:
+            status_cb(m)
+    with _dbx_stats_lock:
+        _dbx_stats['n'] = 0
+        _dbx_stats['t'] = 0.0
+        _dbx_stats['by'] = {}
+    try:
+        return _dbx_sync_now_impl(push_db, pull_db, push_songs, pull_songs, sync_settings, _cb)
+    finally:
+        try:
+            _dbx_log_timing(t0, marks)
+        except Exception:
+            pass
+
+def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
                  sync_settings=True, status_cb=None):
     dbx = _dbx()
     if dbx is None:
@@ -8446,11 +8507,38 @@ def _dbx_apply_pref_reset(key, ts):
 
 _dbx_status_msg = ''
 
-_dbx_poll_state = {'wait': 300}
+_dbx_poll_state = {'wait': 20}
+_dbx_wake = threading.Event()
+_dbx_watch_ref = [None]
+
+def _dbx_watch():
+    while not _dbx_stop.is_set():
+        try:
+            if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
+                _dbx_stop.wait(10)
+                continue
+            if _dbx_lock.locked():
+                _dbx_stop.wait(2)
+                continue
+            dbx = _dbx()
+            cur = _dbx_idle.get('cursor')
+            if dbx is None or not cur:
+                _dbx_stop.wait(5)
+                continue
+            lp = dbx.files_list_folder_longpoll(cur, timeout=30)
+            if lp.changes:
+                _dbx_wake.set()
+                _dbx_stop.wait(max(lp.backoff or 0, 3))
+        except Exception:
+            _dbx_stop.wait(10)
 
 def _dbx_bg_poll():
-    while not _dbx_stop.wait(_dbx_poll_state['wait']):  # 20s cheap checks while idle state is valid, 5 min otherwise, 60s while a relay backlog moves
-        _dbx_poll_state['wait'] = 20 if _dbx_idle['clean'] else 300
+    while not _dbx_stop.is_set():
+        _dbx_wake.wait(_dbx_poll_state['wait'])
+        _dbx_wake.clear()
+        if _dbx_stop.is_set():
+            break
+        _dbx_poll_state['wait'] = 20 if _dbx_idle['clean'] else 30
         if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
             continue
         # (the recent-sync gate now lives below and only applies to purely local activity)
@@ -8462,8 +8550,8 @@ def _dbx_bg_poll():
             _why = _dbx_idle_reason(_dc) if _dc is not None else 'unknown'
             if _why == 'idle':
                 continue  # nothing changed locally or on dropbox, skip the full sync
-            if _why in ('local', 'unknown') and _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 180:
-                continue  # only local activity (playback etc), full sync at most every 3 min
+            if _why in ('local', 'unknown') and _dbx_idle['clean'] and _time.time() - _dbx_idle['t'] < 30:
+                continue  # only local activity (playback etc), full sync at most every 30s
             _dbx_poll_state['auto'] = True
             _dbx_status_msg = 'auto-syncing...'
             sync_lib = CFG.get('sync_library', True)
@@ -8474,7 +8562,7 @@ def _dbx_bg_poll():
                          sync_settings=CFG.get('sync_settings', True),
                          status_cb=lambda m: _set_dbx_status(m))
             if isinstance(_r, dict) and _r.get('backlog') and _r.get('relay_moved'):
-                _dbx_poll_state['wait'] = 60
+                _dbx_poll_state['wait'] = 15
         except Exception as _se:
             _log_dbx.error(f'[dbx sync] unhandled error: {_se}', exc_info=True)
         finally:
@@ -8489,6 +8577,9 @@ def _dbx_start_poll():
     _dbx_stop.clear()
     _dbx_sync_thread = threading.Thread(target=_dbx_bg_poll, daemon=True, name='dbx-poll')
     _dbx_sync_thread.start()
+    if not (_dbx_watch_ref[0] and _dbx_watch_ref[0].is_alive()):
+        _dbx_watch_ref[0] = threading.Thread(target=_dbx_watch, daemon=True, name='dbx-watch')
+        _dbx_watch_ref[0].start()
 
 _dbx_start_poll()
 
@@ -8790,7 +8881,8 @@ def api_dbx_sync():
 
     def _run():
         global _dbx_sync_running, _dbx_sync_result, _dbx_status_msg
-        if not _dbx_lock.acquire(blocking=False):
+        if not _dbx_lock.acquire(timeout=120):
+            _dbx_sync_result = {'error': 'another sync is still running, try again in a moment'}
             with _dbx_sync_lock:
                 _dbx_sync_running = False
             return  # bg poll running, bail
