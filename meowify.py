@@ -17018,7 +17018,7 @@ class AudioEngine {
     const btnChips = (key) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']].map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
     const status = c.err ? esc(c.err) : '';
     const mode = CFG.win_wg ? 'widget' : CFG.win_tray_ctrl ? 'tray' : 'off';
-    const modeChips = `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['off', 'off'], ['widget', 'widget'], ['tray', 'tray buttons']].map(([v, l]) => chip(mode === v, `_nmMode('${v}')`, l)).join('')}</div>`;
+    const modeChips = `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['off', 'off'], ['widget', 'widget'], ['tray', 'tray buttons (legacy)']].map(([v, l]) => chip(mode === v, `_nmMode('${v}')`, l)).join('')}</div>`;
     const wgOpt = (key, def, opts) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${opts.map(([v, l]) => chip((CFG[key] || def) === v, `_nmSetting('${key}','${v}')`, l)).join('')}</div>`;
     const wgAll = [['cover', 'cover'], ['title', 'title'], ['artist', 'artist'], ['lyrics', 'lyrics'], ['controls', 'buttons']];
     const wgOn = _nmWgList();
@@ -17053,8 +17053,8 @@ class AudioEngine {
       + row('widget distance from tray', 'gap between the widget and the tray icons', wgSlider('win_wg_gap', 8, 0, 200, 4));
     }
     return row('tray icon', 'meowify icon in the system tray, click to show / hide the window, right click for controls' + (status ? '<br>' + status : ''), sw('win_tray', !!CFG.win_tray))
-      + row('taskbar controls', 'widget is a mini player embedded in the taskbar left of the tray icons (webview mode only), tray buttons are separate tray icons you can drag out of the overflow onto the taskbar' + (CFG.win_wg ? '' : ''), modeChips)
-      + (mode === 'tray' ? row('tray buttons shown', 'pick which controls get a tray icon', btnChips('win_tray_btns')) : '')
+      + row('taskbar controls', 'widget is a mini player embedded in the taskbar left of the tray icons (webview mode only). legacy tray buttons are separate tray icons instead, windows reorders those on its own when you drag them so the order can break, only kept for debugging', modeChips)
+      + (mode === 'tray' ? row('legacy tray buttons shown', 'pick which controls get a tray icon', btnChips('win_tray_btns')) : '')
       + wgRows
       + row('tray icon color', 'auto follows the windows taskbar theme', `<div style="display:flex;gap:6px">${[['auto', 'auto'], ['white', 'white'], ['black', 'black']].map(([v, l]) => chip((CFG.win_tray_style || 'auto') === v, `_nmSetting('win_tray_style','${v}')`, l)).join('')}</div>`)
       + row('taskbar preview buttons', 'prev / play / next under the window preview when you hover the taskbar icon, changing which buttons needs a restart', sw('win_thumb', !!CFG.win_thumb))
