@@ -7009,7 +7009,7 @@ def _dbx_plan_pushes(dbx, peers, remote):
 def _dbx_relay_rounds(dbx, results, pushed_ids, device_id, status, pull_songs=True, run_rounds=True):
     _dbx_relay_rounds_classic(dbx, results, pushed_ids, device_id, status, pull_songs, run_rounds)
     bl = results.get('backlog')
-    if not CFG.get('dbx_live_sync', True) or not _dbx_last_peer_manifests or not bl:
+    if not CFG.get('dbx_live_sync', False) or not _dbx_last_peer_manifests or not bl:
         return
     now = _time.time()
     peer_live = _dbx_peer_live()
