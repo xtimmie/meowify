@@ -7715,7 +7715,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
         results['errors'].append(f'manifest push: {e}')
 
     _dbx_idle.update(cursor=_idle_cursor, stamp=_idle_stamp, t=_time.time(),
-                     clean=bool(_idle_cursor) and push_db and pull_db and pull_songs and sync_settings
+                     clean=bool(_idle_cursor) and push_db and pull_db and pull_songs
                            and not results['errors'])
     _status('done')
     return results
