@@ -34099,6 +34099,7 @@ class _NmTray:
         self.threads = []
         self.style = CFG.get('win_tray_style', 'auto')
         self.sig = _nm_tray_sig()
+        self._stop_ev = threading.Event()
         self.playing = bool(_NM['playing'])
 
     def start(self):
@@ -34113,6 +34114,54 @@ class _NmTray:
             ev = self._add(name)
             ev.wait(3); time.sleep(0.15)
         if CFG.get('win_tray'): self._add('app')
+        if len(order) > 1:
+            threading.Thread(target=self._watch, daemon=True).start()
+
+    def _rects(self):
+        # screen position of every button icon, None if windows cant place one of them (overflow / hidden / not ready)
+        import ctypes
+        from ctypes import wintypes
+        class NID(ctypes.Structure):
+            _fields_ = [('cbSize', wintypes.DWORD), ('hWnd', wintypes.HWND), ('uID', wintypes.UINT), ('guid', ctypes.c_ubyte * 16)]
+        sh = ctypes.windll.shell32
+        out = {}
+        for name, ic in list(self.icons.items()):
+            if name == 'app': continue
+            hw = getattr(ic, '_hwnd', None)
+            if not hw: return None
+            i = NID(); i.cbSize = ctypes.sizeof(NID); i.hWnd = hw; i.uID = id(ic) & 0xFFFFFFFF   # pystray uses id(icon) as the icon id
+            r = wintypes.RECT()
+            if sh.Shell_NotifyIconGetRect(ctypes.byref(i), ctypes.byref(r)) != 0: return None
+            out[name] = (r.left, r.top, r.right, r.bottom)
+        return out
+
+    def _watch(self):
+        # dragging icons in / out of the overflow makes windows reorder them on its own, when the visible order stays wrong
+        # for a few seconds (not mid drag) the buttons get rebuilt, same as a restart, max 3 tries in a row
+        bad = 0
+        while not self._stop_ev.wait(1.0):
+            try:
+                r = self._rects()
+                if not r or len(r) < 2: bad = 0; continue
+                rs = list(r.values())
+                if any(b[2] <= b[0] for b in rs) or len({(b[0], b[1]) for b in rs}) < len(rs) or max(b[1] for b in rs) - min(b[1] for b in rs) > 8:
+                    bad = 0; continue   # overflow flyout, stacked or not placed yet, nothing to compare
+                want = [n for n in ('prev', 'play', 'next') if n in r]
+                if sorted(r, key=lambda n: r[n][0]) == want:
+                    bad = 0; _NM_ST['fixn'] = 0; continue
+                bad += 1
+                if bad < 3: continue
+                if _NM_ST.get('fixn', 0) >= 3:
+                    _log_server.warning('[native] tray button order still wrong after 3 rebuilds, giving up'); return
+                _NM_ST['fixn'] = _NM_ST.get('fixn', 0) + 1
+                _log_server.info('[native] tray button order is wrong, rebuilding')
+                if _NM_ST['tray'] is not self: return
+                self.sig = None   # forces _nm_rebuild to recreate the icons
+                _nm_rebuild()
+                return
+            except Exception as e:
+                _log_server.warning(f'[native] tray order check failed: {e}')
+                bad = 0
 
     def _hide(self, name):
         with _cfg_lock:
@@ -34179,6 +34228,7 @@ class _NmTray:
             _log_server.warning(f'[native] tray play icon update failed: {e}')
 
     def stop(self):
+        self._stop_ev.set()
         for ic in list(self.icons.values()):
             try: ic.stop()
             except Exception: pass
