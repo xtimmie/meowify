@@ -193,7 +193,7 @@ _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.envir
 _SCFG   = _HOME / "settings.json"
 _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_boost": False, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
-_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0})
+_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -32936,6 +32936,7 @@ function renderSettings() {
             ${row('auto sync', 'check for changes every 5 min', toggle('dropbox_sync_enabled', CFG.dropbox_sync_enabled||false))}\
             ${row('sync library', 'sync play history, songs and covers', toggle('sync_library', CFG.sync_library!==false))}\
             ${row('sync settings', 'sync theme, format and other preferences', toggle('sync_settings', CFG.sync_settings!==false))}\
+            ${row('live sync', 'during a manual sync, wait for the other device to move songs together', toggle('dbx_live_sync', CFG.dbx_live_sync===true))}\
             ${(()=>{
               const peers = window._dbxPeers || [];
               const me    = window._dbxThisDevice;
