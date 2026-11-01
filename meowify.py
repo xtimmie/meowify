@@ -7308,7 +7308,10 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
         _dbx_stats['t'] = 0.0
         _dbx_stats['by'] = {}
     try:
-        return _dbx_sync_now_impl(push_db, pull_db, push_songs, pull_songs, sync_settings, _cb)
+        _res = _dbx_sync_now_impl(push_db, pull_db, push_songs, pull_songs, sync_settings, _cb)
+        if isinstance(_res, dict) and _res.get('errors'):
+            _log_dbx.warning('[dbx sync] errors: %s', '; '.join(str(x)[:160] for x in _res['errors'][:5]))
+        return _res
     finally:
         try:
             _dbx_log_timing(t0, marks)
