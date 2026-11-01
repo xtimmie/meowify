@@ -35260,9 +35260,13 @@ class _NmWidget:
         u = _nm_u32(); h = self.h
         u.SetParent(h, tb)
         if u.GetAncestor(h, 1) != tb:   # GA_PARENT, GetParent would hand back the owner for a popup window
-            self.mode = 'overlay'; self.fell = True
-            _log_server.info('[native] widget: taskbar refused the embed, using the overlay fallback')
+            # never the overlay, stay hidden and try again on the next taskbar check
+            self.mode = ''; self.last = None
+            u.ShowWindow(h, 0); self.shown = False
+            self.fails = getattr(self, 'fails', 0) + 1
+            if self.fails in (1, 20, 200): _log_server.info(f'[native] widget: taskbar refused the embed (try {self.fails}), retrying')
             return
+        self.fails = 0
         st = u.GetWindowLongPtrW(h, -16) & 0xFFFFFFFF
         st &= ~(0x80000000 | 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000)
         st |= 0x40000000 | 0x10000000   # WS_CHILD | WS_VISIBLE
@@ -35285,12 +35289,12 @@ class _NmWidget:
         if not tb:
             self.tbi = None   # explorer is restarting
             return
-        want = 'embed'   # no placement setting anymore, overlay is only the automatic fallback when the taskbar refuses the embed
-        if self.mode == 'embed' and (want == 'overlay' or u.GetAncestor(h, 1) != tb): self._unembed()
-        if self.mode == 'overlay' and want == 'embed' and not self.fell: self.mode = ''
-        if not self.mode:
-            if want == 'embed': self._embed(tb)
-            else: self.mode = 'overlay'; self.last = None
+        # always embedded, there is no overlay anymore
+        if self.mode == 'embed' and u.GetAncestor(h, 1) != tb: self._unembed()   # explorer restarted, the taskbar window is a new one
+        if not self.mode: self._embed(tb)
+        if self.mode != 'embed':
+            self.tbi = None   # the taskbar refused the embed, widget stays hidden and this runs again on the next check
+            return
         rc = w.RECT(); u.GetWindowRect(tb, ctypes.byref(rc))
         tbw, tbh = rc.right - rc.left, rc.bottom - rc.top
         if tbh > tbw:
