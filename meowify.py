@@ -7409,6 +7409,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                     _ck.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             except Exception:
                 pass
+            _stamp_dec = _dbx_db_stamp()
             local_hash_now = _dbx_db_hash(local_db)
             # reuse hash from step 1 if available (saves one API round-trip)
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
@@ -7429,7 +7430,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             elif known_remote and not _db_merge_failed:
                 _dbx_synced['remote'] = known_remote
             if not _db_merge_failed:
-                _dbx_synced['stamp'] = _dbx_db_stamp()
+                _dbx_synced['stamp'] = _stamp_dec
             with _cfg_lock:
                 CFG['dropbox_last_sync'] = int(_time.time())
                 save_cfg(CFG)
