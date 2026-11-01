@@ -7269,6 +7269,38 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
 
 _dbx_synced = {'remote': None, 'stamp': None}
 
+def _dbx_snapshot_gz(src, dst):
+    import gzip, shutil
+    tmp_db = Path(str(dst) + '.tmpdb')
+    tmp_db.unlink(missing_ok=True)
+    s = sqlite3.connect(str(src), timeout=30)
+    try:
+        d = sqlite3.connect(str(tmp_db))
+        try:
+            s.backup(d)
+        finally:
+            d.close()
+    finally:
+        s.close()
+    try:
+        with open(tmp_db, 'rb') as fi, gzip.open(dst, 'wb', compresslevel=3) as fo:
+            shutil.copyfileobj(fi, fo, 1024 * 1024)
+    finally:
+        tmp_db.unlink(missing_ok=True)
+
+def _dbx_gunzip(src, dst):
+    import gzip, shutil
+    try:
+        with gzip.open(src, 'rb') as fi, open(dst, 'wb') as fo:
+            shutil.copyfileobj(fi, fo, 1024 * 1024)
+        return True
+    except Exception as e:
+        _log_dbx.warning('[dbx pull] gunzip failed: %s', e)
+        Path(dst).unlink(missing_ok=True)
+        return False
+    finally:
+        Path(src).unlink(missing_ok=True)
+
 def _dbx_db_stamp():
     dp = str(db_path())
     out = []
@@ -7343,7 +7375,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
         if status_cb:
             status_cb(msg)
 
-    remote_db = '/meowify/library.db'
+    remote_db = '/meowify/library.db.gz'
     local_db  = db_path()
 
     _dbx_prog_reset()
@@ -7368,10 +7400,11 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             remote_hash = _dbx_remote_hash(dbx, remote_db)
             _remote_db_hash_after_pull = remote_hash
             if remote_hash:
-                if _dbx_db_hash(local_db) != remote_hash and remote_hash != _dbx_synced['remote']:
+                if remote_hash != _dbx_synced['remote']:
                     _status('merging remote library...')
                     tmp = Path(local_db).parent / 'library_remote.db'
-                    if _dbx_pull_file(dbx, remote_db, tmp):
+                    _tmp_gz = Path(local_db).parent / 'library_remote.db.gz'
+                    if _dbx_pull_file(dbx, remote_db, _tmp_gz) and _dbx_gunzip(_tmp_gz, tmp):
                         _backup_daily()
                         _merge_ok = _dbx_merge_db(local_db, tmp)
                         tmp.unlink(missing_ok=True)
@@ -7416,7 +7449,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
                            else _dbx_remote_hash(dbx, remote_db)
             _unchanged = bool(known_remote) and _dbx_synced['stamp'] is not None and _db_stamp_pre == _dbx_synced['stamp']
-            if local_hash_now != known_remote and not _db_merge_failed and not _unchanged:
+            if not _db_merge_failed and not _unchanged:
                 # run lightweight integrity cleanup before upload so peers don't
                 # inherit duplicate album_tracks rows or stale pref_reset storms
                 try:
@@ -7425,9 +7458,14 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                 except Exception as _ce:
                     _log_dbx.warning('pre-upload cleanup err: %s', _ce)
                 _status('uploading library...')
-                _dbx_upload(dbx, local_db, remote_db)
+                _snap = Path(local_db).parent / 'library_upload.db.gz'
+                _dbx_snapshot_gz(local_db, _snap)
+                try:
+                    _dbx_upload(dbx, _snap, remote_db)
+                    _dbx_synced['remote'] = _dbx_db_hash(_snap)
+                finally:
+                    _snap.unlink(missing_ok=True)
                 results['pushed'].append('library.db')
-                _dbx_synced['remote'] = _dbx_db_hash(local_db)
             elif known_remote and not _db_merge_failed:
                 _dbx_synced['remote'] = known_remote
             _log_dbx.info('[dbx db] checkpoint=%s hash_differs=%s stamp_unchanged=%s merge_failed=%s', _cp, local_hash_now != known_remote, _unchanged, _db_merge_failed)
