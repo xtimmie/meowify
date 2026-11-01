@@ -3547,6 +3547,11 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
     with _cfg_lock:
         _pname = CFG.get('dl_speed_batch' if is_batch else 'dl_speed_single',
                          'balanced' if is_batch else 'fast')
+    if is_batch and batch_id:
+        with _batch_speed_override_lock:
+            _ov = _batch_speed_overrides.get(batch_id)
+        if _ov and _ov[0] in _DL_PROFILES['batch']:
+            _pname = _ov[0]
     _ptype = 'batch' if is_batch else 'single'
     _prof  = _DL_PROFILES[_ptype].get(_pname) or \
              _DL_PROFILES[_ptype]['balanced' if is_batch else 'fast']
@@ -6337,7 +6342,7 @@ def _dbx():
     except ImportError:
         return None
     tok = CFG.get('dropbox_refresh_token', '')
-    _log_dbx.info(f'[dbx] tok={bool(tok)} cfg_id={id(CFG)}')
+    _log_dbx.debug(f'[dbx] tok={bool(tok)}')
     if not tok:
         return None
     with _dbx_client_lock:
@@ -7320,6 +7325,11 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
     # ── 2. push merged db (skip if remote was already identical) ──────────────
     if push_db:
         try:
+            try:
+                with contextlib.closing(sqlite3.connect(str(local_db), timeout=10)) as _ck:
+                    _ck.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             local_hash_now = _dbx_db_hash(local_db)
             # reuse hash from step 1 if available (saves one API round-trip)
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
@@ -10557,6 +10567,11 @@ def api_export_backup_prepare():
     _export_tokens[token] = {'status': 'zipping', 'progress': 0, 'path': None, 'error': None, '_created': time.time()}
     def _do_zip():
         try:
+            try:
+                with contextlib.closing(sqlite3.connect(str(db_path()), timeout=10)) as _ck:
+                    _ck.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             files_meta = [f for f in [_SCFG, db_path(), ddir() / 'session.json'] if f.exists()]
             files_music = [f for f in mdir().rglob('*') if f.is_file()]
             files_covers = [f for f in cdir().rglob('*') if f.is_file()]
@@ -10682,7 +10697,7 @@ def api_import_backup():
                         # always remap data_dir to the current machine — the backup's
                         # data_dir is the source machine's path (e.g. a windows path
                         # being imported on android) and must never be restored as-is
-                        _restored_cfg['data_dir'] = str(_HOME)
+                        _restored_cfg['data_dir'] = str(ddir())
                         # device identity is per-install: never take it from the archive
                         _cur_ident = load_cfg()
                         for _idk in ('device_id', 'device_name'):
@@ -15322,7 +15337,7 @@ function colSort(key){
       S.queue.sort((a,b)=>{
         let av=a[field]??(typeof b[field]==='string'?'':0);
         let bv=b[field]??(typeof a[field]==='string'?'':0);
-        if(typeof av==='string')return S.libSortDir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+        if(typeof av==='string')return S.libSortDir==='asc'?_libCollator.compare(av,bv):_libCollator.compare(bv,av);
         return S.libSortDir==='asc'?av-bv:bv-av;
       });
       if(curId)S.qi=Math.max(0,S.queue.findIndex(s=>s.id===curId));
@@ -19733,7 +19748,7 @@ function renderLibrary(){
   songs.sort((a,b)=>{
     let av=a[S.libSort]??(typeof b[S.libSort]==='string'?'':0);
     let bv=b[S.libSort]??(typeof a[S.libSort]==='string'?'':0);
-    if(typeof av==='string')return S.libSortDir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+    if(typeof av==='string')return S.libSortDir==='asc'?_libCollator.compare(av,bv):_libCollator.compare(bv,av);
     return S.libSortDir==='asc'?av-bv:bv-av;
   });
   if(!S.library.length){
@@ -22707,6 +22722,7 @@ function _drainModalQueue() {
 
 function _queuedCloseModal(done) {
   closeModal();
+  if (window._currentModalDone === done) window._currentModalDone = null;
   done();
 }
 
@@ -23148,10 +23164,10 @@ async function downloadAllMissing(aid) {
 function _snumBars() {
   // 3 bars: low / mid / high - rendered as inline SVG driven by CSS animation
   // actual animation values are overridden by JS when analyser data is available
-  return `<div class="snum-bars" id="snum-bars-live">
-    <div class="snum-bar" id="sbar-0"></div>
-    <div class="snum-bar" id="sbar-1"></div>
-    <div class="snum-bar" id="sbar-2"></div>
+  return `<div class="snum-bars">
+    <div class="snum-bar"></div>
+    <div class="snum-bar"></div>
+    <div class="snum-bar"></div>
   </div>`;
 }
 
@@ -29359,9 +29375,9 @@ function showModal(title, body, acts) {
   if (!ov) {
     ov = document.createElement('div');
     ov.id = 'modal-overlay';
-    ov.addEventListener('mousedown', e => { if (e.target === ov) closeModal(); });
+    ov.addEventListener('mousedown', e => { if (e.target === ov) dismissModal(); });
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && ov.classList.contains('open')) closeModal();
+      if (e.key === 'Escape' && ov.classList.contains('open')) dismissModal();
     });
     (document.getElementById('app') || document.body).appendChild(ov);
   }
@@ -29386,7 +29402,7 @@ window.meowifyBack = function () {
     const topDrawer = [..._drawerHandles.keys()].pop();
     if (topDrawer && _drawerDismiss.has(topDrawer)) { _drawerDismiss.get(topDrawer)(); return true; }
     const modal = document.getElementById('modal-overlay');
-    if (modal && modal.classList.contains('open')) { closeModal(); return true; }
+    if (modal && modal.classList.contains('open')) { dismissModal(); return true; }
     if (window._settingsPopupOpen) { closeSettingsPopup(); return true; }
     const ctx = document.getElementById('ctx');
     if (ctx && ctx.classList.contains('on')) { closeCtxAnimated(); return true; }
@@ -29401,6 +29417,15 @@ window.meowifyBack = function () {
 function closeModal() {
   const ov = document.getElementById('modal-overlay');
   if (ov) ov.classList.remove('open');
+}
+
+function dismissModal() {
+  closeModal();
+  const d = window._currentModalDone;
+  window._currentModalDone = null;
+  if (window.resolvePrompt) window.resolvePrompt(null);
+  if (window.resolveConfirm) window.resolveConfirm(false);
+  if (d) d();
 }
 
 // ── cover lightbox ────────────────────────────────────────────────────────
