@@ -1228,6 +1228,8 @@ def _stats_upsert(artist, title, increment=True, timestamp=None, source='meowify
     _did = _dbx_get_device_id() if source == 'meowify' else None
     with _stats_upsert_lock:
         with db() as c:
+            if _did:
+                c.execute("UPDATE devices SET last_seen=? WHERE id=?", (now, _did))
             existing = _stats_fuzzy_match(c, artist, title)
             if existing:
                 ssid = existing['id']
@@ -2037,6 +2039,8 @@ def _kweight(x, sr):
 
     return x
 
+_lufs_missing_logged = [False]
+
 def _analyze_loudness_numpy(path):
     """fast block-gated mean-square loudness (no K-weighting). averages energy, not log-energies."""
     np = _import_numpy()
@@ -2069,7 +2073,12 @@ def _analyze_loudness_numpy(path):
         final = np.mean(ms[mask2])
         return float(10.0 * np.log10(final + 1e-12) - 0.691)
     except Exception as e:
-        _log_audio.warning('numpy lufs err: %s', e)
+        if isinstance(e, ImportError):
+            if not _lufs_missing_logged[0]:
+                _lufs_missing_logged[0] = True
+                _log_audio.warning('numpy lufs err: %s (further occurrences suppressed)', e)
+        else:
+            _log_audio.warning('numpy lufs err: %s', e)
         return None
 
 # ── lyrics ─────────────────────────────────────────────────────────────────────
