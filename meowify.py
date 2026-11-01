@@ -34129,7 +34129,7 @@ class _NmTray:
             if name == 'app': continue
             hw = getattr(ic, '_hwnd', None)
             if not hw: return None
-            i = NID(); i.cbSize = ctypes.sizeof(NID); i.hWnd = hw; i.uID = id(ic) & 0xFFFFFFFF   # pystray uses id(icon) as the icon id
+            i = NID(); i.cbSize = ctypes.sizeof(NID); i.hWnd = hw; i.uID = getattr(ic, '_nm_uid', id(ic)) & 0xFFFFFFFF
             r = wintypes.RECT()
             if sh.Shell_NotifyIconGetRect(ctypes.byref(i), ctypes.byref(r)) != 0: return None
             out[name] = (r.left, r.top, r.right, r.bottom)
@@ -34192,7 +34192,21 @@ class _NmTray:
             kind = 'pause' if (name == 'play' and _NM['playing']) else name
             img, title = _nm_glyph(kind, col), label
         _NM_GEN[0] += 1
-        ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
+        # fixed icon id per button so windows recognises them across restarts / rebuilds and remembers their position
+        # (pystray defaults to id(self) which is new every time, so windows treats them as brand new icons)
+        uid = {'prev': 0x6d01, 'play': 0x6d02, 'next': 0x6d03, 'app': 0x6d04}[name]
+        try:
+            import ctypes
+            from pystray._util import win32 as _w32
+            class _Ic(pystray.Icon):
+                def _message(self, code, flags, **kw):
+                    _w32.Shell_NotifyIcon(code, _w32.NOTIFYICONDATAW(
+                        cbSize=ctypes.sizeof(_w32.NOTIFYICONDATAW), hWnd=self._hwnd, hID=uid, uFlags=flags, **kw))
+            ic = _Ic(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
+        except Exception as e:
+            _log_server.warning(f'[native] fixed tray icon id failed, using pystray default: {e}')
+            ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
+        ic._nm_uid = uid
         self.icons[name] = ic
         ready = threading.Event()
         th = threading.Thread(target=self._run, args=(ic, name, ready), daemon=True)
