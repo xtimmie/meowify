@@ -349,7 +349,7 @@ def db():
     finally:
         conn.close()
 
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 
 
 def _split_artists(artist_str):
@@ -1082,6 +1082,25 @@ def init_db():
             if 'shuffle_mode' not in _pe_cols:
                 c.execute("ALTER TABLE play_events ADD COLUMN shuffle_mode TEXT")
 
+        if version < 11:
+            if 'device_id' not in [r[1] for r in c.execute("PRAGMA table_info(play_events)").fetchall()]:
+                c.execute("ALTER TABLE play_events ADD COLUMN device_id TEXT")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_play_events_device ON play_events(device_id)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS devices (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    device_type TEXT,
+                    os TEXT,
+                    os_version TEXT,
+                    model TEXT,
+                    arch TEXT,
+                    app_version TEXT,
+                    first_seen INTEGER,
+                    last_seen INTEGER
+                )
+            """)
+
         # queue_skip: song stays visible in library but is skipped when library is queued
         _qs_cols = [r[1] for r in c.execute("PRAGMA table_info(songs)").fetchall()]
         if 'queue_skip' not in _qs_cols:
@@ -1206,6 +1225,7 @@ def _stats_upsert(artist, title, increment=True, timestamp=None, source='meowify
         return
     now = int(time.time())
     ts = timestamp if timestamp is not None else now
+    _did = _dbx_get_device_id() if source == 'meowify' else None
     with _stats_upsert_lock:
         with db() as c:
             existing = _stats_fuzzy_match(c, artist, title)
@@ -1218,13 +1238,13 @@ def _stats_upsert(artist, title, increment=True, timestamp=None, source='meowify
                 ).fetchone()
                 if not already:
                     c.execute(
-                        "INSERT OR IGNORE INTO play_events (id, song_stats_id, timestamp, source, ms_played, skipped, reason_end, reason_start, shuffle, offline, shuffle_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT OR IGNORE INTO play_events (id, song_stats_id, timestamp, source, ms_played, skipped, reason_end, reason_start, shuffle, offline, shuffle_mode, device_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (str(uuid.uuid4()), ssid, ts, source, ms_played,
                          int(skipped) if skipped is not None else None,
                          reason_end, reason_start,
                          int(shuffle) if shuffle is not None else None,
                          int(offline) if offline is not None else None,
-                         shuffle_mode)
+                         shuffle_mode, _did)
                     )
                     if increment:
                         c.execute(
@@ -1239,13 +1259,13 @@ def _stats_upsert(artist, title, increment=True, timestamp=None, source='meowify
                     (ssid, ca, ct, 1 if increment else 0, ts if increment else None, ts)
                 )
                 c.execute(
-                    "INSERT OR IGNORE INTO play_events (id, song_stats_id, timestamp, source, ms_played, skipped, reason_end, reason_start, shuffle, offline, shuffle_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO play_events (id, song_stats_id, timestamp, source, ms_played, skipped, reason_end, reason_start, shuffle, offline, shuffle_mode, device_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), ssid, ts, source, ms_played,
                      int(skipped) if skipped is not None else None,
                      reason_end, reason_start,
                      int(shuffle) if shuffle is not None else None,
                      int(offline) if offline is not None else None,
-                     shuffle_mode)
+                     shuffle_mode, _did)
                 )
 
 def _stats_get(artist, title):
@@ -6443,6 +6463,54 @@ def _dbx_get_device_name():
         name = socket.gethostname() or 'unknown'
     return name
 
+def _device_info():
+    import platform as _pf
+    info = {'device_type': 'desktop', 'os': sys.platform, 'os_version': '', 'model': '', 'arch': ''}
+    try:
+        info['arch'] = _pf.machine() or ''
+    except Exception:
+        pass
+    if IS_ANDROID:
+        info['device_type'] = 'mobile'
+        info['os'] = 'android'
+        try:
+            from java import jclass
+            _bd = jclass('android.os.Build')
+            info['os_version'] = str(jclass('android.os.Build$VERSION').RELEASE)
+            info['model'] = (str(_bd.MANUFACTURER) + ' ' + str(_bd.MODEL)).strip()
+        except Exception:
+            pass
+    elif sys.platform == 'win32':
+        info['os'] = 'windows'
+        try:
+            info['os_version'] = '11' if int(_pf.version().split('.')[-1]) >= 22000 else _pf.release()
+        except Exception:
+            info['os_version'] = _pf.release()
+    elif sys.platform == 'darwin':
+        info['os'] = 'macos'
+        info['os_version'] = _pf.mac_ver()[0]
+    else:
+        info['os'] = 'linux'
+        info['os_version'] = _pf.release()
+    return info
+
+def _device_register():
+    try:
+        did = _dbx_get_device_id()
+        info = _device_info()
+        now = int(time.time())
+        with db() as c:
+            c.execute(
+                "INSERT INTO devices (id, name, device_type, os, os_version, model, arch, app_version, first_seen, last_seen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET name=excluded.name, device_type=excluded.device_type, "
+                "os=excluded.os, os_version=excluded.os_version, model=excluded.model, arch=excluded.arch, "
+                "app_version=excluded.app_version, last_seen=excluded.last_seen",
+                (did, _dbx_get_device_name(), info['device_type'], info['os'], info['os_version'],
+                 info['model'], info['arch'], APP_VERSION, now, now))
+    except Exception as e:
+        _log_dbx.warning(f'[devices] register err: {e}')
+
 def _dbx_read_manifest(dbx, device_id):
     """download and parse a peer device manifest. returns dict or None."""
     try:
@@ -7165,6 +7233,7 @@ def dbx_sync_now(push_db=True, pull_db=True, push_songs=False, pull_songs=True,
     if dbx is None:
         return {'error': 'dropbox not connected'}
     results = {'pushed': [], 'pulled': [], 'errors': []}
+    _device_register()
     device_id = _dbx_get_device_id()
     # idle detection state is captured BEFORE anything is read, so a change that lands
     # mid sync is never swallowed (worst case: one extra sync)
@@ -7692,7 +7761,7 @@ def _dbx_merge_db(local_path, remote_path):
         rc = rem.cursor()
         tables_data = {}
         for tbl in ('songs', 'song_stats', 'play_events', 'playlists', 'playlist_songs',
-                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics'):
+                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics', 'devices'):
             try:
                 rc.execute(f'SELECT * FROM {tbl}')
                 rows = rc.fetchall()
@@ -7955,6 +8024,19 @@ def _dbx_merge_db(local_path, remote_path):
                         f'(lyrics.fetched_at IS NULL OR excluded.fetched_at > lyrics.fetched_at)',
                         rows
                     )
+                elif tbl == 'devices':
+                    c.executemany(
+                        f'INSERT INTO devices ({col_str}) VALUES ({placeholders}) '
+                        f'ON CONFLICT(id) DO UPDATE SET '
+                        f'name=excluded.name, device_type=excluded.device_type, os=excluded.os, '
+                        f'os_version=excluded.os_version, model=excluded.model, arch=excluded.arch, '
+                        f'app_version=excluded.app_version, '
+                        f'first_seen=MIN(COALESCE(devices.first_seen, excluded.first_seen), COALESCE(excluded.first_seen, devices.first_seen)), '
+                        f'last_seen=excluded.last_seen '
+                        f'WHERE excluded.last_seen IS NOT NULL AND '
+                        f'(devices.last_seen IS NULL OR excluded.last_seen > devices.last_seen)',
+                        rows
+                    )
                 elif tbl == 'album_tracks':
                     # deduplicate by (album_id, track_num) and (album_id, genius_song_id)
                     # rather than bare INSERT OR IGNORE on id — remote rows have different
@@ -8006,6 +8088,15 @@ def _dbx_merge_db(local_path, remote_path):
                         f'INSERT OR IGNORE INTO {tbl} ({col_str}) VALUES ({placeholders})',
                         rows
                     )
+                    if tbl == 'play_events' and 'device_id' in cols:
+                        _di = cols.index('device_id')
+                        _si = cols.index('song_stats_id')
+                        _ti = cols.index('timestamp')
+                        _oi = cols.index('source')
+                        c.executemany(
+                            "UPDATE play_events SET device_id=? WHERE song_stats_id=? AND timestamp=? AND source=? AND device_id IS NULL",
+                            [(r[_di], r[_si], r[_ti], r[_oi]) for r in rows if r[_di]]
+                        )
             # recompute denormalized counters from the now-merged play_events
             c.execute("""
                 UPDATE song_stats SET
@@ -35659,6 +35750,7 @@ def main():
     no_browser = '--no-browser' in sys.argv
 
     init_db()
+    _device_register()
     threading.Thread(target=_backup_daily, daemon=True, name='db-snapshot').start()
     # always remove stuck downloading placeholders on startup - cheap and critical
     try:
