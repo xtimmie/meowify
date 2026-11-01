@@ -33982,7 +33982,11 @@ class _NmTray:
             btns = CFG.get('win_tray_btns')
             if not isinstance(btns, list): btns = ['prev', 'play', 'next']
             order += [b for b in ('prev', 'play', 'next') if b in btns]
-        for name in order: self._add(name)
+        # windows puts each new tray icon to the left of the ones before it, so the buttons are created in reverse and one at a time
+        # (waiting until each one is really in the tray), that way they end up as prev, play, next from left to right, app icon on the far left
+        for name in reversed(order):
+            ev = self._add(name)
+            ev.wait(3); time.sleep(0.15)
         if CFG.get('win_tray'): self._add('app')
 
     def _hide(self, name):
@@ -34016,16 +34020,22 @@ class _NmTray:
         _NM_GEN[0] += 1
         ic = pystray.Icon(f'meowify-{name}-{_NM_GEN[0]}', img, title, menu)
         self.icons[name] = ic
-        th = threading.Thread(target=self._run, args=(ic, name), daemon=True)
+        ready = threading.Event()
+        th = threading.Thread(target=self._run, args=(ic, name, ready), daemon=True)
         th.start(); self.threads.append(th)
+        return ready
 
     def ensure_app(self):
         if 'app' not in self.icons: self._add('app')
 
-    def _run(self, ic, name):
+    def _run(self, ic, name, ready=None):
+        def setup(i):
+            try: i.visible = True
+            finally:
+                if ready: ready.set()   # the icon is in the tray, the next one can be created
         try:
             _log_server.info(f'[native] tray icon {name} starting')
-            ic.run()
+            ic.run(setup)
             _log_server.info(f'[native] tray icon {name} stopped')
         except Exception as e:
             _NM_ST['err'] = f'tray {name}: {e}'[:200]
