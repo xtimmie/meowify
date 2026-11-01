@@ -16986,6 +16986,209 @@ class AudioEngine {
     [l[i], l[j]] = [l[j], l[i]];
     return window._nmSetting('win_wg_items', l);
   };
+  // ── widget layout editor: blocks (cover / buttons / text), a text block holds rows, a row holds fields (title / artist / lyrics) ──
+  const WG_F = ['title', 'artist', 'lyrics'];
+  const wgHas = (L, f) => L.some(b => b.t === 'text' && b.l.some(ln => ln.includes(f)));
+  function wgClean(l, noLy) {
+    if (!Array.isArray(l)) return null;
+    const seen = new Set(), out = [];
+    for (const b of l) {
+      if (!b) continue;
+      if (b.t === 'cover' || b.t === 'controls') { if (!seen.has(b.t)) { seen.add(b.t); out.push({ t: b.t }); } }
+      else if (b.t === 'text') {
+        const lines = [];
+        for (const ln of (Array.isArray(b.l) ? b.l : [])) {
+          const fl = [];
+          for (const k of (Array.isArray(ln) ? ln : [])) if (WG_F.includes(k) && !seen.has(k) && !(noLy && k === 'lyrics')) { seen.add(k); fl.push(k); }
+          if (fl.length) lines.push(fl);
+        }
+        out.push({ t: 'text', l: lines });
+      }
+    }
+    return out;
+  }
+  function wgOld() {   // what the old settings (items + text layout) described
+    const items = window._nmWgList();
+    const tx = ['inline', 'stacked', 'lyrics'].includes(CFG.win_wg_tx) ? CFG.win_wg_tx : CFG.win_wg_lp === 'below' ? 'lyrics' : CFG.win_wg_tl === 'stacked' ? 'stacked' : 'inline';
+    const out = []; let text = null;
+    for (const k of items) {
+      if (k === 'cover' || k === 'controls') out.push({ t: k });
+      else if (k === 'title' || k === 'artist') { if (!text) { text = { t: 'text', l: [] }; out.push(text); } }
+      else if (k === 'lyrics' && tx !== 'lyrics') out.push({ t: 'text', l: [['lyrics']] });
+    }
+    const ly = items.includes('lyrics') && tx === 'lyrics';
+    if (text) {
+      const ta = ['title', 'artist'].filter(k => items.includes(k));
+      text.l = tx === 'stacked' && ta.length === 2 ? ta.map(k => [k]) : [ta];
+      if (ly) text.l.push(['lyrics']);
+    } else if (ly) out.push({ t: 'text', l: [['lyrics']] });
+    return out;
+  }
+  function wgStrip(L) {   // the same layout without the lyrics field
+    const out = [];
+    for (const b of L) {
+      if (b.t !== 'text') { out.push({ t: b.t }); continue; }
+      const lines = b.l.map(ln => ln.filter(k => k !== 'lyrics')).filter(ln => ln.length);
+      if (lines.length || !b.l.length) out.push({ t: 'text', l: lines });
+    }
+    return out;
+  }
+  function wgTake(L, f) { for (const b of L) if (b.t === 'text') for (const ln of b.l) { const i = ln.indexOf(f); if (i >= 0) ln.splice(i, 1); } }
+  window._wgGet = function () {
+    const v = CFG.win_wg_lay && typeof CFG.win_wg_lay === 'object' ? CFG.win_wg_lay : {};
+    return { on: wgClean(v.on) || wgClean(wgOld()), off: wgClean(v.off, true) };   // off null = same as on, minus the lyrics
+  };
+  window._wgCur = function (S) { return window._wgTab === 'off' && wgHas(S.on, 'lyrics') ? 'off' : 'on'; };
+  window._wgSave = async function (v) {
+    CFG.win_wg_lay = v;
+    const el = document.getElementById('wg-ed');
+    if (el) el.innerHTML = window._wgEdHtml();   // instant, no whole page rebuild
+    try { await saveSetting('win_wg_lay', v); const r = await api('POST', '/api/native/apply'); if (r && r.error) _showSyncToast(r.error); } catch (e) {}
+    setTimeout(() => window._nmPrevRefresh && window._nmPrevRefresh(), 0);
+  };
+  function wgEdit(fn) {
+    const S = window._wgGet(), tab = window._wgCur(S), src = tab === 'on' ? S.on : S.off;
+    if (!src) return;
+    const L = JSON.parse(JSON.stringify(src));
+    if (fn(L) === false) return;
+    L.forEach(b => { if (b.t === 'text') b.l = b.l.filter(ln => ln.length); });
+    window._wgSave({ on: tab === 'on' ? L : S.on, off: tab === 'off' ? L : S.off });
+  }
+  window._wgDS = function (ev, k, a) {
+    ev.stopPropagation();
+    window._wgD = { k, a };
+    try { ev.dataTransfer.setData('text/plain', String(a)); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+    const t = ev.currentTarget; setTimeout(() => t && t.classList.add('drag'), 0);
+  };
+  window._wgDE = function () {
+    window._wgD = null;
+    document.querySelectorAll('.wged .on, .wged .drag').forEach(e => e.classList.remove('on', 'drag'));
+  };
+  window._wgOver = function (ev, el, z) {   // z: b = a spot between blocks, f = a spot for a field
+    const D = window._wgD;
+    if (!D || (z === 'b' ? D.k === 'fld' : D.k !== 'fld')) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if (el) el.classList.add('on');
+  };
+  window._wgDrop = function (ev, z, a, b, c) {   // b: block spot a / f: field spot (block a, row b, place c) / n: new row spot (block a, row b)
+    ev.preventDefault(); ev.stopPropagation();
+    const D = window._wgD; window._wgD = null;
+    document.querySelectorAll('.wged .on').forEach(e => e.classList.remove('on'));
+    if (!D) return;
+    wgEdit(L => {
+      let tb = null, tl = null, before = null;   // the spot is resolved to objects first, taking something out shifts the indexes
+      if (z === 'b') before = L[a] || null;
+      else if (z === 'f') { tb = L[a]; tl = tb.l[b]; before = tl[c] || null; }
+      else { tb = L[a]; before = tb.l[b] || null; }
+      let item;
+      if (D.k === 'blk') { item = L[D.a]; if (item === before) return false; L.splice(L.indexOf(item), 1); }
+      else if (D.k === 'new') item = D.a === 'text' ? { t: 'text', l: [] } : { t: D.a };
+      else { item = D.a; if (item === before) return false; wgTake(L, item); }
+      if (z === 'b') L.splice(before ? L.indexOf(before) : L.length, 0, item);
+      else if (z === 'f') tl.splice(before ? tl.indexOf(before) : tl.length, 0, item);
+      else tb.l.splice(before ? tb.l.indexOf(before) : tb.l.length, 0, [item]);
+    });
+  };
+  window._wgDel = i => wgEdit(L => { L.splice(i, 1); });
+  window._wgDelF = f => wgEdit(L => { wgTake(L, f); });
+  window._wgAdd = (k, a) => wgEdit(L => {   // click instead of drag: blocks go to the end, fields into a new row of the last text block
+    if (k === 'new') { L.push(a === 'text' ? { t: 'text', l: [] } : { t: a }); return; }
+    let tb = null;
+    for (const b of L) if (b.t === 'text') tb = b;
+    if (!tb) { tb = { t: 'text', l: [] }; L.push(tb); }
+    tb.l.push([a]);
+  });
+  window._wgTabSet = function (t) {
+    window._wgTab = t;
+    const el = document.getElementById('wg-ed'); if (el) el.innerHTML = window._wgEdHtml();
+    setTimeout(() => window._wgPrev2 && window._wgPrev2(), 0);
+  };
+  window._wgCustom = function () { const S = window._wgGet(); window._wgSave({ on: S.on, off: wgStrip(S.on) }); };
+  window._wgReset = function () { const S = window._wgGet(); window._wgSave({ on: S.on, off: null }); };
+  window._wgPrev2 = function () {   // preview of the layout used when the song has no synced lyrics
+    if (!document.getElementById('wg-prev-img2') || document.hidden || window._wgPrevBusy2) return;
+    window._wgPrevBusy2 = true;
+    fetch('/api/native/preview?v=off&t=' + Date.now(), { cache: 'no-store' })
+      .then(r => r.ok ? r.blob() : null)
+      .then(b => {
+        const im = document.getElementById('wg-prev-img2');
+        if (!b || !im) return;
+        const u = URL.createObjectURL(b), old = window._wgPrevUrl2;
+        window._wgPrevUrl2 = u; im.style.display = 'block'; im.src = u;
+        if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
+      })
+      .catch(() => {})
+      .finally(() => { window._wgPrevBusy2 = false; });
+  };
+  const wgCss = '<style>'
+    + '.wged{display:flex;flex-direction:column;gap:10px}.wged .tabs{display:flex;gap:6px;flex-wrap:wrap}'
+    + '.wged .note{font:var(--type-label-small);color:var(--color-on-surface-variant)}'
+    + '.wged .strip{display:flex;align-items:center;overflow-x:auto;padding:12px 8px;border-radius:14px;border:1.5px dashed rgba(128,128,128,.4);min-height:92px}'
+    + '.wged .zb{align-self:stretch;width:8px;flex-shrink:0;border-radius:6px;transition:width .12s,background .12s}'
+    + '.wged .zb.on{width:36px;background:color-mix(in srgb,var(--color-primary) 40%,transparent)}'
+    + '.wged .blk{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:12px;border:1.5px solid rgba(128,128,128,.45);background:color-mix(in srgb,var(--color-on-surface) 6%,transparent);cursor:grab;flex-shrink:0}'
+    + '.wged .blk.drag,.wged .fld.drag{opacity:.35}'
+    + '.wged .bh{display:flex;align-items:center;justify-content:space-between;gap:10px;font:var(--type-label-small);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:.5px;padding-bottom:4px}'
+    + '.wged .x{cursor:pointer;opacity:.65;padding:0 2px}.wged .x:hover{opacity:1}'
+    + '.wged .ln{display:flex;align-items:center;min-height:30px}'
+    + '.wged .zf{align-self:stretch;width:5px;flex-shrink:0;border-radius:4px;transition:width .12s,background .12s}'
+    + '.wged .zf.on{width:20px;background:color-mix(in srgb,var(--color-primary) 40%,transparent)}'
+    + '.wged .zl{height:5px;border-radius:4px;transition:height .12s,background .12s}'
+    + '.wged .zl.on{height:22px;background:color-mix(in srgb,var(--color-primary) 40%,transparent)}'
+    + '.wged .hint{font:var(--type-label-small);opacity:.6;padding:10px 6px;border-radius:8px}.wged .hint.on{background:color-mix(in srgb,var(--color-primary) 40%,transparent)}'
+    + '.wged .fld{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--color-primary);color:var(--color-on-primary,#fff);font:var(--type-label-medium);cursor:grab;white-space:nowrap}'
+    + '.wged .pal{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.wged .pal .lbl{font:var(--type-label-small);color:var(--color-on-surface-variant);margin-right:2px}'
+    + '.wged .pi{padding:4px 12px;border-radius:999px;border:1.5px solid rgba(128,128,128,.5);font:var(--type-label-small);cursor:grab;user-select:none}.wged .pi:hover{border-color:var(--color-primary)}'
+    + '</style>';
+  function wgFld(f) {
+    return `<span class="fld" draggable="true" ondragstart="_wgDS(event,'fld','${f}')" ondragend="_wgDE(event)">${f}<span class="x" onclick="_wgDelF('${f}')">×</span></span>`;
+  }
+  function wgBlock(b, i) {
+    const nm = { cover: 'cover', controls: 'buttons', text: 'text' }[b.t];
+    const over = z => `ondragover="_wgOver(event,this,'${z}')" ondragleave="this.classList.remove('on')"`;
+    let body = '';
+    if (b.t === 'text') {
+      const zn = li => `<div class="zl" ${over('f')} ondrop="_wgDrop(event,'n',${i},${li})"></div>`;
+      if (!b.l.length) body = `<div class="hint" ${over('f')} ondrop="_wgDrop(event,'n',${i},0)">drop title / artist / lyrics here</div>`;
+      else {
+        body = zn(0);
+        b.l.forEach((ln, li) => {
+          const zf = p => `<div class="zf" ${over('f')} ondrop="_wgDrop(event,'f',${i},${li},${p})"></div>`;
+          body += `<div class="ln">${zf(0)}${ln.map((f, p) => wgFld(f) + zf(p + 1)).join('')}</div>` + zn(li + 1);
+        });
+      }
+    }
+    return `<div class="blk" draggable="true" ondragstart="_wgDS(event,'blk',${i})" ondragend="_wgDE(event)"><div class="bh"><span>${nm}</span><span class="x" onclick="_wgDel(${i})">×</span></div>${body}</div>`;
+  }
+  function wgStripHtml(L) {
+    const z = i => `<div class="zb" ondragover="_wgOver(event,this,'b')" ondragleave="this.classList.remove('on')" ondrop="_wgDrop(event,'b',${i})"></div>`;
+    if (!L.length) return `<div class="strip" ondragover="_wgOver(event,null,'b')" ondrop="_wgDrop(event,'b',0)"><div class="note" style="padding:0 8px">empty, drag blocks here or click them below</div></div>`;
+    return `<div class="strip">${z(0)}${L.map((b, i) => wgBlock(b, i) + z(i + 1)).join('')}</div>`;
+  }
+  function wgPal(L, tab) {
+    const has = k => L.some(b => b.t === k);
+    const it = (k, a, l) => `<span class="pi" draggable="true" ondragstart="_wgDS(event,'${k}','${a}')" ondragend="_wgDE(event)" onclick="_wgAdd('${k}','${a}')">${l}</span>`;
+    let p = '';
+    if (!has('cover')) p += it('new', 'cover', '+ cover');
+    if (!has('controls')) p += it('new', 'controls', '+ buttons');
+    p += it('new', 'text', '+ text block');
+    for (const f of WG_F) if (!wgHas(L, f) && !(tab === 'off' && f === 'lyrics')) p += it('fld', f, '+ ' + f);
+    return `<div class="pal"><span class="lbl">add</span>${p}</div>`
+      + `<div class="note">drag blocks to reorder them. a text block holds rows, drag title / artist / lyrics into a row to put them side by side or between rows to start a new row. × removes, click an add chip to append it</div>`;
+  }
+  window._wgEdHtml = function () {
+    const S = window._wgGet(), tab = window._wgCur(S), L = tab === 'on' ? S.on : S.off;
+    const chip = (on, js, l) => `<button class="btn ${on ? 'btn-filled' : 'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="${js}">${l}</button>`;
+    let h = '';
+    if (wgHas(S.on, 'lyrics')) h += `<div class="tabs">${chip(tab === 'on', "_wgTabSet('on')", 'song has synced lyrics')}${chip(tab === 'off', "_wgTabSet('off')", 'no lyrics')}</div>`;
+    if (tab === 'off') {
+      h += `<div class="note">${L ? 'this layout is used while the song has no synced lyrics' : 'without synced lyrics the same layout is used, just without the lyrics. customize it to change that, for example to stack title and artist'}</div>`;
+      h += `<img id="wg-prev-img2" alt="" draggable="false" ${window._wgPrevUrl2 ? 'src="' + window._wgPrevUrl2 + '"' : ''} style="display:${window._wgPrevUrl2 ? 'block' : 'none'};max-width:100%;height:auto;border-radius:10px;align-self:flex-start">`;
+      h += `<div>${L ? chip(false, '_wgReset()', 'reset to same as the lyrics layout') : chip(true, '_wgCustom()', 'customize')}</div>`;
+    }
+    if (L) h += wgStripHtml(L) + wgPal(L, tab);
+    return wgCss + `<div class="wged">${h}</div>`;
+  };
   window._nmMode = async function (m) {
     await saveSetting('win_wg', m === 'widget'); CFG.win_wg = m === 'widget';
     await saveSetting('win_tray_ctrl', m === 'tray'); CFG.win_tray_ctrl = m === 'tray';
@@ -17039,8 +17242,8 @@ class AudioEngine {
     const prevBox = `<div style="display:flex;justify-content:center;padding:10px 0 4px;overflow-x:auto"><img id="wg-prev-img" ${window._wgPrevUrl ? `src="${window._wgPrevUrl}"` : ''} alt="" draggable="false" style="display:block;max-width:100%;height:auto;border-radius:12px" onload="this.style.width=(this.naturalWidth/(window.devicePixelRatio||1))+'px'" onerror="this.style.display='none'"></div><div class="set-sub" style="text-align:center;padding-bottom:4px">live preview, the lyric line is a sample when the current song has none</div>`;
     const wgRows = mode !== 'widget' ? '' : (subRow ? subRow('widget', 'taskbar widget', 'what it shows, layout, colors, size and a live preview', () => wgPage()) : wgPage());
     function wgPage() { return prevBox + hd('layout') +
-      row('widget items', 'tick what shows, up / down changes the order. title and artist share one block, lyrics can be their own block anywhere in the order or sit under the text', wgItems)
-      + (wgOn.some(k => ['title', 'artist', 'lyrics'].includes(k)) ? row('text layout', 'never more than two lines so it fits the taskbar. stacked needs title and artist ticked, lyrics under needs lyrics ticked', txCards) : '')
+      `<div style="font:var(--type-label-small);color:var(--color-on-surface-variant);padding:6px 0 10px">build the widget from blocks, every block is free to move. a text block holds rows and each row can hold title, artist and lyrics side by side. songs with synced lyrics and songs without can have their own layout</div><div id="wg-ed">${window._wgEdHtml()}</div>`
+      + ''
       + hd('look')
       + row('widget background', 'auto follows the windows theme, accent uses your meowify color, transparent has no background at all so it blends into the taskbar', wgOpt('win_wg_bg', 'auto', [['auto', 'auto'], ['dark', 'dark'], ['light', 'light'], ['accent', 'accent'], ['none', 'transparent']]))
       + row('widget text size', 'shrinks on its own if the taskbar is too thin for it', wgOpt('win_wg_fs', 'm', [['s', 'small'], ['m', 'medium'], ['l', 'large']]))
@@ -17062,6 +17265,8 @@ class AudioEngine {
       + row('close to tray', 'the x button hides meowify into the tray instead of quitting, the tray icon shows up for this even if its turned off. quit from the tray menu (webview mode only)', sw('win_close_min', !!CFG.win_close_min));
   };
   setInterval(() => { if (_nmOn) _nativePush(); }, 500);   // catches play / pause changes that dont go through updatePositionState
+  const _prv0 = window._nmPrevRefresh;
+  window._nmPrevRefresh = function () { _prv0(); if (window._wgPrev2) window._wgPrev2(); };   // the second preview (layout without lyrics) refreshes with the first
   setInterval(() => { if (window._nmPrevRefresh) window._nmPrevRefresh(); }, 1000);   // keeps the widget preview in settings live
   setTimeout(_nativeInit, 3000);
   setTimeout(() => { if (window._nativeReload) window._nativeReload(); }, 9000);   // re-read status after python built the tray
@@ -34974,6 +35179,219 @@ def _wg_render(sp, W, hover, press):
     img = _wg_draw_texts(img, texts)
     return img, btns
 
+# ── widget layout: a list of blocks (cover / buttons / text), a text block is a list of rows, a row is a list of fields (title / artist / lyrics) ──
+_WG_FIELDS = ('title', 'artist', 'lyrics')
+
+def _wg_lay_clean(l, no_ly=False):
+    """sanitized copy of a layout, every block type and field at most once, None when its not a list"""
+    if not isinstance(l, list): return None
+    out, seen = [], set()
+    for b in l:
+        t = b.get('t') if isinstance(b, dict) else None
+        if t in ('cover', 'controls'):
+            if t not in seen: seen.add(t); out.append({'t': t})
+        elif t == 'text':
+            lines = []
+            for ln in (b['l'] if isinstance(b.get('l'), list) else []):
+                fl = []
+                for k in (ln if isinstance(ln, list) else []):
+                    if k in _WG_FIELDS and k not in seen and not (no_ly and k == 'lyrics'): seen.add(k); fl.append(k)
+                if fl: lines.append(fl)
+            out.append({'t': 'text', 'l': lines})
+    return out
+
+def _wg_lay_old():
+    """the layout the old settings (items + text layout) described, so nothing changes for existing setups"""
+    items = CFG.get('win_wg_items')
+    if not isinstance(items, list): items = ['cover', 'title', 'artist', 'controls']
+    items = [k for i, k in enumerate(items) if k in ('cover', 'title', 'artist', 'lyrics', 'controls') and k not in items[:i]]
+    tx = _wg_txmode()
+    out, text = [], None
+    for k in items:
+        if k in ('cover', 'controls'): out.append({'t': k})
+        elif k in ('title', 'artist'):
+            if text is None: text = {'t': 'text', 'l': []}; out.append(text)
+        elif k == 'lyrics' and tx != 'lyrics': out.append({'t': 'text', 'l': [['lyrics']]})
+    ly = 'lyrics' in items and tx == 'lyrics'
+    if text is not None:
+        ta = [k for k in ('title', 'artist') if k in items]
+        text['l'] = [[k] for k in ta] if (tx == 'stacked' and len(ta) == 2) else [ta]
+        if ly: text['l'].append(['lyrics'])
+    elif ly: out.append({'t': 'text', 'l': [['lyrics']]})
+    return out
+
+def _wg_lay_strip(l):
+    """the same layout without the lyrics field"""
+    out = []
+    for b in l:
+        if b['t'] != 'text': out.append(b); continue
+        lines = [[k for k in ln if k != 'lyrics'] for ln in b['l']]
+        lines = [ln for ln in lines if ln]
+        if lines or not b['l']: out.append({'t': 'text', 'l': lines})
+    return out
+
+def _wg_lay_cfg():
+    """(layout for songs with synced lyrics, layout for songs without), the second one is the first minus lyrics unless its set on its own"""
+    v = CFG.get('win_wg_lay')
+    v = v if isinstance(v, dict) else {}
+    on = _wg_lay_clean(v.get('on'))
+    if on is None: on = _wg_lay_clean(_wg_lay_old())
+    off = _wg_lay_clean(v.get('off'), True)
+    if not any('lyrics' in ln for b in on if b['t'] == 'text' for ln in b['l']): off = on
+    elif off is None: off = _wg_lay_strip(on)
+    return on, off
+
+def _wg_vis(sp):
+    """the layout with only what has something to show right now, an empty artist drops out and so does a text block left without rows"""
+    out = []
+    for b in sp['lay']:
+        if b['t'] != 'text': out.append(b); continue
+        lines = []
+        for ln in b['l']:
+            fl = [k for k in ln if k != 'artist' or sp['artist']]
+            if fl: lines.append(fl)
+        if lines: out.append({'t': 'text', 'l': lines})
+    return out
+
+def _wg_m2(sp):
+    sc = sp['sc']
+    return {'pad': int(8 * sc), 'gap': int(8 * sc), 'cs': max(8, sp['H'] - int(8 * sc)), 'bs': int(30 * sc), 'sep': int(19 * sc),
+            'lmin': int(120 * sc), 'lfix': int(220 * sc), 'base': {'s': 11, 'm': 12.5, 'l': 14}.get(sp['fs'], 12.5) * sc}
+
+def _wg_px(sp, m, b):
+    """font size per row of a text block, more rows = smaller text, a lone lyrics row may wrap onto two lines"""
+    n, H, sc = len(b['l']), sp['H'], sp['sc']
+    if n == 1 and b['l'][0] == ['lyrics']: return [max(6, int(round(min(m['base'], (H - 6 * sc) / 2 / 1.2))))]
+    fs = max(6, int(round(min(m['base'], (H - 8 * sc) / (1.25 * n)))))
+    return [fs] + [max(6, int(round(fs * 0.9)))] * (n - 1)
+
+def _wg_fw(sp, m, k, px):
+    if k == 'title': return _wg_tw(sp['title'], px, True)
+    if k == 'artist': return _wg_tw(sp['artist'], px)
+    return max(m['lmin'], int(_wg_tw(sp['lyric'], px)) + 2) if sp['autolyr'] else m['lfix']
+
+def _wg_block_nat(sp, m, b):
+    best = 0
+    for ln, px in zip(b['l'], _wg_px(sp, m, b)):
+        best = max(best, sum(_wg_fw(sp, m, k, px) for k in ln) + m['sep'] * (len(ln) - 1))
+    return int(best) + 2
+
+def _wg_geo(sp, W):
+    """(metrics, visible blocks, [(block, x, width)])"""
+    m = _wg_m2(sp); vis = _wg_vis(sp)
+    nat = {i: _wg_block_nat(sp, m, b) for i, b in enumerate(vis) if b['t'] == 'text'}
+    fixed = sum((m['cs'] if b['t'] == 'cover' else 3 * m['bs']) for b in vis if b['t'] != 'text')
+    R = max(0, W - 2 * m['pad'] - m['gap'] * max(0, len(vis) - 1) - fixed)
+    tot, wd = sum(nat.values()), {}
+    if nat and tot <= R:
+        wd = dict(nat)
+        flex = [i for i in nat if any('lyrics' in ln for ln in vis[i]['l'])] or [min(nat)]   # leftover space goes to the lyrics blocks, else to the first text block
+        for i in flex: wd[i] += (R - tot) // len(flex)
+    elif nat:
+        k = R / float(tot)
+        wd = {i: max(int(40 * sp['sc']), int(n * k)) for i, n in nat.items()}
+    pos, x = [], m['pad']
+    for i, b in enumerate(vis):
+        w_ = m['cs'] if b['t'] == 'cover' else 3 * m['bs'] if b['t'] == 'controls' else wd.get(i, 0)
+        pos.append((b, x, w_)); x += w_ + m['gap']
+    return m, vis, pos
+
+def _wg_natural(sp):
+    """width the widget wants for its content (auto width)"""
+    m = _wg_m2(sp); vis = _wg_vis(sp)
+    w = 2 * m['pad'] + m['gap'] * max(0, len(vis) - 1)
+    for b in vis: w += m['cs'] if b['t'] == 'cover' else 3 * m['bs'] if b['t'] == 'controls' else _wg_block_nat(sp, m, b)
+    return w
+
+def _wg_render(sp, W, hover, press):
+    """draws the whole widget from its layout, returns (RGBA image, button rects [(x0, y0, x1, y1, cmd)])"""
+    from PIL import Image, ImageDraw, ImageChops
+    H, sc = sp['H'], sp['sc']
+    m, vis, pos = _wg_geo(sp, W)
+    bg, fg, mut, acc, lc = sp['colors']
+    img = Image.new('RGBA', (W, H), bg)
+    S = 4
+    if sp['radius'] > 0:
+        mk = Image.new('L', (W * S, H * S), 0)
+        ImageDraw.Draw(mk).rounded_rectangle([0, 0, W * S - 1, H * S - 1], radius=sp['radius'] * S, fill=255)
+        img.putalpha(ImageChops.multiply(img.getchannel('A'), mk.resize((W, H), Image.LANCZOS)))
+    sh = Image.new('RGBA', (W * S, H * S), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sh)
+    btns, texts, dots, cover_at = [], [], [], None
+    for b, x, wd in pos:
+        t = b['t']
+        if t == 'cover':
+            cover_at = (x, (H - m['cs']) // 2)
+        elif t == 'controls':
+            bs = m['bs']
+            y0 = (H - bs) // 2
+            for i, (kind, cmd) in enumerate((('prev', 'prev'), ('pause' if sp['playing'] else 'play', 'toggle'), ('next', 'next'))):
+                x0 = x + i * bs
+                btns.append((x0, y0, x0 + bs, y0 + bs, cmd))
+                idx = len(btns) - 1
+                if idx == hover:
+                    sd.ellipse([x0 * S, y0 * S, (x0 + bs) * S - 1, (y0 + bs) * S - 1], fill=(128, 128, 128, 102 if press == idx else 71))
+                _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, fg, S)
+        elif t == 'text' and wd > 0:
+            pxs, n = _wg_px(sp, m, b), len(b['l'])
+            if n == 1 and b['l'][0] == ['lyrics']:   # a lone lyrics row can wrap onto two lines
+                if sp['lyric']:
+                    px = pxs[0]
+                    a, dsc = _wg_font(px, False, 0).getmetrics()
+                    pitch = max(a + dsc, int(px * 1.2))
+                    lines = _wg_wrap(sp['lyric'], wd, px, 2)
+                    top = (H - pitch * len(lines)) / 2.0
+                    for i, ln in enumerate(lines):
+                        texts.append((x, int(top + i * pitch + (pitch - (a + dsc)) / 2.0 + a), ln, px, False, lc))
+                continue
+            mets = []
+            for ln, px in zip(b['l'], pxs):
+                a, dsc = _wg_font(px, 'title' in ln, 0).getmetrics()
+                mets.append((a, dsc, int(px * 1.12) if n > 1 else max(a + dsc, int(px * 1.2))))   # rows sit closer together when stacked
+            y = (H - sum(p for _, _, p in mets)) / 2.0
+            for ln, px, (a, dsc, p) in zip(b['l'], pxs, mets):
+                base = int(y + (p - (a + dsc)) / 2.0 + a)
+                y += p
+                txt = {'title': sp['title'], 'artist': sp['artist'], 'lyrics': sp['lyric']}
+                shown = [k for k in ln if txt[k]]   # an empty lyric line keeps its row but draws nothing
+                cx, rem = x, wd
+                for j, k in enumerate(shown):
+                    if j:
+                        if rem - m['sep'] < 24 * sc: break
+                        r = max(1.5, 1.5 * sc)
+                        dots.append((cx + int(8 * sc) + r, base - a * 0.36, r))
+                        cx += m['sep']; rem -= m['sep']
+                    bold = k == 'title'
+                    tt = _wg_trim(txt[k], rem, px, bold)
+                    texts.append((cx, base, tt, px, bold, fg if k == 'title' else mut if k == 'artist' else lc))
+                    w_ = int(_wg_tw(tt, px, bold)); cx += w_; rem -= w_
+                    if tt != txt[k]: break   # trimmed, nothing fits after it
+    for cx, cy, r in dots:
+        sd.ellipse([(cx - r) * S, (cy - r) * S, (cx + r) * S, (cy + r) * S], fill=mut)
+    cv_mask = None
+    if cover_at:
+        cs = m['cs']
+        cm = Image.new('L', (cs * S, cs * S), 0)
+        cd = ImageDraw.Draw(cm)
+        if sp['shape'] == 'circle': cd.ellipse([0, 0, cs * S - 1, cs * S - 1], fill=255)
+        elif sp['shape'] == 'square': cd.rectangle([0, 0, cs * S - 1, cs * S - 1], fill=255)
+        else: cd.rounded_rectangle([0, 0, cs * S - 1, cs * S - 1], radius=int(6 * sc * S), fill=255)
+        cv_mask = cm.resize((cs, cs), Image.LANCZOS)
+    sh = sh.resize((W, H), Image.LANCZOS)
+    img = Image.alpha_composite(img, sh)
+    if cover_at:
+        cs = m['cs']
+        if sp['cover'] is not None:
+            c = sp['cover']
+            side = min(c.size)
+            c = c.crop(((c.width - side) // 2, (c.height - side) // 2, (c.width + side) // 2, (c.height + side) // 2)).resize((cs, cs), Image.LANCZOS)
+            img.paste(c.convert('RGBA'), cover_at, cv_mask)
+        else:
+            ph = Image.new('RGBA', (cs, cs), (128, 128, 128, 64))
+            img.paste(ph, cover_at, cv_mask)
+    img = _wg_draw_texts(img, texts)
+    return img, btns
+
 def _wg_draw_texts(img, texts):
     """text as a coverage mask per color, composited with real alpha (drawing straight into the rgba image blends the edges with the bg rgb, which looks faint on a transparent bg)"""
     from PIL import Image, ImageDraw, ImageChops
@@ -35174,7 +35592,13 @@ class _NmWidget:
         def f(k, d):
             try: return float(CFG.get(k, d))
             except Exception: return d
-        return {'items': tuple(seen), 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
+        lay = _wg_lay_cfg()
+        seen = []   # what the layouts use, so the cover / lyrics only get loaded when something shows them
+        for l in lay:
+            for b in l:
+                for k in ([b['t']] if b['t'] != 'text' else [k for ln in b['l'] for k in ln]):
+                    if k not in seen: seen.append(k)
+        return {'items': tuple(seen), 'lay': lay, 'bg': CFG.get('win_wg_bg') or 'auto', 'fs': CFG.get('win_wg_fs') or 'm',
                 'shape': CFG.get('win_wg_shape') or 'round', 'lmode': CFG.get('win_wg_lmode') or 'theme', 'lcol': lc,
                 'auto': bool(CFG.get('win_wg_auto')), 'autolyr': bool(CFG.get('win_wg_autolyr')),
                 'tl': 'stacked' if _wg_txmode() == 'stacked' else 'inline', 'lp': 'below' if _wg_txmode() == 'lyrics' else 'side',
@@ -35348,7 +35772,7 @@ class _NmWidget:
             if mem: g.DeleteDC(mem)
             u.ReleaseDC(None, sdc)
 
-    def preview_png(self):
+    def preview_png(self, variant='on'):
         """the widget as it is drawn in the taskbar, on a taskbar colored backdrop, for the live preview in settings (png bytes)"""
         import io
         from PIL import Image
@@ -35360,13 +35784,17 @@ class _NmWidget:
         st = self._state()
         if not st['id']: st = dict(st, title='song title', artist='artist name')
         lyr = self._lyric(st, cfg)
-        if 'lyrics' in cfg['items'] and not (st['id'] and self.lrc_for == st['id'] and self.lrc): lyr = 'a sample lyric line shows up here'
+        hl = bool(st['id'] and self.lrc_for == st['id'] and self.lrc)
+        lay = cfg['lay'][1] if variant == 'off' else cfg['lay'][0]   # off = the layout used when the song has no synced lyrics
+        if variant == 'off': lyr = ''
+        elif 'lyrics' in cfg['items'] and not hl: lyr = 'a sample lyric line shows up here'
         cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
         light = self._sys_light(time.time())
         sp = {'H': H, 'sc': sc, 'items': list(cfg['items']), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'],
               'tl': cfg['tl'], 'lp': cfg['lp'], 'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
               'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
+        sp['lay'] = lay
         W = max(int(120 * sc), min(mx, _wg_natural(sp))) if cfg['auto'] else mx
         img, _btn = _wg_render(sp, W, -1, -1)
         mg = max(10, int(14 * sc))
@@ -35409,19 +35837,22 @@ class _NmWidget:
         H = max(16, tbh - 2 * pad)
         st = self._state()
         lyr = self._lyric(st, cfg)
-        items = tuple(i for i in cfg['items'] if i != 'lyrics' or (st['id'] and self.lrc_for == st['id'] and self.lrc))   # no synced lyrics = no lyrics block
+        hl = bool(st['id'] and self.lrc_for == st['id'] and self.lrc)   # synced lyrics available for this song
+        lay = cfg['lay'][0] if hl else cfg['lay'][1]
+        items = tuple(i for i in cfg['items'] if i != 'lyrics' or hl)
         if 'cover' in cfg['items'] and st['id'] and self.cover_for != st['id'] and self.cover_busy != st['id']:
             self.cover_busy = st['id']
             threading.Thread(target=self._load_cover, args=(st['id'],), daemon=True).start()
         cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
         light = self._sys_light(now)
         sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, items, cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
-               cfg['auto'], cfg['autolyr'], cfg['tl'], cfg['lp'], cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover))
+               cfg['auto'], cfg['autolyr'], repr(lay), cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover))
         if sig != self.sig:
             self.sig = sig
             self.sp = {'H': H, 'sc': sc, 'items': list(items), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'], 'tl': cfg['tl'], 'lp': cfg['lp'],
                        'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
                        'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
+            self.sp['lay'] = lay
             self.nat = _wg_natural(self.sp) if cfg['auto'] else 0
             self.dirty = True
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
@@ -35784,7 +36215,7 @@ def native_widget_page():
 def api_native_preview():
     wg = _NM_ST.get('wg')
     if not wg: return Response(status=404)
-    try: png = wg.preview_png()
+    try: png = wg.preview_png('off' if request.args.get('v') == 'off' else 'on')
     except Exception as e:
         _log_server.warning(f'[native] preview failed: {e}')
         return Response(status=500)
