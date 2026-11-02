@@ -4720,11 +4720,11 @@ def cover(sid):
             _alb = c.execute("SELECT a.cover_path FROM albums a JOIN songs s ON s.album_id=a.id WHERE s.id=?", (sid,)).fetchone()
             if _alb and _alb[0] and Path(_alb[0]).exists():
                 _cr = send_file(_alb[0], mimetype='image/jpeg', conditional=True)
-                _cr.headers['Cache-Control'] = 'private, max-age=600'
+                _cr.headers['Cache-Control'] = 'private, no-cache'
                 return _cr
             return '', 404
     _cr = send_file(row[0], mimetype='image/jpeg', conditional=True)
-    _cr.headers['Cache-Control'] = 'private, max-age=600'
+    _cr.headers['Cache-Control'] = 'private, no-cache'
     return _cr
 
 @app.route('/api/import-spotify-history', methods=['POST'])
@@ -11742,6 +11742,15 @@ def api_song_cover_upload(sid):
         cov = write_cover(sid, data)
         c.execute("UPDATE songs SET cover_path=?, modified_at=? WHERE id=?", (cov, int(time.time()), sid))
     return jsonify({'ok': True, 'cover_path': cov})
+
+@app.route('/api/songs/<sid>/cover-remove', methods=['POST'])
+def api_song_cover_remove(sid):
+    with db() as c:
+        row = c.execute("SELECT id FROM songs WHERE id=?", (sid,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        c.execute("UPDATE songs SET cover_path=NULL, modified_at=? WHERE id=?", (int(time.time()), sid))
+    return jsonify({'ok': True})
 
 @app.route('/api/songs/<sid>/ytm-refresh', methods=['POST'])
 def api_song_ytm_refresh(sid):
