@@ -30431,7 +30431,7 @@ function applyLG() {
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) && (!G || !LG_TIER[k] || G.active(LG_TIER[k])) });
   const _lgDesk = () => !!document.querySelector('#app:not(.mobile)'), _lgFull = () => document.body.classList.contains('rs-full');
   L.merge('frame', { groups: () => _lgFull() ? ['sidebar', 'topbar', 'rsidebars'] : ['sidebar', 'topbar'], radius: '--frame-r', cut: '#vc-wrap', layer: '#app', when: _lgDesk });
-  L.removeMerge('frame-sb');
+  if (!window._lgSbGone) { window._lgSbGone = 1; L.removeMerge('frame-sb'); }
   _lensOverLG(over);
   L.enable(on);
   document.querySelectorAll('.list-header').forEach(_pinLG);
