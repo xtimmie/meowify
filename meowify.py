@@ -30488,7 +30488,7 @@ function popPaint(el) {
     // closed while still springing: let go, popTick then runs end() to clean up
     if (!p.open()) { _POP.set.delete(el); return; }
     // % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen
-    const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110;
+    const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110 * SHEET_FX.over;
     el.style.translate = '0 ' + (dn - (over ? room * Math.tanh(over / room) : 0)).toFixed(3) + '%';
     const sy = 1 + p.s * SHEET_FX.jelly; // origin is the bottom edge so the top is what stretches
     el.style.scale = Math.pow(sy, -SHEET_FX.wide).toFixed(4) + ' ' + sy.toFixed(4); // wide: 1 = width is the inverse of the height so the area stays the same, 0 = off
@@ -30550,9 +30550,9 @@ function bounceSync() {
 }
 function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
-// bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
-// room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 400, z: 0.7, zmin: .55, room: 90, jelly: .15, wide: 1 };
+// bottom sheet entrance (ctx / sort / downloads drawers). t = settle time in seconds, z = damping ratio at default bounciness (1 = no wobble), zmin = lowest ratio at max bounciness,
+// over = overshoot size multiplier (1 = as the spring gives, 0 = none), room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
+var SHEET_FX = { t: .29, z: 0.7, zmin: .55, over: 1, room: 90, jelly: .15, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
@@ -30570,10 +30570,10 @@ function _sheetSnap(dy, vel) {
 }
 function bounceSheet(el, x0 = 0, v0 = 0) {
   if (el._popOff) { el._popOff(); el._popOff = null; }
-  const s = _bnPrefs(), m = s.b / .5, z = Math.max(SHEET_FX.zmin, Math.min(1, 1 - (1 - SHEET_FX.z) * m));
+  const s = _bnPrefs(), m = s.b / .5, z = Math.max(SHEET_FX.zmin, Math.min(1, 1 - (1 - SHEET_FX.z) * m)), w = 4 / (z * SHEET_FX.t);
   el.style.setProperty('transition', 'none', 'important'); // css transition off for the entrance, the spring owns it
   el.style.transformOrigin = '50% 100%';
-  el._pop = { x: x0, v: v0, tgt: 1, s: 0, sheet: true, open: () => _sheetOpen(el), k: SHEET_FX.k, c: 2 * Math.sqrt(SHEET_FX.k) * z, end: bounceSheetEnd };
+  el._pop = { x: x0, v: v0, tgt: 1, s: 0, sheet: true, open: () => _sheetOpen(el), k: w * w, c: 2 * w * z, end: bounceSheetEnd };
   popPaint(el); _POP.set.add(el);
   if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
   // touching the sheet hands it over to the drag, so the spring lets go
