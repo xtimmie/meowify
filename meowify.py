@@ -22976,6 +22976,7 @@ function editSong(sid) {
        <div style="display:flex;flex-direction:column;gap:6px;flex:1">
          <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="uploadSongCover('${sid}')">
          <button class="btn btn-out mu-ripple" style="width:100%" onclick="document.getElementById('edit-song-cover-file').click()">upload cover</button>
+         <button class="btn btn-out mu-ripple" style="width:100%" onclick="removeSongCover('${sid}')">remove cover</button>
          ${song.genius_id ? `<button class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','genius')">redownload cover (genius)</button>` : ''}
          <button class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','ytm')">redownload cover (ytm)</button>
        </div>
@@ -23106,14 +23107,31 @@ async function saveSongEdit(sid) {
   else if (res && res.error) { showModal('error', `<p>${esc(res.error)}</p>`, '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>'); }
 }
 
+async function removeSongCover(sid) {
+  const r = await api('POST', '/api/songs/'+sid+'/cover-remove');
+  if (r && r.ok) {
+    const img = document.getElementById('edit-song-cover-img');
+    if (img && img.tagName === 'IMG') img.src = '/cover/'+sid+'?t='+Date.now();
+    await loadData(); rerenderCurrentView();
+  } else if (r && r.error) {
+    showModal('error', `<p>${esc(r.error)}</p>`, '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
+  }
+}
+
 async function uploadSongCover(sid) {
   const fileInput = document.getElementById('edit-song-cover-file');
   const file = fileInput?.files?.[0];
   if (!file) return;
   const fd = new FormData();
   fd.append('file', file);
-  const r = await fetch('/api/songs/'+sid+'/cover-upload', {method:'POST', body:fd});
-  const res = await r.json().catch(() => ({}));
+  let res = {};
+  try {
+    const r = await fetch('/api/songs/'+sid+'/cover-upload', {method:'POST', body:fd});
+    res = await r.json().catch(() => ({ error: 'upload failed (' + r.status + ')' }));
+  } catch (e) {
+    res = { error: 'upload failed: ' + e };
+  }
+  fileInput.value = '';
   if (res && res.ok) {
     const img = document.getElementById('edit-song-cover-img');
     if (img && img.tagName === 'IMG') img.src = '/cover/'+sid+'?t='+Date.now();
@@ -30533,7 +30551,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
 // room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 300, z: 1, zmin: .55, room: 90, jelly: .2, wide: 1 };
+var SHEET_FX = { k: 400, z: 1, zmin: .55, room: 90, jelly: .15, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
