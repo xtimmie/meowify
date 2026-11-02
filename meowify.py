@@ -30294,11 +30294,13 @@ var LENS_FX = {
 var _LENS = { x: 0, v: 0, tgt: 0, w: 0, s: 0, dir: 1, t: 0, raf: 0, ready: false, nw: 0, limL: 0, limR: 0 };
 function lensPaint() {
   const sl = document.querySelector('#mobile-nav .mob-lens-slide'); if (!sl) return;
-  const L = _LENS, F = LENS_FX, sx = 1 + L.s, sy = 1 / (1 + L.s * F.squash), dir = L.dir;
+  const L = _LENS, F = LENS_FX, sx = 1 + L.s, sy = 1 / (1 + L.s * F.squash);
+  // origin slides with the velocity instead of flipping with the direction: 0 = left edge, .5 = center, 1 = right edge
+  const o = .5 - .5 * F.lead * Math.max(-1, Math.min(1, L.v / 300));
   // anchor the trailing edge so the leading edge stretches ahead, then keep the whole thing inside the nav
-  const lo = dir > 0 ? L.x : L.x + L.w - L.w * sx, hi = lo + L.w * sx;
+  const lo = L.x + o * L.w * (1 - sx), hi = lo + L.w * sx;
   let dx = 0; if (lo < L.limL) dx = L.limL - lo; else if (hi > L.limR) dx = L.limR - hi;
-  sl.style.transformOrigin = dir > 0 ? '0% 50%' : '100% 50%';
+  sl.style.transformOrigin = (o * 100).toFixed(2) + '% 50%';
   sl.style.translate = (L.x + dx).toFixed(2) + 'px 0';
   sl.style.scale = sx.toFixed(4) + ' ' + sy.toFixed(4);
 }
