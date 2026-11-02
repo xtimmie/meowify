@@ -20116,6 +20116,7 @@ function _searchPlaceholder(v) {
 }
 
 function toggleGlobalSearch(forceClose) {
+  if (S.view === 'add' && !forceClose) { const _d = document.getElementById('dlq'); if (_d) { _d.focus(); if (_d.select) _d.select(); } return; }
   const wasOpen = S.globalSearchOpen || !!document.getElementById('topbar-title-area')?.classList.contains('search-open');
   if (forceClose || wasOpen) {
     S.globalSearchOpen = false;
@@ -20136,6 +20137,24 @@ function toggleGlobalSearch(forceClose) {
   }
 }
 
+function _srchNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();
+}
+const _srchHayCache = new WeakMap();
+function _songHay(s) {
+  const sig = [s.title, s.artist, s.featuring_artists, s.album].map(x => x || '').join('|');
+  const c = _srchHayCache.get(s);
+  if (c && c.sig === sig) return c.h;
+  const h = _srchNorm(sig);
+  _srchHayCache.set(s, { sig, h });
+  return h;
+}
+function _songMatches(s, q) {
+  const toks = _srchNorm(q).split(' ').filter(Boolean);
+  if (!toks.length) return true;
+  const hay = _songHay(s);
+  return toks.every(t => hay.includes(t));
+}
 let _searchDebounceT = null;
 function onGlobalSearch(val) {
   S.globalSearch = val;
@@ -20235,7 +20254,7 @@ function renderLibrary(){
   let songs=[...S.library];
   if(S.libSearch.trim()){
     const q=S.libSearch.trim().toLowerCase();
-    songs=songs.filter(s=>((s.title||'')+(s.artist||'')+(s.album||'')).toLowerCase().includes(q));
+    songs=songs.filter(s=>_songMatches(s,q));
   }
   songs.sort((a,b)=>{
     let av=a[S.libSort]??(typeof b[S.libSort]==='string'?'':0);
@@ -20371,12 +20390,13 @@ async function renderPlaylist(pid){
   }
   let songs=S.plSongs[pid];
   const q=(S.globalSearch||'').trim().toLowerCase();
-  if(q) songs=songs.filter(s=>((s.title||'')+(s.artist||'')+(s.album||'')).toLowerCase().includes(q));
+  if(q) songs=songs.filter(s=>_songMatches(s,q));
   if(!S.plSongs[pid].length){
     vc.innerHTML=`<div class="empty"><div class="ei" style="font-size:0;color:var(--color-on-surface-variant)"><svg width="48" height="40" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg></div><p>this playlist is empty</p><button class="btn btn-tonal mu-ripple" onclick="setView('library')">browse library</button></div>`;
     return;
   }
   if(!songs.length){
+    if(S._vlist){S._vlist.destroy();S._vlist=null;}
     vc.innerHTML=`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no songs match "${esc(S.globalSearch)}"</p></div>`;
     return;
   }
@@ -20441,7 +20461,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
     if(!allTracks||!allTracks.length){
       const songs=(await api('GET','/api/albums/'+aid+'/songs')||[]);
       if(_viewStale('album',aid))return;
-      const filtered=q?songs.filter(s=>((s.title||'')+(s.artist||'')).toLowerCase().includes(q)):songs;
+      const filtered=q?songs.filter(s=>_songMatches(s,q)):songs;
       S.viewSongs=songs;
       _rebuildViewIdx();
       if(!songs.length){vc.innerHTML=albumHeader(albInfo)+`<div class="empty"><div class="ei">💿</div><p>this album is empty</p></div>`;return;}
@@ -20453,7 +20473,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
     const lib=new Map();
     for(const s of S.library) if(need.has(s.id)) lib.set(s.id,s);
     const ownedCount=need.size;
-    const filteredTracks=q?allTracks.filter(t=>((t.title||'')+(t.artist||'')).toLowerCase().includes(q)):allTracks;
+    const filteredTracks=q?allTracks.filter(t=>_songMatches(t,q)):allTracks;
     S.viewSongs=allTracks.filter(t=>t.owned).map(t=>lib.get(t.song_id)).filter(Boolean);
     _rebuildViewIdx();
     if(!filteredTracks.length){vc.innerHTML=albumHeader(albInfo,ownedCount,allTracks.length)+`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no tracks match "${esc(S.globalSearch)}"</p></div>`;return;}
@@ -32852,7 +32872,7 @@ async function renderStats() {
 
 function renderSettings() {
   if (S.view !== 'settings' && !window._settingsPopupOpen) return;
-  const _sq = (S.globalSearch || '').trim().toLowerCase();
+  const _sq = ((!isMobile() && window._settingsPopupOpen) ? (window._setPopupQ || '') : (S.globalSearch || '')).trim().toLowerCase();
   const D = window._DEPS || {};
 
   const rowDisabled = (title, reason, control) => {
@@ -32955,7 +32975,7 @@ function renderSettings() {
   const _pcSearchBar = _pcSearchMode ? `
     <div class="set-pc-search-bar">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="set-pc-search-input" type="text" placeholder="search all settings..." value="${esc(S.globalSearch)}" oninput="onSettingsPopupSearch(this.value)">
+      <input id="set-pc-search-input" type="text" placeholder="search all settings..." value="${esc(window._setPopupQ || '')}" oninput="onSettingsPopupSearch(this.value)">
     </div>` : '';
 
   const _backBtn = _isMob ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
@@ -33572,7 +33592,7 @@ function openSettingsPopup() {
 function closeSettingsPopup() {
   window._settingsPopupOpen = false;
   if (window._settingsSection === '_search') window._settingsSection = 'playback';
-  S.globalSearch = '';
+  window._setPopupQ = '';
   const ov = document.getElementById('set-pc-overlay');
   if (ov) ov.classList.remove('open');
   _stopDbxTabPoll();
@@ -33581,21 +33601,21 @@ function closeSettingsPopup() {
 function setSettingsPopupSection(id) {
   window._settingsSection = id;
   window._settingsSub = null;
-  if (id !== '_search') S.globalSearch = '';
+  if (id !== '_search') window._setPopupQ = '';
   renderSettingsPopupShell();
   if (id === 'dropbox sync') { refreshDbxStatus().then(_startDbxTabPoll); } else { _stopDbxTabPoll(); }
 }
 
 function openSettingsPopupSearch() {
   window._settingsSection = '_search';
-  S.globalSearch = '';
+  window._setPopupQ = '';
   renderSettingsPopupShell();
   setTimeout(() => document.getElementById('set-pc-search-input')?.focus(), 30);
 }
 
 let _setPcSearchT = null;
 function onSettingsPopupSearch(val) {
-  S.globalSearch = val;
+  window._setPopupQ = val;
   const inp = document.getElementById('set-pc-search-input');
   const caret = inp ? inp.selectionStart : null;
   clearTimeout(_setPcSearchT);
@@ -34339,7 +34359,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             openSettingsPopupSearch();
           } else {
             if (!S.globalSearchOpen) toggleGlobalSearch();
-            setTimeout(() => document.getElementById('tsearch-input')?.focus(), 290);
+            if (S.view !== 'add') setTimeout(() => document.getElementById('tsearch-input')?.focus(), 290);
           }
         }
         break;
