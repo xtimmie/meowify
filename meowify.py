@@ -6107,15 +6107,16 @@ def api_artist_patch(aid):
         if fresh or renamed:
             claimed = {}
             for oid, oname, oal in c.execute("SELECT id, name, aliases FROM artists WHERE id!=?", (aid,)).fetchall():
-                claimed[(oname or '').lower()] = oname
+                claimed[(oname or '').lower()] = (oid, oname)
                 try:
                     for a in json.loads(oal or '[]'):
-                        claimed.setdefault(str(a).lower(), oname)
+                        claimed.setdefault(str(a).lower(), (oid, oname))
                 except Exception:
                     pass
             for a in fresh:
                 if a.lower() in claimed:
-                    return jsonify({'error': f"'{a}' already belongs to {claimed[a.lower()]}"}), 409
+                    return jsonify({'error': f"'{a}' already belongs to {claimed[a.lower()][1]}",
+                                    'merge_loser': claimed[a.lower()][0], 'merge_name': claimed[a.lower()][1]}), 409
         sets = ['name=?', 'aliases=?']
         vals = [name, json.dumps(aliases, ensure_ascii=False)]
         if new_gid is not None:
@@ -23526,6 +23527,13 @@ async function editArtist(aid) {
   }
 }
 
+function _mergeConfirm(title, text) {
+  return new Promise(resolve => {
+    window.resolveConfirm = v => { delete window.resolveConfirm; resolve(v); };
+    showModal(title, `<p>${esc(text)}</p>`, `<button class="btn btn-out mu-ripple" onclick="closeModal();resolveConfirm(false)">cancel</button><button class="btn btn-fill mu-ripple" onclick="closeModal();resolveConfirm(true)">merge</button>`);
+  });
+}
+
 async function saveArtistEdit(aid) {
   const v = id => document.getElementById(id)?.value ?? '';
   const body = {
@@ -23536,9 +23544,22 @@ async function saveArtistEdit(aid) {
   };
   const g = v('edit-artist-genius').trim();
   if (g !== (window._editArtistOrig?.gid || '')) body.genius = g;
-  const res = await api('PATCH', '/api/artists/' + aid, body);
+  let res = await api('PATCH', '/api/artists/' + aid, body);
+  if (res && typeof res.error === 'string' && res.error.charAt(0) === '{') { try { res = JSON.parse(res.error); } catch (e) {} }
+  if (res && res.merge_loser) {
+    if (!(await _mergeConfirm('merge ' + res.merge_name + ' into this artist?', 'all songs of ' + res.merge_name + ' move to this artist and it becomes an alias. the rest of ur edits get saved too'))) return;
+    const mr0 = await api('POST', '/api/artists/' + res.merge_loser + '/merge', { into: aid });
+    if (!(mr0 && mr0.ok)) { _artistErr((mr0 && mr0.error) || 'merge failed'); return; }
+    const na = await api('GET', '/api/artists/' + aid);
+    try {
+      const have = new Set(body.aliases.map(x => x.toLowerCase()));
+      JSON.parse((na && na.aliases) || '[]').forEach(x => { if (!have.has(String(x).toLowerCase())) body.aliases.push(x); });
+    } catch (e) {}
+    res = await api('PATCH', '/api/artists/' + aid, body);
+    if (res && typeof res.error === 'string' && res.error.charAt(0) === '{') { try { res = JSON.parse(res.error); } catch (e) {} }
+  }
   if (res && res.merge_into) {
-    if (await confirmModal('merge into ' + res.merge_name + '?', 'all songs move to that artist and this name becomes an alias of it')) {
+    if (await _mergeConfirm('merge into ' + res.merge_name + '?', 'all songs move to that artist and this name becomes an alias of it')) {
       const mr = await api('POST', '/api/artists/' + aid + '/merge', { into: res.merge_into });
       if (mr && mr.ok) { closeModal(); S._artPg = null; await loadData(); setView('artist', null, mr.id); }
       else _artistErr((mr && mr.error) || 'merge failed');
@@ -24365,8 +24386,8 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   const _ghostTitleWrap = isGhost ? 'opacity:0.45;' : '';
   cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):artistNamesHtml(s.artist||'',s.featuring_artists||'')}${(!isSpecial&&_listCompact&&!isMobile()&&opts.view!=='album'&&s.album)?' · '+esc(s.album):''}</div></div></div>`;
   const _inAlbumView = opts.view === 'album';
-  const _albLink = s.album_id && !_inAlbumView && !isMobile();
-  cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}" onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${s.album_id}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(s.album||'-')}</div>`;
+  const _albLink = s.album_id && s.album && !_inAlbumView && !isMobile();
+  cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}"${s.album?'':' style="opacity:.4"'} onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${s.album_id}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(s.album||'-')}</div>`;
   cell.date=isSpecial?`<div class="sdate"></div>`:`<div class="sdate">${fmtDate(s.added_at)}</div>`;
   cell.duration=isGhost?`<div class="sdur" style="color:var(--color-on-surface-variant);opacity:0.35">—</div>`:isSpecial?`<div class="sdur"></div>`:`<div class="sdur">${s.duration?fmt(s.duration):''}</div>`;
   cell.plays=isGhost?`<div class="splays" style="color:var(--color-on-surface-variant);opacity:0.35">—</div>`:isSpecial?`<div class="splays"></div>`:`<div class="splays">${fmtPlays(s.play_count)}</div>`;
