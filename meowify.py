@@ -3835,6 +3835,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             except Exception as _ye:
                 _log_ytm.warning('ytm pre-search err: %s', _ye)
 
+        _cls_type = ''
         if is_url and not is_video:
             _cls_vid = video_id_r
             if not _cls_vid:
@@ -4038,6 +4039,10 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
 
         # determine actual source from yt-dlp info
         _ie_key = (info.get('ie_key') or info.get('extractor') or '').lower()
+        if is_url and not is_video and 'youtube' in _ie_key:
+            _uchan = info.get('channel') or info.get('uploader') or ''
+            if not (_cls_type in ('MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC') or info.get('track') or info.get('album') or _uchan.endswith(' - Topic')):
+                is_video = True
         src_name = 'soundcloud' if 'soundcloud' in _ie_key else ('youtube_video' if is_video else 'youtube')
         if info.get('track'):
             title = clean_title(info['track'], artist)
