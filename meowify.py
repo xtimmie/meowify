@@ -27531,7 +27531,7 @@ function _renderDlPanel(opening) {
     if (_bn) panel.classList.add('no-anim');
     void panel.offsetHeight;
     panel.classList.add('on');
-    if (_bn) bounceIn(panel, { dist: .18, ty: -8 });
+    if (_bn) { const ph = panel.offsetHeight; bounceIn(panel, { dist: .18, ty: -8, hx: panelW * panelW / (panelW * panelW + ph * ph) }); } // origin is the top right corner, so the stretch runs along its diagonal
     document.getElementById('dl-panel-btn')?.classList.add('active');
     document.addEventListener('click', _dlPanelOutsideClick, true);
   }
@@ -28676,7 +28676,7 @@ function showCtx(e, items, opts) {
   ctx.style.top  = top  + 'px';
   ctx.style.transformOrigin = (mx - left) + 'px ' + (my - top) + 'px';
   ctx.style.visibility = '';
-  if (_bn) bounceIn(ctx, { dist: .18, ty: -8 });
+  if (_bn) { const ddx = w / 2 - (mx - left), ddy = h / 2 - (my - top), dd = ddx * ddx + ddy * ddy; bounceIn(ctx, { dist: .18, ty: -8, hx: dd > 1 ? ddx * ddx / dd : 1 }); } // stretch runs from the origin towards the menu center
 }
 
 function hideCtx() {
@@ -30330,7 +30330,9 @@ var POP_FX = {
 var _POP = { set: new Set(), raf: 0, t: 0 };
 function popPaint(el) {
   const p = el._pop, F = POP_FX;
-  el.style.scale = (p.x * (1 + p.s)).toFixed(4) + ' ' + (p.x / (1 + p.s * F.squash)).toFixed(4);
+  // hx = share of the stretch that lands on x (dx² of the origin to center direction), the rest goes to y, 1 = plain horizontal stretch
+  const hx = p.hx == null ? 1 : p.hx, a = 1 + p.s, b = 1 / (1 + p.s * F.squash);
+  el.style.scale = (p.x * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (p.x * a ** (1 - hx) * b ** hx).toFixed(4);
   if (p.pop) {
     const t = Math.max(0, Math.min(1, (p.x - p.pop.from) / (1 - p.pop.from)));
     el.style.opacity = Math.min(1, t * 1.8).toFixed(3);
@@ -30384,7 +30386,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 function bounceIn(el, o = {}) {
   const s = _bnPrefs(), from = Math.max(.05, Math.min(.98, 1 - (o.dist == null ? .18 : o.dist) * s.str));
-  el._pop = { x: from, v: 0, tgt: 1, s: 0, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
+  el._pop = { x: from, v: 0, tgt: 1, s: 0, hx: o.hx, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
   popPaint(el); _POP.set.add(el);
   if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
 }
