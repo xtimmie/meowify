@@ -14949,7 +14949,7 @@ function openSortDrawer() {
   sheet.style.transform = ''; sheet.style.transformOrigin = '';
   sheet.style.transition = ''; sheet.style.left = ''; sheet.style.top = ''; sheet.style.visibility = '';
   sheet.classList.remove('on', 'no-anim', 'mob-ctx-active');
-  requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('on'); if (bounceOn()) bounceSheet(sheet); }));
+  requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('on'); if (bounceSheetOn()) bounceSheet(sheet); }));
   _initMobCtxDrag(sheet);
   _registerDrawer(sheet, hideCtx);
 }
@@ -20558,6 +20558,7 @@ function _registerDrawer(el, onDismiss) {
   // if already registered (re-opening the same element), pop the old entry
   // first so it doesn't leave a stale backdrop behind
   _unregisterDrawer(el, true);
+  el._sheetRelease = _sheetSnap; // motionui's sheet drag asks this on a release that doesnt dismiss
   const handle = MU.drawerStack.push(el, {
     baseZ: 1500,
     step: 10,
@@ -20656,6 +20657,7 @@ function _openMobSheet(which) {
   // scroll content to top
   const scrollable = el.querySelector('.nowplaying-body,.lyrics-body,#queue-inner');
   if (scrollable) scrollable.scrollTop = 0;
+  if (bounceSheetOn()) bounceSheet(el);
 }
 
 function _closeMobSheet(which) {
@@ -27628,7 +27630,7 @@ function _renderDlPanel(opening) {
     panel.classList.remove('on', 'no-anim', 'mob-ctx-active');
     requestAnimationFrame(() => requestAnimationFrame(() => {
       panel.classList.add('on');
-      if (bounceOn()) bounceSheet(panel);
+      if (bounceSheetOn()) bounceSheet(panel);
     }));
     const dismiss = () => {
       panel.style.transform = ''; panel.style.transformOrigin = '';
@@ -28766,7 +28768,7 @@ function showCtx(e, items, opts) {
     // two rAFs: first lets browser paint the off-screen state, second triggers transition
     requestAnimationFrame(() => requestAnimationFrame(() => {
       ctx.classList.add('on');
-      if (bounceOn()) bounceSheet(ctx);
+      if (bounceSheetOn()) bounceSheet(ctx);
     }));
     // open this drawer's own backdrop and wire drag-to-dismiss
     _initMobCtxDrag(ctx);
@@ -30453,7 +30455,7 @@ function popPaint(el) {
   const p = el._pop, F = POP_FX;
   if (p.sheet) {
     // closed while still springing: let go, popTick then runs end() to clean up
-    if (!el.classList.contains('on')) { _POP.set.delete(el); return; }
+    if (!p.open()) { _POP.set.delete(el); return; }
     // % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen
     const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110;
     el.style.translate = '0 ' + (dn - (over ? room * Math.tanh(over / room) : 0)).toFixed(3) + '%';
@@ -30496,11 +30498,12 @@ function popTo(el, on, instant) {
   _POP.set.add(el);
   if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
 }
-var _BN_DEF = { on: true, str: 1, b: .5 };
+var _BN_DEF = { on: true, str: 1, b: .5, sheets: true };
 var _BN_BASE = null;
 var _BN_SLIDE = 3;
 function _bnPrefs() { const v = DevPrefs.get('bounce'); return Object.assign({}, _BN_DEF, v && typeof v === 'object' ? v : {}); }
 function bounceOn() { return !!_bnPrefs().on; }
+function bounceSheetOn() { return bounceOn() && !!_bnPrefs().sheets; }
 function bounceSync() {
   const s = _bnPrefs(), m = s.b / .5;
   if (!_BN_BASE) _BN_BASE = { pk: POP_FX.stiffness, pd: POP_FX.damping, ps: POP_FX.stretch, pf: POP_FX.from, lk: LENS_FX.stiffness, ld: LENS_FX.damping, ls: LENS_FX.stretch, lm: LENS_FX.maxStretch };
@@ -30517,17 +30520,28 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
 // room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 210, z: .55, zmin: .3, room: 90, jelly: .06 };
+var SHEET_FX = { k: 210, z: .71, zmin: .55, room: 90, jelly: .16 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
 }
-function bounceSheet(el) {
+function _sheetOpen(el) { return el.id.endsWith('-sidebar') ? !el.classList.contains('hidden') : el.classList.contains('on'); }
+// released after a short drag down (not enough to dismiss): spring back up from where the finger left it, carrying the release speed.
+// motionui's sheet drag calls el._sheetRelease(dy px, speed px/ms) and skips its own css snap back when this returns true
+function _sheetSnap(dy, vel) {
+  const el = this;
+  if (!bounceSheetOn() || !_sheetOpen(el)) return false;
+  const T = 1.1 * (el.offsetHeight || 1); // the spring runs 0..1 over 110% of the sheet height
+  bounceSheet(el, Math.max(0, 1 - dy / T), -vel * 1000 / T);
+  el.style.transform = ''; // the drag's own offset, the identical spring offset was just painted
+  return true;
+}
+function bounceSheet(el, x0 = 0, v0 = 0) {
   if (el._popOff) { el._popOff(); el._popOff = null; }
   const s = _bnPrefs(), m = s.b / .5, z = Math.max(SHEET_FX.zmin, Math.min(1, 1 - (1 - SHEET_FX.z) * m));
   el.style.setProperty('transition', 'none', 'important'); // css transition off for the entrance, the spring owns it
   el.style.transformOrigin = '50% 100%';
-  el._pop = { x: 0, v: 0, tgt: 1, s: 0, sheet: true, k: SHEET_FX.k, c: 2 * Math.sqrt(SHEET_FX.k) * z, end: bounceSheetEnd };
+  el._pop = { x: x0, v: v0, tgt: 1, s: 0, sheet: true, open: () => _sheetOpen(el), k: SHEET_FX.k, c: 2 * Math.sqrt(SHEET_FX.k) * z, end: bounceSheetEnd };
   popPaint(el); _POP.set.add(el);
   if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
   // touching the sheet hands it over to the drag, so the spring lets go
@@ -30565,6 +30579,12 @@ function bounceSettingsHtml(sq) {
         <div class="sb-line"><div class="sb-l"><div class="sb-n">enable bounce</div><div class="sb-s">off = menus use the old css pop and the nav pill stops wobbling</div></div>
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${s.on ? 'checked' : ''} onchange="bounceSet('on',this.checked);renderSettings()" onclick="event.stopPropagation()">
+            <div class="switch-track"><div class="switch-thumb"></div></div>
+          </label>
+        </div>
+        <div class="sb-line ${s.on ? '' : 'off'}"><div class="sb-l"><div class="sb-n">bouncy drawers</div><div class="sb-s">mobile sheets (song menu, sort, downloads, queue, lyrics, now playing) spring in and bounce back after a short drag, off = they keep the old css slide</div></div>
+          <label class="switch" style="flex-shrink:0">
+            <input type="checkbox" ${s.sheets ? 'checked' : ''} onchange="bounceSet('sheets',this.checked)" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         </div>
