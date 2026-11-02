@@ -7279,7 +7279,7 @@ def _dbx_snapshot_gz(src, dst):
         try:
             s.backup(d)
             try:
-                d.execute('DELETE FROM play_events')
+                d.execute('DROP TABLE play_events')
                 d.execute('VACUUM')
             except Exception as _ve:
                 _log_dbx.warning('[dbx snapshot] strip play_events failed: %s', _ve)
