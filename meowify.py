@@ -359,6 +359,13 @@ _ART_STATE = {'t': 0.0, 'map': {}, 'alts': {}}
 _ART_LOCK = threading.Lock()
 _art_disp_cache = {}
 
+def _akey(s):
+    if not s:
+        return ''
+    import unicodedata as _ud
+    t = ''.join(ch for ch in str(s) if _ud.category(ch) != 'Cf')
+    return re.sub(r'\s+', ' ', t).strip().lower()
+
 def _art_map_refresh(force=False):
     if not force and _ART_STATE['t'] and time.monotonic() - _ART_STATE['t'] < 3.0:
         return
@@ -383,12 +390,12 @@ def _art_map_refresh(force=False):
             except Exception:
                 lst = []
             parsed.append((name, lst))
-            m[_ulower(name)] = name
+            m[_akey(name)] = name
         am = {}
         for name, lst in parsed:
             for a in lst:
-                am.setdefault(_ulower(a), name)
-            alts[_ulower(name)] = [name] + lst
+                am.setdefault(_akey(a), name)
+            alts[_akey(name)] = [name] + lst
         m.update(am)
         if m != _ART_STATE['map']:
             _art_disp_cache.clear()
@@ -402,10 +409,10 @@ def _artist_alt_names(raw):
         if not raw:
             return []
         _art_map_refresh()
-        main = _ART_STATE['map'].get(_ulower(raw))
+        main = _ART_STATE['map'].get(_akey(raw))
         if not main:
             return []
-        return [n for n in _ART_STATE['alts'].get(_ulower(main), []) if _ulower(n) != _ulower(raw)]
+        return [n for n in _ART_STATE['alts'].get(_akey(main), []) if _akey(n) != _akey(raw)]
     except Exception:
         return []
 
@@ -425,13 +432,13 @@ def _disp_artist(raw):
         while i < len(toks):
             main, used = None, 1
             for j in range(min(len(toks), i + 3), i, -1):
-                main = m.get(_ulower(', '.join(toks[i:j])))
+                main = m.get(_akey(', '.join(toks[i:j])))
                 if main:
                     used = j - i
                     break
             if not main:
                 main = toks[i]
-            k = _ulower(main)
+            k = _akey(main)
             if k not in seen:
                 seen.add(k)
                 out.append(main)
@@ -2987,7 +2994,7 @@ def _upsert_song_artists(c, song_id, artist_str, feat_str, ytm_artists=None):
         for ar in all_artists:
             try:
                 aliases = _json.loads(ar[1] or '[]')
-                if any(a.lower() == key for a in aliases):
+                if any(_akey(a) == _akey(name) for a in aliases):
                     if _ytm_ch.get(key) and not ar[2]:
                         c.execute("UPDATE artists SET ytm_channel_id=? WHERE id=?", (_ytm_ch[key], ar[0]))
                     return ar[0]
@@ -5939,7 +5946,19 @@ def api_artists():
             GROUP BY a.id
             ORDER BY song_count DESC
         """).fetchall()
-    return jsonify([dict(r) for r in rows])
+    out = [dict(r) for r in rows]
+    if CFG.get('artist_use_main_name', True):
+        owner = {}
+        for r in out:
+            try:
+                for al in json.loads(r.get('aliases') or '[]'):
+                    k = _akey(str(al))
+                    if k:
+                        owner.setdefault(k, r['id'])
+            except Exception:
+                pass
+        out = [r for r in out if owner.get(_akey(r['name']), r['id']) == r['id']]
+    return jsonify(out)
 
 @app.route('/api/artists/<aid>')
 def api_artist_detail(aid):
@@ -5948,15 +5967,32 @@ def api_artist_detail(aid):
     if not row: return jsonify({'error': 'not found'}), 404
     return jsonify(dict(row))
 
+def _artist_link_ids(c, aid):
+    ids = [aid]
+    try:
+        if not CFG.get('artist_use_main_name', True):
+            return ids
+        row = c.execute("SELECT aliases FROM artists WHERE id=?", (aid,)).fetchone()
+        keys = {_akey(str(a)) for a in json.loads((row[0] if row else None) or '[]')}
+        keys.discard('')
+        if keys:
+            for oid, oname in c.execute("SELECT id, name FROM artists WHERE id!=?", (aid,)).fetchall():
+                if _akey(oname) in keys:
+                    ids.append(oid)
+    except Exception:
+        pass
+    return ids
+
 @app.route('/api/artists/<aid>/songs')
 def api_artist_songs(aid):
     with db() as c:
         rows = c.execute("""
             SELECT s.* FROM songs_display s
             JOIN song_artists sa ON sa.song_id = s.id
-            WHERE sa.artist_id = ? AND s.source != 'downloading'
+            WHERE sa.artist_id IN (SELECT value FROM json_each(?)) AND s.source != 'downloading'
+            GROUP BY s.id
             ORDER BY s.added_at DESC
-        """, (aid,)).fetchall()
+        """, (json.dumps(_artist_link_ids(c, aid)),)).fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/artists/<aid>/albums')
@@ -5966,9 +6002,9 @@ def api_artist_albums(aid):
             SELECT DISTINCT a.* FROM albums a
             JOIN songs s ON s.album_id = a.id
             JOIN song_artists sa ON sa.song_id = s.id
-            WHERE sa.artist_id = ?
+            WHERE sa.artist_id IN (SELECT value FROM json_each(?))
             ORDER BY a.year DESC, a.created_at DESC
-        """, (aid,)).fetchall()
+        """, (json.dumps(_artist_link_ids(c, aid)),)).fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/artists/<aid>/page')
@@ -5981,10 +6017,10 @@ def api_artist_page(aid):
             SELECT s.*, MIN(CASE WHEN sa.role='featuring' THEN 1 ELSE 0 END) AS _feat_only
             FROM songs_display s
             JOIN song_artists sa ON sa.song_id = s.id
-            WHERE sa.artist_id = ? AND s.source != 'downloading'
+            WHERE sa.artist_id IN (SELECT value FROM json_each(?)) AND s.source != 'downloading'
             GROUP BY s.id
             ORDER BY s.added_at DESC
-        """, (aid,)).fetchall()
+        """, (json.dumps(_artist_link_ids(c, aid)),)).fetchall()
         songs, appears = [], []
         for r in rows:
             d = dict(r)
@@ -6107,16 +6143,16 @@ def api_artist_patch(aid):
         if fresh or renamed:
             claimed = {}
             for oid, oname, oal in c.execute("SELECT id, name, aliases FROM artists WHERE id!=?", (aid,)).fetchall():
-                claimed[(oname or '').lower()] = (oid, oname)
+                claimed[_akey(oname)] = (oid, oname)
                 try:
                     for a in json.loads(oal or '[]'):
-                        claimed.setdefault(str(a).lower(), (oid, oname))
+                        claimed.setdefault(_akey(str(a)), (oid, oname))
                 except Exception:
                     pass
             for a in fresh:
-                if a.lower() in claimed:
-                    return jsonify({'error': f"'{a}' already belongs to {claimed[a.lower()][1]}",
-                                    'merge_loser': claimed[a.lower()][0], 'merge_name': claimed[a.lower()][1]}), 409
+                if _akey(a) in claimed:
+                    return jsonify({'error': f"'{a}' already belongs to {claimed[_akey(a)][1]}",
+                                    'merge_loser': claimed[_akey(a)][0], 'merge_name': claimed[_akey(a)][1]}), 409
         sets = ['name=?', 'aliases=?']
         vals = [name, json.dumps(aliases, ensure_ascii=False)]
         if new_gid is not None:
@@ -23546,7 +23582,7 @@ async function saveArtistEdit(aid) {
   if (g !== (window._editArtistOrig?.gid || '')) body.genius = g;
   let res = await api('PATCH', '/api/artists/' + aid, body);
   if (res && typeof res.error === 'string' && res.error.charAt(0) === '{') { try { res = JSON.parse(res.error); } catch (e) {} }
-  if (res && res.merge_loser) {
+  while (res && res.merge_loser) {
     if (!(await _mergeConfirm('merge ' + res.merge_name + ' into this artist?', 'all songs of ' + res.merge_name + ' move to this artist and it becomes an alias. the rest of ur edits get saved too'))) return;
     const mr0 = await api('POST', '/api/artists/' + res.merge_loser + '/merge', { into: aid });
     if (!(mr0 && mr0.ok)) { _artistErr((mr0 && mr0.error) || 'merge failed'); return; }
