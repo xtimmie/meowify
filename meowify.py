@@ -14830,7 +14830,7 @@ function openSortDrawer() {
   sheet.style.transform = ''; sheet.style.transformOrigin = '';
   sheet.style.transition = ''; sheet.style.left = ''; sheet.style.top = ''; sheet.style.visibility = '';
   sheet.classList.remove('on', 'no-anim', 'mob-ctx-active');
-  requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('on'); }));
+  requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('on'); if (bounceOn()) bounceSheet(sheet); }));
   _initMobCtxDrag(sheet);
   _registerDrawer(sheet, hideCtx);
 }
@@ -27509,6 +27509,7 @@ function _renderDlPanel(opening) {
     panel.classList.remove('on', 'no-anim', 'mob-ctx-active');
     requestAnimationFrame(() => requestAnimationFrame(() => {
       panel.classList.add('on');
+      if (bounceOn()) bounceSheet(panel);
     }));
     const dismiss = () => {
       panel.style.transform = ''; panel.style.transformOrigin = '';
@@ -28646,6 +28647,7 @@ function showCtx(e, items, opts) {
     // two rAFs: first lets browser paint the off-screen state, second triggers transition
     requestAnimationFrame(() => requestAnimationFrame(() => {
       ctx.classList.add('on');
+      if (bounceOn()) bounceSheet(ctx);
     }));
     // open this drawer's own backdrop and wire drag-to-dismiss
     _initMobCtxDrag(ctx);
@@ -30330,6 +30332,15 @@ var POP_FX = {
 var _POP = { set: new Set(), raf: 0, t: 0 };
 function popPaint(el) {
   const p = el._pop, F = POP_FX;
+  if (p.sheet) {
+    // closed while still springing: let go, popTick then runs end() to clean up
+    if (!el.classList.contains('on')) { _POP.set.delete(el); return; }
+    // % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen
+    const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110;
+    el.style.translate = '0 ' + (dn - (over ? room * Math.tanh(over / room) : 0)).toFixed(3) + '%';
+    el.style.scale = '1 ' + (1 + p.s * SHEET_FX.jelly).toFixed(4); // origin is the bottom edge so the top is what stretches
+    return;
+  }
   // hx = share of the stretch that lands on x (dx² of the origin to center direction), the rest goes to y, 1 = plain horizontal stretch
   const hx = p.hx == null ? 1 : p.hx, a = 1 + p.s, b = 1 / (1 + p.s * F.squash);
   el.style.scale = (p.x * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (p.x * a ** (1 - hx) * b ** hx).toFixed(4);
@@ -30345,7 +30356,8 @@ function popTick(t) {
   const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
   P.set.forEach(el => {
     const p = el._pop;
-    for (let i = 0; i < n; i++) { p.v += (-F.stiffness * (p.x - p.tgt) - F.damping * p.v) * h; p.x += p.v * h; }
+    const K = p.k || F.stiffness, C = p.c || F.damping; // sheets bring their own spring
+    for (let i = 0; i < n; i++) { p.v += (-K * (p.x - p.tgt) - C * p.v) * h; p.x += p.v * h; }
     const want = Math.max(-F.maxStretch, Math.min(F.maxStretch, p.v / F.refSpeed * F.stretch));
     p.s += (want - p.s) * Math.min(1, dt * F.follow);
     if (Math.abs(p.x - p.tgt) < F.settle * .1 && Math.abs(p.v) < F.settle * 2 && Math.abs(p.s) < F.settle * .1) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
@@ -30384,6 +30396,27 @@ function bounceSync() {
 }
 function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
+// bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
+// room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
+var SHEET_FX = { k: 210, z: .55, zmin: .3, room: 90, jelly: .06 };
+function bounceSheetEnd(el) {
+  el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
+  if (el._popOff) { el._popOff(); el._popOff = null; }
+}
+function bounceSheet(el) {
+  if (el._popOff) { el._popOff(); el._popOff = null; }
+  const s = _bnPrefs(), m = s.b / .5, z = Math.max(SHEET_FX.zmin, Math.min(1, 1 - (1 - SHEET_FX.z) * m));
+  el.style.setProperty('transition', 'none', 'important'); // css transition off for the entrance, the spring owns it
+  el.style.transformOrigin = '50% 100%';
+  el._pop = { x: 0, v: 0, tgt: 1, s: 0, sheet: true, k: SHEET_FX.k, c: 2 * Math.sqrt(SHEET_FX.k) * z, end: bounceSheetEnd };
+  popPaint(el); _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
+  // touching the sheet hands it over to the drag, so the spring lets go
+  const grab = () => { _POP.set.delete(el); bounceSheetEnd(el); };
+  el.addEventListener('touchstart', grab, { once: true, passive: true });
+  el.addEventListener('pointerdown', grab, { once: true });
+  el._popOff = () => { el.removeEventListener('touchstart', grab); el.removeEventListener('pointerdown', grab); };
+}
 function bounceIn(el, o = {}) {
   const s = _bnPrefs(), from = Math.max(.05, Math.min(.98, 1 - (o.dist == null ? .18 : o.dist) * s.str));
   el._pop = { x: from, v: 0, tgt: 1, s: 0, hx: o.hx, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
