@@ -32963,6 +32963,29 @@ async function renderStats() {
 
 
 
+function _setPrune(html) {
+  const box = document.createElement('div');
+  box.innerHTML = html;
+  const isRow = el => el.matches('.set-row,.set-nav');
+  const has = el => isRow(el) || !!el.querySelector('.set-row,.set-nav');
+  const prune = (parent) => {
+    [...parent.children].forEach(k => {
+      if (isRow(k)) return;
+      if (has(k)) { prune(k); return; }
+      if (k.tagName === 'DIV' && k.children.length === 0 && k.textContent.trim().length < 40) { k.dataset.lbl = '1'; return; }
+      k.remove();
+    });
+    [...parent.children].forEach(k => {
+      if (k.dataset && k.dataset.lbl) {
+        const n = k.nextElementSibling;
+        if (!n || (n.dataset && n.dataset.lbl)) k.remove();
+      }
+    });
+  };
+  prune(box);
+  return box.innerHTML;
+}
+
 function renderSettings() {
   if (S.view !== 'settings' && !window._settingsPopupOpen) return;
   const _sq = ((!isMobile() && window._settingsPopupOpen) ? (window._setPopupQ || '') : (S.globalSearch || '')).trim().toLowerCase();
@@ -33002,6 +33025,7 @@ function renderSettings() {
   };
 
   const section = (title, content) => {
+    if (_sq) content = _setPrune(content);
     if (!content.trim()) return '';
     return `
     <div class="set-section ui-panel">
