@@ -30297,12 +30297,11 @@ function lensPaint() {
   const L = _LENS, F = LENS_FX, sx = 1 + L.s, sy = 1 / (1 + L.s * F.squash);
   // origin slides with the velocity instead of flipping with the direction: 0 = left edge, .5 = center, 1 = right edge
   const o = .5 - .5 * F.lead * Math.max(-1, Math.min(1, L.v / 300));
-  // anchor the trailing edge so the leading edge stretches ahead, then keep the whole thing inside the nav
-  const lo = L.x + o * L.w * (1 - sx), hi = lo + L.w * sx;
-  let dx = 0; if (lo < L.limL) dx = L.limL - lo; else if (hi > L.limR) dx = L.limR - hi;
-  sl.style.transformOrigin = (o * 100).toFixed(2) + '% 50%';
-  sl.style.translate = (L.x + dx).toFixed(2) + 'px 0';
-  sl.style.scale = sx.toFixed(4) + ' ' + sy.toFixed(4);
+  // stretch around the origin, then clip the box to the nav instead of pushing the whole pill (a push relaxes back as the stretch fades = slide at the end)
+  const lo0 = L.x + o * L.w * (1 - sx), lo = Math.max(L.limL, lo0), hi = Math.min(L.limR, lo0 + L.w * sx);
+  sl.style.transformOrigin = '0% 50%';
+  sl.style.translate = lo.toFixed(2) + 'px 0';
+  sl.style.scale = (Math.max(.01, hi - lo) / L.w).toFixed(4) + ' ' + sy.toFixed(4);
 }
 function lensTick(t) {
   const L = _LENS, F = LENS_FX; L.raf = 0;
