@@ -27531,7 +27531,7 @@ function _renderDlPanel(opening) {
     if (_bn) panel.classList.add('no-anim');
     void panel.offsetHeight;
     panel.classList.add('on');
-    if (_bn) { const ph = panel.offsetHeight; bounceIn(panel, { dist: .18, ty: -8, hx: panelW >= ph ? 1 : 0 }); } // origin is the top right corner, stretch goes along the longer side so it never cancels out on the diagonal
+    if (_bn) bounceIn(panel, { dist: .18, ty: -8, hx: bounceDir(panel, panel.offsetWidth, 0, panel.offsetWidth, panel.offsetHeight) }); // origin is the top right corner
     document.getElementById('dl-panel-btn')?.classList.add('active');
     document.addEventListener('click', _dlPanelOutsideClick, true);
   }
@@ -28676,7 +28676,7 @@ function showCtx(e, items, opts) {
   ctx.style.top  = top  + 'px';
   ctx.style.transformOrigin = (mx - left) + 'px ' + (my - top) + 'px';
   ctx.style.visibility = '';
-  if (_bn) { const ddx = w / 2 - (mx - left), ddy = h / 2 - (my - top); bounceIn(ctx, { dist: .18, ty: -8, hx: ddy * ddy > ddx * ddx ? 0 : 1 }); } // stretch goes on whichever axis the origin to center direction is closer to, so it never cancels out on the diagonal
+  if (_bn) bounceIn(ctx, { dist: .18, ty: -8, hx: bounceDir(ctx, mx - left, my - top, w, h) });
 }
 
 function hideCtx() {
@@ -30384,6 +30384,14 @@ function bounceSync() {
 }
 function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
+var POP_SHIFT = .5; // how far (x box size) the anchor moves behind the origin at a perfect diagonal, 0 = no extra travel
+// picks the stretch axis from the origin (ox, oy in px) towards the box center, returns hx (1 = x, 0 = y), and moves the anchor behind the origin along that axis
+// by more the closer the direction is to the diagonal. scale about a moved anchor translates by (1 - scale) * shift: follows the spring, 0 at rest
+function bounceDir(el, ox, oy, w, h) {
+  const dx = w / 2 - ox, dy = h / 2 - oy, ax = Math.abs(dx), ay = Math.abs(dy), onX = ay <= ax, hi = Math.max(ax, ay), t = hi > 1 ? Math.min(ax, ay) / hi : 0;
+  el.style.transformOrigin = (ox - (onX ? Math.sign(dx) * POP_SHIFT * t * w : 0)) + 'px ' + (oy - (onX ? 0 : Math.sign(dy) * POP_SHIFT * t * h)) + 'px';
+  return onX ? 1 : 0;
+}
 function bounceIn(el, o = {}) {
   const s = _bnPrefs(), from = Math.max(.05, Math.min(.98, 1 - (o.dist == null ? .18 : o.dist) * s.str));
   el._pop = { x: from, v: 0, tgt: 1, s: 0, hx: o.hx, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
