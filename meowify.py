@@ -30460,7 +30460,7 @@ function popPaint(el) {
     const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110;
     el.style.translate = '0 ' + (dn - (over ? room * Math.tanh(over / room) : 0)).toFixed(3) + '%';
     const sy = 1 + p.s * SHEET_FX.jelly; // origin is the bottom edge so the top is what stretches
-    el.style.scale = (1 + (sy - 1) * SHEET_FX.wide).toFixed(4) + ' ' + sy.toFixed(4); // wide: 1 = width follows the height 1:1, 0 = off
+    el.style.scale = Math.pow(sy, -SHEET_FX.wide).toFixed(4) + ' ' + sy.toFixed(4); // wide: 1 = width is the inverse of the height so the area stays the same, 0 = off
     return;
   }
   // hx = share of the stretch that lands on x (dx² of the origin to center direction), the rest goes to y, 1 = plain horizontal stretch
