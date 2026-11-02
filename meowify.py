@@ -27531,7 +27531,7 @@ function _renderDlPanel(opening) {
     if (_bn) panel.classList.add('no-anim');
     void panel.offsetHeight;
     panel.classList.add('on');
-    if (_bn) { const ph = panel.offsetHeight; bounceIn(panel, { dist: .18, ty: -8, hx: panelW * panelW / (panelW * panelW + ph * ph) }); } // origin is the top right corner, so the stretch runs along its diagonal
+    if (_bn) { const ph = panel.offsetHeight; bounceIn(panel, { dist: .18, ty: -8, hx: panelW >= ph ? 1 : 0 }); } // origin is the top right corner, stretch goes along the longer side so it never cancels out on the diagonal
     document.getElementById('dl-panel-btn')?.classList.add('active');
     document.addEventListener('click', _dlPanelOutsideClick, true);
   }
@@ -28676,7 +28676,7 @@ function showCtx(e, items, opts) {
   ctx.style.top  = top  + 'px';
   ctx.style.transformOrigin = (mx - left) + 'px ' + (my - top) + 'px';
   ctx.style.visibility = '';
-  if (_bn) { const ddx = w / 2 - (mx - left), ddy = h / 2 - (my - top), dd = ddx * ddx + ddy * ddy; bounceIn(ctx, { dist: .18, ty: -8, hx: dd > 1 ? ddx * ddx / dd : 1 }); } // stretch runs from the origin towards the menu center
+  if (_bn) { const ddx = w / 2 - (mx - left), ddy = h / 2 - (my - top); bounceIn(ctx, { dist: .18, ty: -8, hx: ddy * ddy > ddx * ddx ? 0 : 1 }); } // stretch goes on whichever axis the origin to center direction is closer to, so it never cancels out on the diagonal
 }
 
 function hideCtx() {
