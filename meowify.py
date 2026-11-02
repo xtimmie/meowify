@@ -7307,7 +7307,7 @@ def _dbx_push_events(dbx):
         if full:
             rows = [tuple(r) for r in c.execute('SELECT * FROM play_events WHERE rowid <= ?', (top,)).fetchall()]
         else:
-            rows = [tuple(r) for r in c.execute('SELECT * FROM play_events WHERE rowid > ? AND rowid <= ? AND device_id = ?', (wm, top, did)).fetchall()]
+            rows = [tuple(r) for r in c.execute('SELECT * FROM play_events WHERE rowid > ? AND rowid <= ? AND (device_id = ? OR device_id IS NULL)', (wm, top, did)).fetchall()]
         cols = [r[1] for r in c.execute('PRAGMA table_info(play_events)').fetchall()]
         ss_cols = [r[1] for r in c.execute('PRAGMA table_info(song_stats)').fetchall()]
         ss_rows = [tuple(r) for r in c.execute('SELECT * FROM song_stats').fetchall()]
@@ -30520,7 +30520,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
 // room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 210, z: .71, zmin: .55, room: 90, jelly: .16 };
+var SHEET_FX = { k: 500, z: .2, zmin: .55, room: 90, jelly: .6 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
