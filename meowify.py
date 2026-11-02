@@ -14880,6 +14880,8 @@ function _showPlaylistsMobile(){
     if (S.view === 'settings') window.resetGear?.();
     if (S.selectMode) _setSelectMode(false); // song selection makes no sense on this page, same as setView
     S.view='playlists-mobile';
+    if(S.globalSearchOpen||S.globalSearch){S.globalSearchOpen=false;S.globalSearch='';S.libSearch='';}
+    renderTopbarSearch('playlists-mobile');
     _syncSelBtn();
     document.getElementById('vtitle').textContent='playlists';
     document.getElementById('tacts').innerHTML=
@@ -14904,7 +14906,10 @@ function renderMobilePlaylists(){
     vc.innerHTML=`<div class="empty"><div class="ei" style="font-size:0;color:var(--color-on-surface-variant)"><svg width="48" height="40" viewBox="0 0 40 28" xmlns="http://www.w3.org/2000/svg" style="overflow:visible"><path fill="currentColor" d="M 12 5.9 c -9 -4.2 -11 6.9 -3.1 6.9 c 3.5 0 5.5 -1.8 5.5 -5 c 0 -0.1 0 -9.4 0 -11.2 c 0 0 0 -0.8 0 0.2 c 0.022 -6.752 -3 -5 -3 -3 c 0 2.8 0.1 8.7 0.1 12.1 Z"/><path fill="currentColor" d="M 25 5.9 c -9 -4.2 -11 6.9 -3.1 6.9 c 3.5 0 5.5 -1.8 5.5 -5 c 0 -0.1 0 -9.4 0 -11.2 c 0 0 0 -0.8 0 0.2 c 0.022 -6.752 -3 -5 -3 -3 c 0 2.8 0.1 8.7 0.1 12.1 Z"/><line stroke="currentColor" stroke-width="5" x1="12.1" x2="26.1" y1="-5.6" y2="-5.6"/></svg></div><p>no playlists yet</p><button class="btn btn-fill mu-ripple" onclick="showCreatePl()">create playlist</button></div>`;
     return;
   }
-  vc.innerHTML='<div class="song-list">'+S.playlists.map(p=>{
+  const _pq=(S.globalSearch||'').trim();
+  const _pls=_pq?S.playlists.filter(p=>_songMatches({title:p.name,album:p.name},_pq)):S.playlists;
+  if(!_pls.length){vc.innerHTML=`<div class="empty"><div class="ei">${MEOW_ICONS.search}</div><p>no playlists match "${esc(S.globalSearch)}"</p></div>`;return;}
+  vc.innerHTML='<div class="song-list">'+_pls.map(p=>{
     const cnt=S.plSongs[p.id]?S.plSongs[p.id].length:(p.song_count|0);
     return`<div class=\"song-row-mobile ui-list-item ui-list-item mu-ripple${S.selected.has(p.id)?' selected':''}\" data-pl=\"${p.id}\" onclick=\"_plRowClick(event,'${p.id}')\" oncontextmenu=\"plCtx(event,'${p.id}')\">
       <div class="sthumb" style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--color-surface-container-high);border-radius:var(--radius-sm);color:var(--color-on-surface-variant)"><svg width="24" height="20" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg></div>
@@ -20112,6 +20117,7 @@ function _searchPlaceholder(v) {
     return 'search: ' + (vtxt && vtxt !== 'artist' ? vtxt : 'artist') + '...';
   }
   if (v === 'add') return 'search: add music...';
+  if (v === 'playlists-mobile') return 'search: playlists...';
   return 'search: library...';
 }
 
@@ -20138,22 +20144,83 @@ function toggleGlobalSearch(forceClose) {
 }
 
 function _srchNorm(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+// field prefixes: title: artist: feat: album: source: plays: dur:  (quote multi word values, - negates)
+const _SRCH_FIELDS = Object.assign(Object.create(null), {
+  title: 'title', t: 'title', song: 'title',
+  artist: 'artist', a: 'artist', by: 'artist',
+  feat: 'feat', ft: 'feat', featuring: 'feat', with: 'feat',
+  album: 'album', al: 'album',
+  source: 'source', src: 'source',
+  plays: 'plays', p: 'plays',
+  dur: 'dur', len: 'dur', length: 'dur', duration: 'dur'
+});
+function _srchNum(v) {
+  const m = /^(\d+):(\d{2})$/.exec(v);
+  return m ? (+m[1]) * 60 + (+m[2]) : parseFloat(v);
+}
+// numeric value: 10  >10  >=10  <10  <=10  10..20  (dur also takes m:ss)
+function _srchCmp(v) {
+  let m = /^(\d+(?:\.\d+)?|\d+:\d{2})\.\.(\d+(?:\.\d+)?|\d+:\d{2})$/.exec(v);
+  if (m) return { lo: _srchNum(m[1]), hi: _srchNum(m[2]) };
+  m = /^(>=|<=|>|<|=)?(\d+(?:\.\d+)?|\d+:\d{2})$/.exec(v);
+  if (!m) return null;
+  const n = _srchNum(m[2]), op = m[1] || '=';
+  if (op === '>') return { lo: n, loX: true };
+  if (op === '>=') return { lo: n };
+  if (op === '<') return { hi: n, hiX: true };
+  if (op === '<=') return { hi: n };
+  return { lo: n, hi: n };
+}
+function _srchInRange(n, c) {
+  return (c.lo == null || (c.loX ? n > c.lo : n >= c.lo)) && (c.hi == null || (c.hiX ? n < c.hi : n <= c.hi));
+}
+const _srchQCache = { q: null, p: null };
+function _parseSearch(q) {
+  if (_srchQCache.q === q) return _srchQCache.p;
+  const terms = [];
+  const re = /(-?)(?:([a-z]+):)?(?:"([^"]*)(?:"|$)|(\S+))/gi;
+  let m;
+  while ((m = re.exec(q))) {
+    const neg = !!m[1];
+    let f = m[2] ? _SRCH_FIELDS[m[2].toLowerCase()] : null;
+    let v = m[3] != null ? m[3] : m[4];
+    if (m[2] && !f) v = m[2] + ':' + v;
+    if (!m[2] && v && /^[a-z]+:$/i.test(v) && _SRCH_FIELDS[v.slice(0, -1).toLowerCase()]) continue; // half typed prefix
+    if (f === 'plays' || f === 'dur') {
+      const cmp = _srchCmp(v);
+      if (cmp) { terms.push({ f, cmp, neg }); continue; }
+      f = null; v = m[2] + ':' + v;
+    }
+    const nv = _srchNorm(v);
+    if (nv) terms.push({ f, v: nv, neg });
+  }
+  _srchQCache.q = q; _srchQCache.p = terms;
+  return terms;
 }
 const _srchHayCache = new WeakMap();
 function _songHay(s) {
-  const sig = [s.title, s.artist, s.featuring_artists, s.album].map(x => x || '').join('|');
+  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source].map(x => x || '').join('|');
   const c = _srchHayCache.get(s);
   if (c && c.sig === sig) return c.h;
-  const h = _srchNorm(sig);
+  const n = _srchNorm;
+  const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '')), feat: n(s.featuring_artists), album: n(s.album), source: n(s.source) };
+  h.all = (h.title + ' ' + h.artist + ' ' + h.album).trim();
   _srchHayCache.set(s, { sig, h });
   return h;
 }
 function _songMatches(s, q) {
-  const toks = _srchNorm(q).split(' ').filter(Boolean);
-  if (!toks.length) return true;
-  const hay = _songHay(s);
-  return toks.every(t => hay.includes(t));
+  const terms = _parseSearch(q);
+  if (!terms.length) return true;
+  const h = _songHay(s);
+  for (const t of terms) {
+    let ok;
+    if (t.cmp) ok = _srchInRange(t.f === 'plays' ? (s.play_count | 0) : (+s.duration || 0), t.cmp);
+    else ok = h[t.f || 'all'].includes(t.v);
+    if (ok === t.neg) return false;
+  }
+  return true;
 }
 let _searchDebounceT = null;
 function onGlobalSearch(val) {
@@ -20167,6 +20234,8 @@ function _applyGlobalSearch() {
   if (v === 'library') { S.libSearch = S.globalSearch; renderLibrary(); }
   else if (v === 'playlist' && S.activePid) renderPlaylist(S.activePid);
   else if (v === 'album' && S.activeAid) renderAlbumDetail(S.activeAid, true);
+  else if (v === 'artist' && S.activeArtid) renderArtistPage(S.activeArtid, !!(S.globalSearch || '').trim());
+  else if (v === 'playlists-mobile') renderMobilePlaylists();
   else if (v === 'stats') renderStats();
   else if (v === 'settings') renderSettings();
 }
@@ -20241,7 +20310,7 @@ function renderLibrary(){
     let albums=S.albums;
     if(S.libSearch.trim()){
       const q=S.libSearch.trim().toLowerCase();
-      albums=albums.filter(a=>((a.title||'')+(a.artist||'')).toLowerCase().includes(q));
+      albums=albums.filter(a=>_songMatches({title:a.title,artist:a.artist,album:a.title},q));
     }
     if(!S.albums.length){_lc.innerHTML=`<div class="empty"><div class="ei">💿</div><p>no albums yet</p></div>`;return;}
     if(!albums.length){_lc.innerHTML=`<div class="empty"><div class="ei">💿</div><p>no albums match "${esc(S.libSearch)}"</p></div>`;return;}
@@ -26370,9 +26439,9 @@ function clearSelection() {
   updateBulkBar();
 }
 
-async function renderArtistPage(aid) {
+async function renderArtistPage(aid, searchOnly) {
   const vc = document.getElementById('vc');
-  vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
+  if (!searchOnly) vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   if (typeof aid === 'string' && aid[0] === '~') {
     const stubId = aid, stub = S._artStubs && S._artStubs[stubId];
     const real = stub ? await _resolveArtistStub(stubId, stub) : null;
@@ -26386,12 +26455,17 @@ async function renderArtistPage(aid) {
     aid = real;
   }
 
-  const pg = await api('GET', '/api/artists/' + aid + '/page');
+  const pg = (searchOnly && S._artPg && S._artPg.aid === aid) ? S._artPg.pg : await api('GET', '/api/artists/' + aid + '/page');
+  if (pg && !pg.error) S._artPg = { aid, pg };
   const artist = pg && !pg.error ? pg.artist : pg;
-  const songs = (pg && pg.songs) || [];
-  const localAlbums = (pg && pg.albums) || [];
-  const appearsSongs = (pg && pg.appears_songs) || [];
-  const appearsAlbums = (pg && pg.appears_albums) || [];
+  const _aq = (S.globalSearch || '').trim();
+  const _aF = (arr) => _aq ? arr.filter(s => _songMatches(s, _aq)) : arr;
+  const _aFA = (arr) => _aq ? arr.filter(a => _songMatches({ title: a.title, artist: a.artist, album: a.title }, _aq)) : arr;
+  const songsAll = (pg && pg.songs) || [];
+  const songs = _aF(songsAll);
+  const localAlbums = _aFA((pg && pg.albums) || []);
+  const appearsSongs = _aF((pg && pg.appears_songs) || []);
+  const appearsAlbums = _aFA((pg && pg.appears_albums) || []);
 
   if (_viewStale('artist', aid)) return; // left the artist page while it was loading
   if (!artist || artist.error) {
@@ -26403,7 +26477,7 @@ async function renderArtistPage(aid) {
   NAV.noteTitle('artist', aid, artist.name);
   document.getElementById('vtitle').textContent = artist.name;
 
-  const totalPlays = (songs || []).reduce((s, sg) => s + (sg.play_count || 0), 0);
+  const totalPlays = songsAll.reduce((s, sg) => s + (sg.play_count || 0), 0);
   const tracksInLib = (songs || []).length;
   const aliasesRaw = (() => { try { return JSON.parse(artist.aliases || '[]'); } catch(e) { return []; } })();
   const canFetchImg = !!(artist.ytm_channel_id || CFG.genius_token);
@@ -26454,7 +26528,7 @@ async function renderArtistPage(aid) {
       ${renderTable('library', songs, '')}
     </div>`;
   } else if (!appearsSongs.length && !appearsAlbums.length) {
-    html += `<div class="empty" style="padding:32px 0"><div class="ei">🎤</div><p>no tracks in library yet</p></div>`;
+    html += `<div class="empty" style="padding:32px 0"><div class="ei">🎤</div><p>${_aq ? 'no tracks match "' + esc(_aq) + '"' : 'no tracks in library yet'}</p></div>`;
   }
 
   if (appearsAlbums.length) {
@@ -26485,7 +26559,7 @@ async function renderArtistPage(aid) {
   updateBulkBar();
   if (appearsSongs.length && !tracksInLib) requestAnimationFrame(() => { _initListHeaderPin(); _initColResizeObserver(); });
 
-  if (CFG.artist_extra_info) {
+  if (CFG.artist_extra_info && !searchOnly) {
     if (artist.ytm_channel_id) {
       _loadArtistYtmProfile(aid, artist);
     } else if (CFG.genius_token) {
@@ -32954,7 +33028,7 @@ function renderSettings() {
   };
 
   // ── mobile: section list nav ──────────────────────────────────────────────
-  if (_isMob && !window._settingsSection) {
+  if (_isMob && !window._settingsSection && !_sq) {
     // define section metadata (icons are simple SVG paths)
     const _SET_SECTIONS = [
       { id: 'playback',     label: 'playback',     icon: '<polygon fill="currentColor" points="5 3 19 12 5 21"/>' },
@@ -32988,16 +33062,17 @@ function renderSettings() {
 
   // ── mobile: single-section view / pc popup ────────────────────────────────
   const _pcSearchMode  = _pcPopup && window._settingsSection === '_search';
+  const _mobSearchAll  = _isMob && !window._settingsSection && !!_sq;
   const _activeSection = _isMob ? window._settingsSection : (_pcPopup ? (window._settingsSection || 'playback') : null);
-  const _sectionMatch  = (id) => _pcSearchMode ? true : ((_isMob || _pcPopup) ? _activeSection === id : true);
+  const _sectionMatch  = (id) => (_pcSearchMode || _mobSearchAll) ? true : ((_isMob || _pcPopup) ? _activeSection === id : true);
 
-  const _pcSearchBar = _pcSearchMode ? `
+  const _pcSearchBar = _pcPopup ? `
     <div class="set-pc-search-bar">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="set-pc-search-input" type="text" placeholder="search all settings..." value="${esc(window._setPopupQ || '')}" oninput="onSettingsPopupSearch(this.value)">
+      <input id="set-pc-search-input" type="text" placeholder="${_pcSearchMode ? 'search all settings...' : 'search ' + _activeSection + '...'}" value="${esc(window._setPopupQ || '')}" oninput="onSettingsPopupSearch(this.value)">
     </div>` : '';
 
-  const _backBtn = _isMob ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
+  const _backBtn = (_isMob && !_mobSearchAll) ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
 
   const _pcCloseBtn = _pcPopup ? `
     <button class="set-pc-close mu-ripple" onclick="closeSettingsPopup()">
@@ -33007,7 +33082,7 @@ function renderSettings() {
   const _settingsTarget = _pcPopup ? document.getElementById('set-pc-content') : document.getElementById('vc');
   if (!_settingsTarget) return;
 
-  const _existingSearchBar = _pcSearchMode ? _settingsTarget.querySelector('.set-pc-search-bar') : null;
+  const _existingSearchBar = _pcPopup ? _settingsTarget.querySelector('.set-pc-search-bar') : null;
 
   let _setHtml = `
     <div class="set-panel" style="max-width:640px">
@@ -33143,7 +33218,7 @@ function renderSettings() {
         })()}
       `) : ''}
 
-      ${_sectionMatch('equalizer') ? `<div class="set-section ui-panel">
+      ${(_sectionMatch('equalizer') && (!_sq || _sq.split(' ').every(w => 'equalizer eq sub bass mid hi-mid treble'.includes(w)))) ? `<div class="set-section ui-panel">
         <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;padding:14px 20px 4px">equalizer</div>
         <div style="padding:8px 20px 16px">
           <div class=\"eq-sliders\" style=\"height:180px\" id=\"eq-sliders-wrap\">
@@ -33528,6 +33603,7 @@ function renderSettings() {
         ${row('motionui location', 'folder containing motionui.js, theme.css and components.css, applies instantly by reloading the page, empty = automatic lookup', `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:8px;align-items:center"><input class="input" id="mu-path-in" type="text" autocomplete="off" value="${(CFG.motionui_path_override || '').replace(/"/g, '&quot;')}" placeholder="automatic" style="width:260px;padding:10px 14px"><button class="btn btn-out mu-ripple" onclick="_muPathApply(false)">apply</button><button class="btn btn-out mu-ripple" onclick="_muPathApply(true)">reset</button></div><div id="mu-path-cur" style="font:var(--type-label-small);color:var(--color-on-surface-variant);word-break:break-all;text-align:right"></div><div id="mu-path-msg" style="font:var(--type-label-small);color:var(--color-error);text-align:right"></div></div>`)}
       `) : ''}
     </div>`;
+  if (_sq && !_SUBS.active && !/class="set-(row|nav)[ "]/.test(_setHtml)) _setHtml = _setHtml.replace(/<\/div>\s*$/, '<div class="empty" style="padding:32px 0"><div class="ei">' + MEOW_ICONS.search + '</div><p>nothing matches "' + esc(_sq) + '"</p></div></div>');
   if (window._settingsSub && !_SUBS.active) window._settingsSub = null;
   window._settingsSubTitle = _SUBS.active ? _SUBS.active.title : null;
   if (_SUBS.active) {
