@@ -3835,6 +3835,20 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             except Exception as _ye:
                 _log_ytm.warning('ytm pre-search err: %s', _ye)
 
+        if is_url and not is_video:
+            _cls_vid = video_id_r
+            if not _cls_vid:
+                _cls_m = re.search(r'(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})', q)
+                _cls_vid = _cls_m.group(1) if _cls_m else ''
+            if _cls_vid:
+                try:
+                    _cls_type = (_import_ytmusic().get_song(_cls_vid).get('videoDetails') or {}).get('musicVideoType', '')
+                except Exception as _cle:
+                    _cls_type = ''
+                    _log_ytm.warning('url classify err: %s', _cle)
+                if _cls_type and _cls_type not in ('MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC'):
+                    is_video = True
+                _log_ytm.debug(f'url classify: {_cls_vid} -> {_cls_type or "unknown"} is_video={is_video}')
         if video_id_r:
             target = f'https://www.youtube.com/watch?v={video_id_r}'
             out, rc = ydl(target)
