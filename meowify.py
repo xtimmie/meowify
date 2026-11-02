@@ -19668,6 +19668,7 @@ function _updateHueSliderDisabled() {
 }
 
 function updatePlayerUI(song) {
+  try { _gaSong(song); } catch {}
   // preload next song's cover so it's in cache when track changes
   if (song) {
     const _nextSong = getNextSong?.();
@@ -30551,7 +30552,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
 // room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 400, z: 1, zmin: .55, room: 90, jelly: .15, wide: 1 };
+var SHEET_FX = { k: 400, z: 0.7, zmin: .55, room: 90, jelly: .15, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
@@ -30682,6 +30683,240 @@ function _lgDrag(e, i) {
 }
 document.addEventListener('mu:designchange', () => setTimeout(applyLG, 80));
 if (window.MU) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyLG, { once: true }); else applyLG(); }
+// ── glassy art background (glassify style): the playing cover, heavily blurred, drawn behind the glass ──
+// one low res webgl layer fixed behind #app. 'discs' = glassify's 4 overlapping rotating discs, 'mirror' = mirrored tiles with a looping matrix warp.
+// every adjustment (blur, brightness, contrast, saturation) happens on the tiny texture / in the shader, so there is no css filter on a fullscreen layer
+var GA_DEF = { on: false, mode: 'mirror', anim: true, blur: 32, sat: 150, bri: 40, con: 100, op: 100, tiles: 2, speed: 1, pause: false };
+var GA = { ok: true, s: null, layer: null, cv: null, gl: null, u: null, id: null, img: null, imgId: null, ta: null, tb: null, fade: 1, fadeAt: 0, T: 0, last: 0, lastDraw: 0, raf: 0, gen: 0, blurDone: -1 };
+var GA_VS = `#version 300 es
+in vec2 p;
+void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
+var GA_FS = `#version 300 es
+precision mediump float;
+uniform sampler2D a;
+uniform sampler2D b;
+uniform float fade;
+uniform float time;
+uniform float tiles;
+uniform float mode;
+uniform vec2 res;
+uniform vec3 adj;
+out vec4 o;
+vec2 rot(vec2 q, float t) { float s = sin(t), c = cos(t); return vec2(c * q.x - s * q.y, s * q.x + c * q.y); }
+vec3 tex(vec2 uv) { return mix(texture(a, uv).rgb, texture(b, uv).rgb, fade); }
+// one disc: same blurred cover, rotated around its own center, soft edge
+vec4 disc(vec2 f, vec2 origin, float r, float ang) {
+  vec2 d = (f - origin) / r;
+  float l = length(d);
+  if (l > 1.0) return vec4(0.0);
+  vec2 uv = rot(d * 0.5, ang) + 0.5;
+  return vec4(tex(uv), 1.0 - smoothstep(0.96, 1.0, l));
+}
+vec3 over(vec3 base, vec4 c, float al) { float k = c.a * al; return c.rgb * k + base * (1.0 - k); }
+// one warped mirrored layer: rotation plus a slowly breathing shear/scale matrix
+vec3 layer(vec2 q, float t, float i, float dir) {
+  float ti = t * (0.55 + 0.23 * i) * dir + i * 1.7;
+  mat2 m = mat2(1.0 + 0.2 * sin(ti * 0.9 + i), 0.24 * sin(ti * 0.7 + 2.0 * i), 0.24 * cos(ti * 0.8 + i), 1.0 + 0.2 * cos(ti * 0.6 + i));
+  vec2 uv = rot(m * q, ti * 0.6) * tiles * (0.8 + 0.25 * i) + vec2(0.13 * i, 0.31 * i) + 0.5;
+  return tex(uv);
+}
+void main() {
+  vec3 c;
+  if (mode < 0.5) {
+    float M = max(res.x, res.y);
+    bool wide = res.x > res.y;
+    c = vec3(0.0);
+    c = over(c, disc(gl_FragCoord.xy, res * 0.5, M * 1.5, -0.25 * time), 1.0);
+    c = over(c, disc(gl_FragCoord.xy, res * 0.5, M * (wide ? 1.0 : 0.75), 0.5 * time), 0.75);
+    c = over(c, disc(gl_FragCoord.xy, vec2(0.0, res.y), M * 0.75, 1.0 * time), 0.5);
+    c = over(c, disc(gl_FragCoord.xy, vec2(res.x, 0.0), M * (wide ? 0.65 : 0.5), -0.75 * time), 0.5);
+  } else {
+    vec2 q = (gl_FragCoord.xy / res - 0.5) * vec2(res.x / res.y, 1.0);
+    vec3 l0 = layer(q, time, 0.0, 1.0);
+    vec3 l1 = layer(q, time, 1.0, -1.0);
+    vec3 l2 = layer(q, time, 2.0, 1.0);
+    c = mix(mix(l0, l1, 0.5), l2, 0.34);
+  }
+  // same order as css: brightness, contrast, saturate
+  c *= adj.x;
+  c = (c - 0.5) * adj.y + 0.5;
+  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(lum), c, adj.z);
+  o = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+function _gaPrefs() { const v = DevPrefs.get('ga'); return Object.assign({}, GA_DEF, v && typeof v === 'object' ? v : {}); }
+function _gaInit() {
+  if (GA.gl) return true;
+  if (!GA.ok) return false;
+  const layer = document.createElement('div'); layer.id = 'ga-bg';
+  const cv = document.createElement('canvas'); layer.appendChild(cv);
+  const gl = cv.getContext('webgl2', { alpha: false, antialias: false, depth: false, powerPreference: 'low-power' });
+  if (!gl) { GA.ok = false; return false; }
+  try {
+    const sh = (t, src) => { const o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+    const pr = gl.createProgram();
+    gl.attachShader(pr, sh(gl.VERTEX_SHADER, GA_VS)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, GA_FS)); gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    gl.useProgram(pr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW); // one oversized triangle covers the screen
+    const loc = gl.getAttribLocation(pr, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    GA.u = {}; for (const n of ['a', 'b', 'fade', 'time', 'tiles', 'mode', 'res', 'adj']) GA.u[n] = gl.getUniformLocation(pr, n);
+    gl.uniform1i(GA.u.a, 0); gl.uniform1i(GA.u.b, 1);
+  } catch (e) { console.warn('glass art off:', e); GA.ok = false; return false; }
+  if (!document.getElementById('ga-style')) {
+    const st = document.createElement('style'); st.id = 'ga-style';
+    st.textContent = '#ga-bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;opacity:var(--ga-op,1)}#ga-bg canvas{display:block;width:100%;height:100%}html.ga-on body.design-glassy #app{background:transparent!important}';
+    document.head.appendChild(st);
+  }
+  cv.addEventListener('webglcontextlost', e => { e.preventDefault(); if (GA.cv === cv) { _gaStop(); setTimeout(applyGA, 1000); } });
+  GA.layer = layer; GA.cv = cv; GA.gl = gl;
+  document.body.insertBefore(layer, document.body.firstChild);
+  return true;
+}
+function _gaStop() {
+  if (GA.raf) cancelAnimationFrame(GA.raf);
+  GA.raf = 0; GA.last = 0; GA.gen++;
+  document.documentElement.classList.remove('ga-on');
+  const gl = GA.gl, layer = GA.layer;
+  GA.layer = GA.cv = GA.gl = GA.ta = GA.tb = null; GA.blurDone = -1;
+  if (layer) layer.remove();
+  if (gl) { const x = gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); }
+}
+// cover -> small blurred square. the cover is mirror tiled 3x3 before the blur and the middle tile is cut out, so the edges blur into
+// their mirrored neighbours and the texture repeats without a seam (wrap is MIRRORED_REPEAT). blur is relative to a 640px cover like glassify's
+function _gaProc(img, blur) {
+  const S = 128, mk = n => { const c = document.createElement('canvas'); c.width = c.height = n; return c; };
+  const side = Math.min(img.naturalWidth, img.naturalHeight) || S, sx = (img.naturalWidth - side) / 2, sy = (img.naturalHeight - side) / 2;
+  const big = mk(S * 3), bx = big.getContext('2d');
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+    const fx = i === 1 ? 1 : -1, fy = j === 1 ? 1 : -1;
+    bx.save(); bx.translate(i * S + (fx < 0 ? S : 0), j * S + (fy < 0 ? S : 0)); bx.scale(fx, fy);
+    bx.drawImage(img, sx, sy, side, side, 0, 0, S, S); bx.restore();
+  }
+  const bl = mk(S * 3), lx = bl.getContext('2d'), px = blur / 640 * S;
+  if (px > 0 && 'filter' in lx) { lx.filter = 'blur(' + px + 'px)'; lx.drawImage(big, 0, 0); }
+  else if (px > 0) { // no canvas filter (old webview): shrink and stretch back, rough but still soft
+    const n = Math.max(4, Math.round(S * 3 / (1 + px))), t = mk(n); t.getContext('2d').drawImage(big, 0, 0, n, n);
+    lx.imageSmoothingQuality = 'high'; lx.drawImage(t, 0, 0, S * 3, S * 3);
+  } else lx.drawImage(big, 0, 0);
+  const out = mk(S); out.getContext('2d').drawImage(bl, S, S, S, S, 0, 0, S, S);
+  return out;
+}
+function _gaTex(src) {
+  const gl = GA.gl, t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+  return t;
+}
+// instant = swap without the crossfade (blur slider, first enable)
+function _gaLoad(instant) {
+  const id = GA.id; if (!GA.gl || id == null) return;
+  const gen = ++GA.gen, blur = GA.s.blur;
+  const go = img => {
+    if (gen !== GA.gen || !GA.gl) return;
+    const gl = GA.gl, tex = _gaTex(_gaProc(img, blur));
+    GA.img = img; GA.imgId = id; GA.blurDone = blur;
+    if (GA.ta) gl.deleteTexture(GA.ta);
+    if (GA.tb && !instant) { GA.ta = GA.tb; GA.fade = 0; GA.fadeAt = performance.now(); }
+    else { if (GA.tb) gl.deleteTexture(GA.tb); GA.ta = null; }
+    GA.tb = tex;
+    document.documentElement.classList.add('ga-on');
+    _gaKick();
+  };
+  if (GA.img && GA.imgId === id) { go(GA.img); return; }
+  const im = new Image(); im.onload = () => go(im); im.src = '/cover/' + id;
+}
+function _gaDraw() {
+  const gl = GA.gl, s = GA.s; if (!gl || !GA.tb) return;
+  const k = .3, w = Math.max(2, Math.round(innerWidth * k)), h = Math.max(2, Math.round(innerHeight * k)); // the art is blurry anyway, so 30% res is plenty
+  if (GA.cv.width !== w || GA.cv.height !== h) { GA.cv.width = w; GA.cv.height = h; }
+  gl.viewport(0, 0, w, h);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, GA.ta || GA.tb);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, GA.tb);
+  gl.uniform1f(GA.u.fade, GA.ta ? GA.fade : 1);
+  gl.uniform1f(GA.u.time, s.anim ? GA.T : 0);
+  gl.uniform1f(GA.u.tiles, s.tiles);
+  gl.uniform1f(GA.u.mode, s.mode === 'discs' ? 0 : 1);
+  gl.uniform2f(GA.u.res, w, h);
+  gl.uniform3f(GA.u.adj, s.bri / 100, s.con / 100, s.sat / 100);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function _gaPaused() { return document.hidden || (GA.s.pause && !document.hasFocus()); }
+function _gaFrame(now) {
+  GA.raf = 0;
+  if (!GA.gl || !GA.s) return;
+  const dt = GA.last ? Math.min(100, now - GA.last) : 0; GA.last = now;
+  const moving = GA.s.anim && !_gaPaused();
+  if (moving) GA.T += dt / 3500 * GA.s.speed; // same clock as glassify (ms / 3500)
+  if (GA.ta) { GA.fade = Math.min(1, (now - GA.fadeAt) / 800); if (GA.fade >= 1) { GA.gl.deleteTexture(GA.ta); GA.ta = null; } }
+  // drift is slow, 30fps is plenty and every frame makes the glass panels re-blur what's behind them
+  if (!(moving && !GA.ta && now - GA.lastDraw < 30)) { GA.lastDraw = now; _gaDraw(); }
+  if (moving || GA.ta) GA.raf = requestAnimationFrame(_gaFrame); else GA.last = 0;
+}
+function _gaKick() { if (!GA.raf && GA.gl) GA.raf = requestAnimationFrame(_gaFrame); }
+function _gaSong(song) {
+  if (!song || !song.cover_path || GA.id === song.id) return;
+  GA.id = song.id;
+  if (GA.gl && GA.s && GA.s.on) _gaLoad(false);
+}
+function applyGA() {
+  const s = _gaPrefs();
+  GA.s = s;
+  const on = !!s.on && document.documentElement.dataset.muDesign === 'glassy';
+  if (!on) { if (GA.gl) _gaStop(); return; }
+  if (!_gaInit()) return;
+  GA.layer.style.setProperty('--ga-op', s.op / 100);
+  if (GA.id == null && S.cur && S.cur.cover_path) GA.id = S.cur.id;
+  if (GA.tb == null) _gaLoad(true);
+  else if (GA.blurDone !== s.blur) { clearTimeout(GA.bt); GA.bt = setTimeout(() => _gaLoad(true), 120); }
+  _gaKick();
+}
+function gaSet(k, v, rerender) { const s = _gaPrefs(); s[k] = v; DevPrefs.set('ga', s); applyGA(); if (rerender) renderSettings(); }
+function gaReset() { DevPrefs.del('ga'); applyGA(); renderSettings(); }
+document.addEventListener('mu:designchange', () => setTimeout(applyGA, 80));
+['visibilitychange', 'focus', 'blur'].forEach(ev => (ev === 'visibilitychange' ? document : window).addEventListener(ev, () => _gaKick()));
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyGA, { once: true }); else applyGA();
+function gaSettingsHtml(sq) {
+  if (sq && !'glass art background cover artwork ambient animated blur backdrop glassify'.includes(sq)) return '';
+  const s = _gaPrefs(), off = s.on ? '' : 'off';
+  const sw = (checked, onchange) => `
+    <label class="switch" style="flex-shrink:0">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()">
+      <div class="switch-track"><div class="switch-thumb"></div></div>
+    </label>`;
+  const line = (name, sub, ctrl, cls = '') => `
+    <div class="sb-line ${cls}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>${ctrl}</div>`;
+  const sl = (name, sub, min, max, step, val, unit, k, cls = '') => line(name, sub, `<div style="display:flex;align-items:center;gap:8px">
+    <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_lgFmt('${unit}',+this.value);gaSet('${k}',+this.value)">
+    <span class="sb-meta" style="min-width:52px;text-align:right">${_lgFmt(unit, val)}</span></div>`, cls);
+  const modeSel = `<select class="input" style="width:170px" onchange="gaSet('mode',this.value,true)">${[['mirror', 'mirrored tiles'], ['discs', 'rotating discs']].map(([v, n]) => `<option value="${v}" ${s.mode === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  return `
+    <details class="set-blur" ${(window._gaOpen || window._settingsSub === 'glassart') ? 'open' : ''} ontoggle="window._gaOpen=this.open">
+      <summary>
+        <div class="set-title-cell"><div class="set-lbl">art background</div><div class="set-sub">the playing cover, blurred into a color wash behind the glass panels · glassy only</div></div>
+        <span class="sb-meta">${!GA.ok ? 'unsupported' : s.on ? 'on' : 'off'}</span>
+        <svg class="sb-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="sb-body">
+        ${line('enable', GA.ok ? 'needs webgl2, rendered small so it stays cheap' : 'this webview has no webgl2', sw(s.on && GA.ok, "gaSet('on',this.checked,true)"), GA.ok ? '' : 'off')}
+        ${line('style', 'mirrored tiles look like a color theme, rotating discs is the glassify look', modeSel, off)}
+        ${line('animate', 'slow looping warp that keeps the colors moving, off = still image', sw(s.anim, "gaSet('anim',this.checked,true)"), off)}
+        ${s.anim ? sl('speed', 'how fast the colors drift', .25, 3, .05, s.speed, 'x', 'speed', off) : ''}
+        ${s.mode === 'mirror' ? sl('tiles', 'how many times the cover repeats, more = less cover and more color', 1, 6, .25, s.tiles, 'x', 'tiles', off) : ''}
+        <div class="sb-grp">filters</div>
+        ${sl('blur', 'relative to a 640px cover', 0, 100, 1, s.blur, 'px', 'blur', off)}
+        ${sl('brightness', 'dark keeps text readable', 0, 200, 1, s.bri, '%', 'bri', off)}
+        ${sl('contrast', '', 0, 200, 1, s.con, '%', 'con', off)}
+        ${sl('saturation', '', 0, 200, 1, s.sat, '%', 'sat', off)}
+        ${sl('opacity', 'lower lets the normal background through', 0, 100, 1, s.op, '%', 'op', off)}
+        ${line('pause when window inactive', 'stops the animation while meowify is not focused', sw(s.pause, "gaSet('pause',this.checked)"), off)}
+        <div class="sb-line"><div class="sb-l"><div class="sb-n">reset art background</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="gaReset()">reset</button></div>
+      </div>
+    </details>`;
+}
 function lgSettingsHtml(sq) {
   if (sq && !'liquid glass displacement refraction saturate brightness contrast glass'.includes(sq)) return '';
   const L = window.MU && MU.liquidGlass; if (!L) return '';
@@ -32968,6 +33203,7 @@ function renderSettings() {
           </div>
         `) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
       `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
