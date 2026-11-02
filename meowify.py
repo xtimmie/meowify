@@ -30363,6 +30363,9 @@ function applyLG() {
   const lensOn = on && !s.off.includes('lens');
   const over = lensOn && !!s.lensOver;
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) });
+  const _lgDesk = () => !!document.querySelector('#app:not(.mobile)'), _lgFull = () => document.body.classList.contains('rs-full');
+  L.merge('frame', { groups: ['sidebar', 'topbar', 'rsidebars'], radius: '--frame-r', when: () => _lgDesk() && _lgFull() });
+  L.merge('frame-sb', { groups: ['sidebar', 'topbar'], radius: '--frame-r', when: () => _lgDesk() && !_lgFull() });
   _lensOverLG(over);
   L.enable(on);
   document.querySelectorAll('.list-header').forEach(_pinLG);
@@ -30521,7 +30524,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). k = stiffness, z = damping ratio at default bounciness (1 = no overshoot), zmin = lowest ratio at max bounciness,
 // room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { k: 300, z: .2, zmin: .55, room: 90, jelly: .5, wide: 1 };
+var SHEET_FX = { k: 300, z: 1, zmin: .55, room: 90, jelly: .2, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
