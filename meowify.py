@@ -384,10 +384,12 @@ def _art_map_refresh(force=False):
                 lst = []
             parsed.append((name, lst))
             m[_ulower(name)] = name
+        am = {}
         for name, lst in parsed:
             for a in lst:
-                m.setdefault(_ulower(a), name)
+                am.setdefault(_ulower(a), name)
             alts[_ulower(name)] = [name] + lst
+        m.update(am)
         if m != _ART_STATE['map']:
             _art_disp_cache.clear()
         _ART_STATE['map'] = m
@@ -473,7 +475,7 @@ CREATE VIEW songs_display AS
 SELECT id, sync_id, title,
        _disp_artist(songs.artist) AS artist,
        CASE WHEN songs.album_id IS NOT NULL
-                 AND (SELECT COUNT(*) FROM album_tracks atc WHERE atc.album_id = songs.album_id) = 1
+                 AND (SELECT COUNT(*) FROM album_tracks atc WHERE atc.album_id = songs.album_id) <= 1
                  AND (SELECT COUNT(*) FROM songs so WHERE so.album_id = songs.album_id) = 1
             THEN _disp_album(
                      songs.album_id,
@@ -502,7 +504,7 @@ FROM songs
 
 def _ensure_songs_display_view(c):
     row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
-    if row and '_disp_album' in (row[0] or ''):
+    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or ''):
         return
     c.execute("DROP VIEW IF EXISTS songs_display")
     c.execute(_SONGS_DISPLAY_SQL)
