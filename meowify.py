@@ -7275,9 +7275,14 @@ def _dbx_snapshot_gz(src, dst):
     tmp_db.unlink(missing_ok=True)
     s = sqlite3.connect(str(src), timeout=30)
     try:
-        d = sqlite3.connect(str(tmp_db))
+        d = sqlite3.connect(str(tmp_db), isolation_level=None)
         try:
             s.backup(d)
+            try:
+                d.execute('DELETE FROM play_events')
+                d.execute('VACUUM')
+            except Exception as _ve:
+                _log_dbx.warning('[dbx snapshot] strip play_events failed: %s', _ve)
         finally:
             d.close()
     finally:
@@ -7287,6 +7292,106 @@ def _dbx_snapshot_gz(src, dst):
             shutil.copyfileobj(fi, fo, 1024 * 1024)
     finally:
         tmp_db.unlink(missing_ok=True)
+
+def _dbx_push_events(dbx):
+    import gzip, shutil
+    did = _dbx_get_device_id()
+    wm = CFG.get('_dbx_ev_wm')
+    full = wm is None or int(CFG.get('_dbx_ev_n', 0)) >= 100
+    with db() as c:
+        top = c.execute('SELECT COALESCE(MAX(rowid), 0) FROM play_events').fetchone()[0]
+        if wm is not None and top < wm:
+            full = True
+        if not full and top <= wm:
+            return False
+        if full:
+            rows = [tuple(r) for r in c.execute('SELECT * FROM play_events WHERE rowid <= ?', (top,)).fetchall()]
+        else:
+            rows = [tuple(r) for r in c.execute('SELECT * FROM play_events WHERE rowid > ? AND rowid <= ? AND device_id = ?', (wm, top, did)).fetchall()]
+        cols = [r[1] for r in c.execute('PRAGMA table_info(play_events)').fetchall()]
+        ss_cols = [r[1] for r in c.execute('PRAGMA table_info(song_stats)').fetchall()]
+        ss_rows = [tuple(r) for r in c.execute('SELECT * FROM song_stats').fetchall()]
+    if not rows:
+        with _cfg_lock:
+            CFG['_dbx_ev_wm'] = top
+            if full:
+                CFG['_dbx_ev_n'] = 0
+            save_cfg(CFG)
+        return False
+    seg = Path(db_path()).parent / 'library_events.db'
+    seg_gz = Path(str(seg) + '.gz')
+    seg.unlink(missing_ok=True)
+    sc = sqlite3.connect(str(seg))
+    try:
+        sc.execute('CREATE TABLE play_events (%s)' % ','.join('"%s"' % x for x in cols))
+        sc.executemany('INSERT INTO play_events VALUES (%s)' % ','.join('?' * len(cols)), rows)
+        sc.execute('CREATE TABLE song_stats (%s)' % ','.join('"%s"' % x for x in ss_cols))
+        sc.executemany('INSERT INTO song_stats VALUES (%s)' % ','.join('?' * len(ss_cols)), ss_rows)
+        sc.commit()
+    finally:
+        sc.close()
+    try:
+        with open(seg, 'rb') as fi, gzip.open(seg_gz, 'wb', compresslevel=3) as fo:
+            shutil.copyfileobj(fi, fo, 1024 * 1024)
+        seq = max(int(_time.time()), int(CFG.get('_dbx_ev_seq', 0)) + 1)
+        if full:
+            try:
+                dbx.files_delete_v2('/meowify/events/' + did)
+            except Exception:
+                pass
+        _dbx_upload(dbx, seg_gz, '/meowify/events/%s/%012d.db.gz' % (did, seq))
+    finally:
+        seg.unlink(missing_ok=True)
+        seg_gz.unlink(missing_ok=True)
+    with _cfg_lock:
+        CFG['_dbx_ev_wm'] = top
+        CFG['_dbx_ev_seq'] = seq
+        CFG['_dbx_ev_n'] = 0 if full else int(CFG.get('_dbx_ev_n', 0)) + 1
+        save_cfg(CFG)
+    return True
+
+def _dbx_pull_events(dbx, local_db):
+    import dropbox as _dbxmod
+    own = str(_dbx_get_device_id()).lower()
+    found = {}
+    try:
+        res = dbx.files_list_folder('/meowify/events', recursive=True)
+    except Exception:
+        return 0
+    while True:
+        for e in res.entries:
+            if isinstance(e, _dbxmod.files.FileMetadata) and e.name.endswith('.db.gz'):
+                parts = e.path_display.strip('/').split('/')
+                if len(parts) == 4 and parts[2].lower() != own:
+                    try:
+                        found.setdefault(parts[2], []).append((int(parts[3].split('.')[0]), e.path_display))
+                    except ValueError:
+                        pass
+        if not res.has_more:
+            break
+        res = dbx.files_list_folder_continue(res.cursor)
+    applied = dict(CFG.get('_dbx_ev_applied') or {})
+    n = 0
+    for dev, segs in found.items():
+        for seq, path in sorted(segs):
+            if seq <= int(applied.get(dev, 0)):
+                continue
+            tmp_gz = Path(local_db).parent / 'library_events_in.db.gz'
+            tmp = Path(local_db).parent / 'library_events_in.db'
+            if not (_dbx_pull_file(dbx, path, tmp_gz) and _dbx_gunzip(tmp_gz, tmp)):
+                break
+            try:
+                ok = _dbx_merge_db(local_db, tmp)
+            finally:
+                tmp.unlink(missing_ok=True)
+            if ok is False:
+                break
+            applied[dev] = seq
+            n += 1
+            with _cfg_lock:
+                CFG['_dbx_ev_applied'] = dict(applied)
+                save_cfg(CFG)
+    return n
 
 def _dbx_gunzip(src, dst):
     import gzip, shutil
@@ -7422,6 +7527,14 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
     # runs after db merge so delete-wins actions override anything that merge
     # just re-inserted, and before push so this device's copy is correct
     # before re-uploading.
+    if pull_db:
+        try:
+            _status('syncing play history...')
+            _n_ev = _dbx_pull_events(dbx, local_db)
+            if _n_ev:
+                results['pulled'].append('events:%d' % _n_ev)
+        except Exception as e:
+            results['errors'].append(f'events pull: {e}')
     try:
         _status('syncing actions...')
         applied = _dbx_pull_actions(dbx, device_id)
@@ -7478,6 +7591,12 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             results['errors'].append(f'db push: {e}')
 
     # ── 2b. push this device's own new actions ────────────────────────────────
+    if push_db:
+        try:
+            if _dbx_push_events(dbx):
+                results['pushed'].append('events')
+        except Exception as e:
+            results['errors'].append(f'events push: {e}')
     try:
         if _dbx_push_actions(dbx):
             results['pushed'].append('actions')
