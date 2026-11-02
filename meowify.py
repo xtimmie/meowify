@@ -30392,8 +30392,8 @@ function applyLG() {
   const over = lensOn && !!s.lensOver;
   for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) });
   const _lgDesk = () => !!document.querySelector('#app:not(.mobile)'), _lgFull = () => document.body.classList.contains('rs-full');
-  L.merge('frame', { groups: ['sidebar', 'topbar', 'rsidebars'], radius: '--frame-r', when: () => _lgDesk() && _lgFull() });
-  L.merge('frame-sb', { groups: ['sidebar', 'topbar'], radius: '--frame-r', when: () => _lgDesk() && !_lgFull() });
+  L.merge('frame', { groups: ['sidebar', 'topbar', 'rsidebars'], radius: '--frame-r', cut: '#vc-wrap', when: () => _lgDesk() && _lgFull() });
+  L.merge('frame-sb', { groups: ['sidebar', 'topbar'], radius: '--frame-r', cut: '#vc-wrap', when: () => _lgDesk() && !_lgFull() });
   _lensOverLG(over);
   L.enable(on);
   document.querySelectorAll('.list-header').forEach(_pinLG);
@@ -30552,7 +30552,7 @@ function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProp
 function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
 // bottom sheet entrance (ctx / sort / downloads drawers). t = settle time in seconds, z = damping ratio at default bounciness (1 = no wobble), zmin = lowest ratio at max bounciness,
 // over = overshoot size multiplier (1 = as the spring gives, 0 = none), room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
-var SHEET_FX = { t: .29, z: 0.7, zmin: .55, over: 1, room: 90, jelly: .15, wide: 1 };
+var SHEET_FX = { t: .5, z: .01, zmin: .55, over: .2, room: 90, jelly: .15, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
