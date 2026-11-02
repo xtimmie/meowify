@@ -193,7 +193,7 @@ _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.envir
 _SCFG   = _HOME / "settings.json"
 _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_boost": False, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
-_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False})
+_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "artist_show_aliases": True, "hide_single_albums": True})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -340,6 +340,8 @@ def db():
     conn.execute("PRAGMA foreign_keys=ON")
     conn.create_function('_canonical', 1, _canonical)
     conn.create_function('_ulower', 1, _ulower, deterministic=True)
+    conn.create_function('_disp_artist', 1, _disp_artist)
+    conn.create_function('_disp_album', 3, _disp_album)
     try:
         yield conn
         conn.commit()
@@ -350,6 +352,160 @@ def db():
         conn.close()
 
 _SCHEMA_VERSION = 11
+
+import functools as _ft
+
+_ART_STATE = {'t': 0.0, 'map': {}, 'alts': {}}
+_ART_LOCK = threading.Lock()
+_art_disp_cache = {}
+
+def _art_map_refresh(force=False):
+    if not force and _ART_STATE['t'] and time.monotonic() - _ART_STATE['t'] < 3.0:
+        return
+    with _ART_LOCK:
+        if not force and _ART_STATE['t'] and time.monotonic() - _ART_STATE['t'] < 3.0:
+            return
+        try:
+            cn = sqlite3.connect(str(db_path()), timeout=2)
+            try:
+                rows = cn.execute("SELECT name, aliases FROM artists").fetchall()
+            finally:
+                cn.close()
+        except Exception:
+            _ART_STATE['t'] = time.monotonic()
+            return
+        m, alts, parsed = {}, {}, []
+        for name, al in rows:
+            if not name:
+                continue
+            try:
+                lst = [str(x).strip() for x in json.loads(al or '[]') if str(x).strip()]
+            except Exception:
+                lst = []
+            parsed.append((name, lst))
+            m[_ulower(name)] = name
+        for name, lst in parsed:
+            for a in lst:
+                m.setdefault(_ulower(a), name)
+            alts[_ulower(name)] = [name] + lst
+        if m != _ART_STATE['map']:
+            _art_disp_cache.clear()
+        _ART_STATE['map'] = m
+        _ART_STATE['alts'] = alts
+        _ART_STATE['t'] = time.monotonic()
+
+def _artist_alt_names(raw):
+    try:
+        raw = (raw or '').strip()
+        if not raw:
+            return []
+        _art_map_refresh()
+        main = _ART_STATE['map'].get(_ulower(raw))
+        if not main:
+            return []
+        return [n for n in _ART_STATE['alts'].get(_ulower(main), []) if _ulower(n) != _ulower(raw)]
+    except Exception:
+        return []
+
+def _disp_artist(raw):
+    try:
+        if not raw or not CFG.get('artist_use_main_name', True):
+            return raw
+        _art_map_refresh()
+        hit = _art_disp_cache.get(raw)
+        if hit is not None:
+            return hit
+        m = _ART_STATE['map']
+        if not m:
+            return raw
+        toks = [t.strip() for t in raw.split(', ') if t.strip()]
+        out, seen, i = [], set(), 0
+        while i < len(toks):
+            main, used = None, 1
+            for j in range(min(len(toks), i + 3), i, -1):
+                main = m.get(_ulower(', '.join(toks[i:j])))
+                if main:
+                    used = j - i
+                    break
+            if not main:
+                main = toks[i]
+            k = _ulower(main)
+            if k not in seen:
+                seen.add(k)
+                out.append(main)
+            i += used
+        res = ', '.join(out)
+        if res == raw.strip():
+            res = raw
+        _art_disp_cache[raw] = res
+        return res
+    except Exception:
+        return raw
+
+_SINGLE_BR_RE = re.compile(r'\s*[\(\[]\s*(?:feat|ft|featuring|with|prod|explicit|clean|single)\b[^\)\]]*[\)\]]', re.I)
+_SINGLE_TAIL_RE = re.compile(r'\s*[-\u2013\u2014]\s*single\s*$', re.I)
+_SINGLE_FEAT_RE = re.compile(r'\s+(?:feat|ft|featuring)\.?\s+.*$', re.I)
+
+def _single_title_norm(s):
+    t = s or ''
+    for _ in range(2):
+        t = _SINGLE_TAIL_RE.sub('', t)
+        t = _SINGLE_BR_RE.sub('', t)
+        t = _SINGLE_FEAT_RE.sub('', t)
+    t = re.sub(r'[^\w\s]', ' ', t.lower())
+    return re.sub(r'\s+', ' ', t).strip()
+
+@_ft.lru_cache(maxsize=16384)
+def _single_album_match(album_title, song_title):
+    a = _single_title_norm(album_title)
+    return bool(a) and a == _single_title_norm(song_title)
+
+def _disp_album(album_id, album_title, song_title):
+    try:
+        if not album_id or not album_title or not CFG.get('hide_single_albums', True):
+            return album_title
+        return '' if _single_album_match(album_title, song_title or '') else album_title
+    except Exception:
+        return album_title
+
+_SONGS_DISPLAY_SQL = """
+CREATE VIEW songs_display AS
+SELECT id, sync_id, title,
+       _disp_artist(songs.artist) AS artist,
+       CASE WHEN songs.album_id IS NOT NULL
+                 AND (SELECT COUNT(*) FROM album_tracks atc WHERE atc.album_id = songs.album_id) = 1
+                 AND (SELECT COUNT(*) FROM songs so WHERE so.album_id = songs.album_id) = 1
+            THEN _disp_album(
+                     songs.album_id,
+                     COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album),
+                     songs.title)
+            ELSE COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album)
+       END AS album,
+       duration, file_path,
+       cover_path, source, source_id, added_at, modified_at,
+       album_id,
+       COALESCE(
+           (SELECT at.track_num FROM album_tracks at
+            WHERE at.song_id = songs.id
+              AND at.album_id = songs.album_id
+            ORDER BY at.id LIMIT 1),
+           songs.track_num
+       ) AS track_num,
+       play_count, last_played, lame_delay, genius_id,
+       loudness_lufs, trim_start, trim_end, lyrics,
+       _disp_artist(songs.featuring_artists) AS featuring_artists,
+       mv_video_id, mv_offset, queue_skip,
+       songs.artist AS artist_raw,
+       songs.featuring_artists AS featuring_raw
+FROM songs
+"""
+
+def _ensure_songs_display_view(c):
+    row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
+    if row and '_disp_album' in (row[0] or ''):
+        return
+    c.execute("DROP VIEW IF EXISTS songs_display")
+    c.execute(_SONGS_DISPLAY_SQL)
 
 
 def _split_artists(artist_str):
@@ -1130,6 +1286,7 @@ def init_db():
                        featuring_artists, mv_video_id, mv_offset, queue_skip
                 FROM songs
             """)
+        _ensure_songs_display_view(c)
         c.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
         # backfill track_num from album_tracks where songs.track_num is still 0
@@ -2301,6 +2458,11 @@ def _lrclib_fetch(artist, title, duration, is_video=False):
     if duration:
         params['duration'] = int(duration)
     result = _try(params)
+    if not result:
+        for _alt in _artist_alt_names(artist)[:3]:
+            result = _try({**params, 'artist_name': _alt})
+            if result:
+                break
     if not result and is_video and duration:
         result = _try({'artist_name': artist or '', 'track_name': title or ''})
     return result
@@ -2646,6 +2808,11 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
         _st = _strip_brackets(title)
         _sa_raw = _strip_brackets(re.split(r',\s*', artist)[0].strip()) if artist else ''
         _sa = _norm_artist(_sa_raw)   # normalized for scoring (no punct, no features)
+        _sa_alt_raw = _artist_alt_names(_sa_raw) if _sa_raw else []
+        _sa_alts = [x for x in (_norm_artist(a) for a in _sa_alt_raw) if x and x != _sa]
+
+        def _a_sim(g, f):
+            return max([f(g, _sa)] + [f(g, x) for x in _sa_alts])
         confidence = 0.0
         candidates = []
 
@@ -2665,7 +2832,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
             h_artist = _norm_artist((h.get('primary_artist') or {}).get('name', ''))
             t_sc = max(_fuzzy(h_title, _st), _fuzzy_tokens(h_title, _st))
             if _sa:
-                a_sc = max(_fuzzy(h_artist, _sa), _fuzzy_tokens(h_artist, _sa))
+                a_sc = max(_a_sim(h_artist, _fuzzy), _a_sim(h_artist, _fuzzy_tokens))
                 # also try matching the full "artist title" combined against the query
                 # so "slayr respect" as a bare query matches "Respect by Slayr" correctly
                 combined_sc = _fuzzy_tokens(f'{h_artist} {h_title}', _st)
@@ -2678,6 +2845,21 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
                 combined_sc = _fuzzy_tokens(f'{h_artist} {h_title}', _st)
                 # also try query as title-only in case artist name is just a prefix
                 return max(t_sc, combined_sc)
+
+        if _sa_alt_raw and (not api_hits or max(_score_hit(h) for h in api_hits) < 0.999):
+            _seen_hit_ids = {h.get('id') for h in api_hits}
+            for _alt in _sa_alt_raw[:3]:
+                _qa = f'{_alt} {_st}'.strip()
+                try:
+                    _more = _genius_get('/search?q=' + urllib.parse.quote(_strip_brackets(_qa)), token).get('hits', [])
+                except Exception:
+                    _more = []
+                for _mh in _more:
+                    _mr = _mh.get('result') or {}
+                    if _mh.get('type') == 'song' and _mr.get('id') not in _seen_hit_ids:
+                        _seen_hit_ids.add(_mr.get('id'))
+                        api_hits.append(_mr)
+            api_hits = sorted(api_hits, key=lambda h: -_score_hit(h))[:max(limit, 5)]
 
         if api_hits:
             candidates = [{
@@ -2695,7 +2877,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
         if api_hits:
             best = max(api_hits, key=_score_hit)
             t_sc = _fuzzy(best.get('title', ''), _st)
-            a_sc = _fuzzy(_norm_artist((best.get('primary_artist') or {}).get('name', '')), _sa) if _sa else 0.5
+            a_sc = _a_sim(_norm_artist((best.get('primary_artist') or {}).get('name', '')), _fuzzy) if _sa else 0.5
             api_confidence = t_sc * 0.65 + a_sc * 0.35
             _log_genius.debug(f'genius api: confidence={api_confidence:.2f} t={t_sc:.2f} a={a_sc:.2f} for {_st!r} -> {best.get("title","")!r}')
             # accept if title matches well; loosen artist gate when title is very strong
@@ -2735,7 +2917,7 @@ def _genius_resolve(title, artist, token, genius_song_id=None, limit=5):
                             g_t = sd.get('title') or ''
                             g_a = _norm_artist((sd.get('primary_artist') or {}).get('name') or '')
                             t_sc = _fuzzy(g_t, _st)
-                            a_sc = _fuzzy(g_a, _sa) if _sa else 0.6
+                            a_sc = _a_sim(g_a, _fuzzy) if _sa else 0.6
                             sc = t_sc * 0.65 + a_sc * 0.35
                             # when _st is "artist title" combined (no separate artist),
                             # t_sc alone undershoots even for a correct match. also
@@ -5405,6 +5587,9 @@ def api_lib():
         _cols = ', '.join(r[1] for r in c.execute("PRAGMA table_info(songs_display)").fetchall() if r[1] != 'lyrics')
         rows = [dict(r) for r in c.execute(f"SELECT {_cols} FROM songs_display ORDER BY added_at DESC LIMIT 50000")]
     for r in rows:
+        for _rk, _dk in (('artist_raw', 'artist'), ('featuring_raw', 'featuring_artists')):
+            if r.get(_rk) == r.get(_dk):
+                r.pop(_rk, None)
         if r['id'] in _active_song_ids:
             r['dl_state'] = 'downloading'
         elif not r.get('file_path') or not os.path.exists(r['file_path']):
@@ -5804,7 +5989,7 @@ def api_artist_page(aid):
             (appears if d.pop('_feat_only') else songs).append(d)
 
         def _albums(items, skip=()):
-            ids = list({d['album_id'] for d in items if d.get('album_id')} - set(skip))
+            ids = list({d['album_id'] for d in items if d.get('album_id') and d.get('album')} - set(skip))
             if not ids:
                 return []
             q = ','.join('?' * len(ids))
@@ -5816,6 +6001,195 @@ def api_artist_page(aid):
         appears_albums = _albums(appears, skip={a['id'] for a in albums})
     return jsonify({'artist': dict(artist), 'songs': songs, 'albums': albums,
                     'appears_songs': appears, 'appears_albums': appears_albums})
+
+def _art_alias_clean(raw):
+    out, seen = [], set()
+    for a in (raw or []):
+        t = str(a).strip()
+        k = t.lower()
+        if t and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out
+
+def _artist_merge_into(c, keeper_id, loser_id):
+    if keeper_id == loser_id:
+        return False
+    keeper = c.execute("SELECT * FROM artists WHERE id=?", (keeper_id,)).fetchone()
+    loser = c.execute("SELECT * FROM artists WHERE id=?", (loser_id,)).fetchone()
+    if not keeper or not loser:
+        return False
+    for f in ('image_path', 'genius_artist_id', 'bio', 'ytm_channel_id'):
+        if not keeper[f] and loser[f]:
+            c.execute(f"UPDATE artists SET {f}=? WHERE id=?", (loser[f], keeper_id))
+    try: k_al = json.loads(keeper['aliases'] or '[]')
+    except Exception: k_al = []
+    try: l_al = json.loads(loser['aliases'] or '[]')
+    except Exception: l_al = []
+    merged = [a for a in _art_alias_clean(list(k_al) + [loser['name']] + list(l_al))
+              if a.lower() != (keeper['name'] or '').lower()]
+    c.execute("UPDATE artists SET aliases=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), keeper_id))
+    for song_id, role in c.execute("SELECT song_id, role FROM song_artists WHERE artist_id=?", (loser_id,)).fetchall():
+        exists = c.execute("SELECT 1 FROM song_artists WHERE song_id=? AND artist_id=? AND role=?",
+                           (song_id, keeper_id, role)).fetchone()
+        if exists:
+            c.execute("DELETE FROM song_artists WHERE song_id=? AND artist_id=? AND role=?",
+                      (song_id, loser_id, role))
+        else:
+            c.execute("UPDATE song_artists SET artist_id=? WHERE song_id=? AND artist_id=? AND role=?",
+                      (keeper_id, song_id, loser_id, role))
+    c.execute("DELETE FROM artists WHERE id=?", (loser_id,))
+    _record_sync_action('artist_delete', loser_id, conn=c)
+    return True
+
+def _genius_artist_id_from_url(url):
+    import urllib.parse
+    tok = CFG.get('genius_token', '')
+    if not tok:
+        return None, 'resolving a url needs the genius token, paste the numeric id instead'
+    try:
+        p = urllib.parse.urlparse(url if '://' in url else 'https://' + url)
+    except Exception:
+        return None, 'not a valid url'
+    parts = [x for x in p.path.split('/') if x]
+    if not (p.netloc or '').lower().endswith('genius.com') or len(parts) < 2 or parts[0].lower() != 'artists':
+        return None, 'expected a genius.com/artists/... url or a numeric id'
+    want = urllib.parse.unquote(parts[1]).strip().lower()
+    hits = _genius_get('/search?q=' + urllib.parse.quote(want.replace('-', ' ')), tok).get('hits', [])
+    for h in hits:
+        r = h.get('result') or {}
+        for a in [r.get('primary_artist') or {}] + list(r.get('featured_artists') or []):
+            u = (a.get('url') or '').rstrip('/')
+            if a.get('id') and u and urllib.parse.unquote(u.split('/')[-1]).lower() == want:
+                return str(a['id']), None
+    return None, 'couldnt verify that url through genius search, paste the numeric id instead'
+
+@app.route('/api/artists/<aid>', methods=['PATCH'])
+def api_artist_patch(aid):
+    data = request.get_json(silent=True) or {}
+    new_gid = None
+    if 'genius' in data:
+        raw_g = str(data.get('genius') or '').strip()
+        if not raw_g:
+            new_gid = ''
+        elif raw_g.isdigit():
+            new_gid = raw_g
+        else:
+            new_gid, g_err = _genius_artist_id_from_url(raw_g)
+            if g_err:
+                return jsonify({'error': g_err}), 400
+    with db() as c:
+        row = c.execute("SELECT * FROM artists WHERE id=?", (aid,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        cur = dict(row)
+        try: cur_al = json.loads(cur.get('aliases') or '[]')
+        except Exception: cur_al = []
+        name = cur['name']
+        if 'name' in data:
+            name = (data.get('name') or '').strip()
+            if not name:
+                return jsonify({'error': 'name cant be empty'}), 400
+        renamed = name.lower() != (cur['name'] or '').lower()
+        if renamed:
+            other = c.execute("SELECT id, name FROM artists WHERE _ulower(name)=? AND id!=?", (name.lower(), aid)).fetchone()
+            if other:
+                return jsonify({'error': f"an artist named '{other['name']}' already exists",
+                                'merge_into': other['id'], 'merge_name': other['name']}), 409
+        aliases = _art_alias_clean(data['aliases'] if 'aliases' in data else cur_al)
+        if renamed:
+            aliases = _art_alias_clean(aliases + [cur['name']])
+        aliases = [a for a in aliases if a.lower() != name.lower()]
+        old_keys = {a.lower() for a in cur_al}
+        fresh = [a for a in aliases if a.lower() not in old_keys and a.lower() != (cur['name'] or '').lower()]
+        if fresh or renamed:
+            claimed = {}
+            for oid, oname, oal in c.execute("SELECT id, name, aliases FROM artists WHERE id!=?", (aid,)).fetchall():
+                claimed[(oname or '').lower()] = oname
+                try:
+                    for a in json.loads(oal or '[]'):
+                        claimed.setdefault(str(a).lower(), oname)
+                except Exception:
+                    pass
+            for a in fresh:
+                if a.lower() in claimed:
+                    return jsonify({'error': f"'{a}' already belongs to {claimed[a.lower()]}"}), 409
+        sets = ['name=?', 'aliases=?']
+        vals = [name, json.dumps(aliases, ensure_ascii=False)]
+        if new_gid is not None:
+            sets.append('genius_artist_id=?'); vals.append(new_gid or None)
+        for k in ('ytm_channel_id', 'bio'):
+            if k in data:
+                sets.append(f'{k}=?'); vals.append(str(data.get(k) or '').strip() or None)
+        try:
+            c.execute(f"UPDATE artists SET {', '.join(sets)} WHERE id=?", (*vals, aid))
+        except sqlite3.IntegrityError:
+            return jsonify({'error': 'that name is already taken'}), 409
+    _art_map_refresh(force=True)
+    return jsonify({'ok': True})
+
+@app.route('/api/artists/<aid>/merge', methods=['POST'])
+def api_artist_merge(aid):
+    into = str((request.get_json(silent=True) or {}).get('into') or '')
+    with db() as c:
+        ok = _artist_merge_into(c, into, aid)
+    if not ok:
+        return jsonify({'error': 'merge failed'}), 400
+    _art_map_refresh(force=True)
+    return jsonify({'ok': True, 'id': into})
+
+@app.route('/api/artists/<aid>/image-upload', methods=['POST'])
+def api_artist_image_upload(aid):
+    if 'file' not in request.files or not request.files['file'].filename:
+        return jsonify({'error': 'no file'}), 400
+    data = request.files['file'].read()
+    try:
+        from PIL import Image
+        import io as _io
+        Image.open(_io.BytesIO(data)).verify()
+        img = Image.open(_io.BytesIO(data)).convert('RGB')
+    except Exception:
+        return jsonify({'error': 'not a valid image'}), 400
+    with db() as c:
+        if not c.execute("SELECT 1 FROM artists WHERE id=?", (aid,)).fetchone():
+            return jsonify({'error': 'not found'}), 404
+        p = cdir() / f'artist_{aid}.jpg'
+        img.save(p, 'JPEG', quality=90)
+        c.execute("UPDATE artists SET image_path=? WHERE id=?", (str(p), aid))
+    return jsonify({'ok': True})
+
+@app.route('/api/artists/<aid>/image-remove', methods=['POST'])
+def api_artist_image_remove(aid):
+    with db() as c:
+        row = c.execute("SELECT image_path FROM artists WHERE id=?", (aid,)).fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        c.execute("UPDATE artists SET image_path=NULL WHERE id=?", (aid,))
+    if row[0]:
+        try: Path(row[0]).unlink(missing_ok=True)
+        except Exception: pass
+    return jsonify({'ok': True})
+
+@app.route('/api/artists/<aid>/genius-url')
+def api_artist_genius_url(aid):
+    tok = CFG.get('genius_token', '')
+    with db() as c:
+        row = c.execute("SELECT genius_artist_id FROM artists WHERE id=?", (aid,)).fetchone()
+    if not row or not row[0] or not tok:
+        return jsonify({'url': None})
+    a = _genius_get(f'/artists/{row[0]}', tok).get('artist') or {}
+    return jsonify({'url': a.get('url')})
+
+@app.route('/api/artist-aliases')
+def api_artist_aliases():
+    out = {}
+    with db() as c:
+        for name, al in c.execute("SELECT name, aliases FROM artists WHERE aliases != '[]'").fetchall():
+            try: lst = [str(x) for x in json.loads(al or '[]')]
+            except Exception: lst = []
+            if lst:
+                out[(name or '').lower()] = ' '.join(lst)
+    return jsonify(out)
 
 @app.route('/api/artists/<aid>/genius-discography')
 def api_artist_genius_discography(aid):
@@ -7912,6 +8286,7 @@ _DBX_SHARED_PREFS = frozenset([
     'prev_restarts', 'dl_speed_single', 'dl_speed_batch',
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
+    'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums',
 ])
 
 def _dbx_push_prefs(dbx):
@@ -8106,6 +8481,8 @@ def _dbx_merge_db(local_path, remote_path):
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.create_function('_canonical', 1, _canonical)
         _conn.create_function('_ulower', 1, _ulower, deterministic=True)
+        _conn.create_function('_disp_artist', 1, _disp_artist)
+        _conn.create_function('_disp_album', 3, _disp_album)
         c = _conn
         with _conn:
             _artist_remap = {}
@@ -20219,12 +20596,25 @@ function _parseSearch(q) {
   return terms;
 }
 const _srchHayCache = new WeakMap();
+async function _loadAliasMap() {
+  const m = await api('GET', '/api/artist-aliases');
+  if (m && !m.error) { S._aliasMap = new Map(Object.entries(m)); S._aliasVer = (S._aliasVer || 0) + 1; }
+}
+function _aliasHay(a, f) {
+  if (!S._aliasMap || !S._aliasMap.size) return '';
+  let out = '';
+  for (const nm of ((a || '') + ', ' + (f || '')).split(', ')) {
+    const v = S._aliasMap.get(nm.trim().toLowerCase());
+    if (v) out += ' ' + v;
+  }
+  return out;
+}
 function _songHay(s) {
-  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source].map(x => x || '').join('|');
+  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source].map(x => x || '').join('|') + '|' + (S._aliasVer || 0);
   const c = _srchHayCache.get(s);
   if (c && c.sig === sig) return c.h;
   const n = _srchNorm;
-  const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '')), feat: n(s.featuring_artists), album: n(s.album), source: n(s.source) };
+  const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '') + _aliasHay(s.artist, s.featuring_artists)), feat: n(s.featuring_artists), album: n(s.album), source: n(s.source) };
   h.all = (h.title + ' ' + h.artist + ' ' + h.album).trim();
   _srchHayCache.set(s, { sig, h });
   return h;
@@ -23071,6 +23461,120 @@ function showSongDetails(sid){
   );
 }
 
+const _ARTIST_PFP_STYLE = 'width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0';
+
+function _setArtistPreview(aid, has) {
+  const el = document.getElementById('edit-artist-img');
+  if (!el) return;
+  el.outerHTML = has
+    ? `<img id="edit-artist-img" src="/cover/artist/${aid}?t=${Date.now()}" alt="" style="${_ARTIST_PFP_STYLE}">`
+    : `<div id="edit-artist-img" style="${_ARTIST_PFP_STYLE};background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:28px">🎤</div>`;
+}
+
+function _artistErr(msg) {
+  showModal('error', `<p>${esc(msg)}</p>`, '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
+}
+
+async function editArtist(aid) {
+  const a = await api('GET', '/api/artists/' + aid);
+  if (!a || a.error) return;
+  let al = [];
+  try { al = JSON.parse(a.aliases || '[]'); } catch (e) {}
+  const lbl = t => `<span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">${t}</span>`;
+  const pfp = a.image_path
+    ? `<img id="edit-artist-img" src="/cover/artist/${aid}?t=${Date.now()}" alt="" style="${_ARTIST_PFP_STYLE}">`
+    : `<div id="edit-artist-img" style="${_ARTIST_PFP_STYLE};background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:28px">🎤</div>`;
+  window._editArtistOrig = { gid: a.genius_artist_id || '' };
+  showModal('edit artist',
+    `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px">
+       ${pfp}
+       <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+         <input type="file" id="edit-artist-file" accept="image/*" style="display:none" onchange="uploadArtistImage('${aid}')">
+         <button class="btn btn-out mu-ripple" style="width:100%" onclick="document.getElementById('edit-artist-file').click()">upload picture</button>
+         <button class="btn btn-out mu-ripple" style="width:100%" onclick="removeArtistImage('${aid}')">remove picture</button>
+         ${a.genius_artist_id ? `<button class="btn btn-out mu-ripple" style="width:100%" onclick="fetchArtistImageGenius('${aid}')">redownload (genius)</button>` : ''}
+       </div>
+     </div>
+     <div style="display:flex;flex-direction:column;gap:10px">
+       <label style="display:flex;flex-direction:column;gap:4px">${lbl('main name')}
+         <input class="inp" id="edit-artist-name" value="${esc(a.name || '')}" autocomplete="off">
+       </label>
+       <label style="display:flex;flex-direction:column;gap:4px">${lbl('aliases, one per line')}
+         <textarea class="inp" id="edit-artist-aliases" rows="4" style="resize:vertical">${esc(al.join('\n'))}</textarea>
+       </label>
+       <label style="display:flex;flex-direction:column;gap:4px">${lbl('genius artist id or genius.com/artists/ url')}
+         <input class="inp" id="edit-artist-genius" value="${esc(a.genius_artist_id || '')}" autocomplete="off">
+         <span id="edit-artist-gurl" style="font:var(--type-body-small);color:var(--color-on-surface-variant)"></span>
+       </label>
+       <label style="display:flex;flex-direction:column;gap:4px">${lbl('youtube music channel id')}
+         <input class="inp" id="edit-artist-ytm" value="${esc(a.ytm_channel_id || '')}" autocomplete="off">
+       </label>
+       <label style="display:flex;flex-direction:column;gap:4px">${lbl('bio')}
+         <textarea class="inp" id="edit-artist-bio" rows="3" style="resize:vertical">${esc(a.bio || '')}</textarea>
+       </label>
+     </div>`,
+    `<button class="btn btn-out mu-ripple" onclick="closeModal()">cancel</button>
+     <button class="btn btn-fill mu-ripple" onclick="saveArtistEdit('${aid}')">save</button>`
+  );
+  if (a.genius_artist_id) {
+    api('GET', '/api/artists/' + aid + '/genius-url').then(r => {
+      const el = document.getElementById('edit-artist-gurl');
+      if (el && r && r.url) el.innerHTML = `<a href="${esc(r.url)}" target="_blank" rel="noopener" style="color:var(--color-primary)">${esc(r.url)}</a>`;
+    });
+  }
+}
+
+async function saveArtistEdit(aid) {
+  const v = id => document.getElementById(id)?.value ?? '';
+  const body = {
+    name: v('edit-artist-name').trim(),
+    aliases: v('edit-artist-aliases').split('\n').map(x => x.trim()).filter(Boolean),
+    ytm_channel_id: v('edit-artist-ytm').trim(),
+    bio: v('edit-artist-bio').trim()
+  };
+  const g = v('edit-artist-genius').trim();
+  if (g !== (window._editArtistOrig?.gid || '')) body.genius = g;
+  const res = await api('PATCH', '/api/artists/' + aid, body);
+  if (res && res.merge_into) {
+    if (await confirmModal('merge into ' + res.merge_name + '?', 'all songs move to that artist and this name becomes an alias of it')) {
+      const mr = await api('POST', '/api/artists/' + aid + '/merge', { into: res.merge_into });
+      if (mr && mr.ok) { closeModal(); S._artPg = null; await loadData(); setView('artist', null, mr.id); }
+      else _artistErr((mr && mr.error) || 'merge failed');
+    }
+    return;
+  }
+  if (res && res.ok) { closeModal(); S._artPg = null; await loadData(); rerenderCurrentView(); }
+  else if (res && res.error) _artistErr(res.error);
+}
+
+async function uploadArtistImage(aid) {
+  const inp = document.getElementById('edit-artist-file');
+  const file = inp?.files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  let res = {};
+  try {
+    const r = await fetch('/api/artists/' + aid + '/image-upload', { method: 'POST', body: fd });
+    res = await r.json().catch(() => ({ error: 'upload failed (' + r.status + ')' }));
+  } catch (e) { res = { error: 'upload failed: ' + e }; }
+  inp.value = '';
+  if (res && res.ok) { _setArtistPreview(aid, true); S._artPg = null; rerenderCurrentView(); }
+  else if (res && res.error) _artistErr(res.error);
+}
+
+async function removeArtistImage(aid) {
+  const r = await api('POST', '/api/artists/' + aid + '/image-remove');
+  if (r && r.ok) { _setArtistPreview(aid, false); S._artPg = null; rerenderCurrentView(); }
+  else if (r && r.error) _artistErr(r.error);
+}
+
+async function fetchArtistImageGenius(aid) {
+  const r = await api('POST', '/api/artists/' + aid + '/fetch-image');
+  if (r && r.ok) { _setArtistPreview(aid, true); S._artPg = null; rerenderCurrentView(); }
+  else if (r && r.error) _artistErr(r.error);
+}
+
 function editSong(sid) {
   const song = S.library.find(s => s.id === sid);
   if (!song) return;
@@ -23097,11 +23601,11 @@ function editSong(sid) {
        </label>
        <label style="display:flex;flex-direction:column;gap:4px">
          <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">artist</span>
-         <input class="inp" id="edit-song-artist" value="${esc(song.artist||'')}" autocomplete="off">
+         <input class="inp" id="edit-song-artist" value="${esc(song.artist_raw ?? song.artist ?? '')}" autocomplete="off">
        </label>
        <label style="display:flex;flex-direction:column;gap:4px">
          <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">featuring</span>
-         <input class="inp" id="edit-song-feat" value="${esc(song.featuring_artists||'')}" autocomplete="off" placeholder="comma-separated, optional">
+         <input class="inp" id="edit-song-feat" value="${esc(song.featuring_raw ?? song.featuring_artists ?? '')}" autocomplete="off" placeholder="comma-separated, optional">
        </label>
        <label style="display:flex;flex-direction:column;gap:4px">
          <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">track #</span>
@@ -26519,7 +27023,8 @@ async function renderArtistPage(aid, searchOnly) {
       <div data-artist-img-wrap style="flex-shrink:0">${imgHtml}</div>
       <div style="padding-bottom:8px;min-width:0;flex:1">
         <div style="font:var(--type-headline-small);font-variation-settings:var(--fv-headline);font-size:32px;color:var(--color-on-surface);line-height:1.1">${esc(artist.name)}</div>
-        ${aliasesRaw.length ? `<div style="font:var(--type-body-small);color:var(--color-on-surface-variant);margin-top:4px">also known as: ${aliasesRaw.map(a=>esc(a)).join(', ')}</div>` : ''}
+        ${(aliasesRaw.length && CFG.artist_show_aliases !== false) ? `<div style="font:var(--type-body-small);color:var(--color-on-surface-variant);margin-top:4px">also known as: ${aliasesRaw.map(a=>esc(a)).join(', ')}</div>` : ''}
+        <div style="margin-top:8px"><button class="btn btn-out mu-ripple" style="padding:4px 12px;font-size:12px" onclick="editArtist('${aid}')">edit artist</button></div>
         <div id="artist-ytm-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
           ${statChip(tracksInLib,'tracks',false)}
@@ -31733,6 +32238,7 @@ async function loadData() {
   S._lastLibIds = ''; // reset after fetch so renderLibrary mid-flight sees stale, not empty
   S.playlists = await api('GET', '/api/playlists') || [];
   S.albums = await api('GET', '/api/albums') || [];
+  _loadAliasMap();
   S._albTracks = {};
   const validIds = new Set(S.library.map(s => s.id));
   for (const pid of Object.keys(S.plSongs)) {
@@ -33359,6 +33865,9 @@ function renderSettings() {
         `)}
         ${row('cover art bleed', 'nice colors around the currently playing song cover art :3', toggle('cover_art_bleed', CFG.cover_art_bleed, 'refreshBleed()'))}
         ${row('extra info on artist page', 'pull genius / youtube music stuff on artist pages (bio, top songs, discography, related). off = only your library', toggle('artist_extra_info', CFG.artist_extra_info))}
+        ${row('use main artist name', 'always show an artist by their main name, aliases resolve to it everywhere. off = show names exactly as tagged', toggle('artist_use_main_name', CFG.artist_use_main_name !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
+        ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('sync hue to cover', 'make interface colors match the song cover art', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.cover_art_hue_sync ? 'checked' : ''} onchange="_onHueSyncToggle(this.checked)" onclick="event.stopPropagation()">
@@ -34321,6 +34830,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   S.playlists = pls || [];
   if (window.requestIdleCallback) requestIdleCallback(() => _plPrefetch(), { timeout: 4000 }); else setTimeout(() => _plPrefetch(), 2500);
   S.albums = albs || [];
+  _loadAliasMap();
   // same truthy-error-object guard as loadData() above
   if (cfg && !cfg.error) {
     CFG = cfg;
