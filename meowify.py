@@ -30282,6 +30282,7 @@ function lgReset() { DevPrefs.del('lg'); applyLG(); renderSettings(); }
 // slide mode feel, tweak here. spring: higher stiffness = faster, lower damping = more wobble (damping ~ 2*sqrt(stiffness) is no overshoot at all)
 var LENS_FX = {
   stiffness: 480, damping: 30,
+  lead: 0,           // 0 = stretch around the center, 1 = tail stays pinned and the head leads (more slide back)
   stretch: .22,      // extra scaleX at refSpeed, 0 = no squash and stretch
   refSpeed: 1400,    // px/s that counts as a full stretch
   maxStretch: .35,   // hard cap of the extra scaleX
