@@ -30474,7 +30474,7 @@ var LG_PARTS = [
   ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
 ];
 var _LG_LS = 'meowify_lg';
-var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, lensOver: false, lensStr: .4, lvl: 99 };
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, lensOver: false, lensStr: .4, lvl: 99, force: {} };
 function _lgPrefs() { const v = DevPrefs.get('lg'); return Object.assign({}, _LG_DEF, v && typeof v === 'object' ? v : {}); }
 function _lgSave(s) { DevPrefs.set('lg', s); }
 function _lgFmt(u, v) {
@@ -30510,7 +30510,7 @@ function applyLG() {
   const G = MU.glass;
   if (G) {
     if (!window._glassDef) { window._glassDef = 1; G.define(GLASS_TIERS); }
-    G.configure({ on: true, level: s.lvl });
+    G.configure({ on: true, level: s.lvl, force: s.force });
     for (const t of ['frame', 'float', 'panel']) document.documentElement.classList.toggle('gl-off-' + t, !G.active(t)); // tiers without the bundle get the solid boost css
   }
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
@@ -31040,6 +31040,48 @@ function gaSettingsHtml(sq) {
         ${sl('opacity', 'lower lets the normal background through', 0, 100, 1, s.op, '%', 'op', off)}
         ${line('pause when window inactive', 'stops the animation while meowify is not focused', sw(s.pause, "gaSet('pause',this.checked)"), off)}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset art background</div><div class="sb-s">back to the defaults, off</div></div><button class="lg-chip" onclick="gaReset()">reset</button></div>
+      </div>
+    </details>`;
+}
+// glass effects: the slider decides how many tiers (GLASS_TIERS order) get the backdrop bundle, per tier override can force one on or off
+function _glassFxTiers() { const G = window.MU && MU.glass; return G ? G.order.filter(n => (GLASS_TIERS[n] || {}).fx !== false) : []; }
+function _glassLvlText(v) { const t = _glassFxTiers(); return v <= 0 ? 'spec only' : v >= t.length ? 'all' : t.slice(0, v).join(' + '); }
+function glassLvl(v) { v = +v; lgSet('lvl', v >= _glassFxTiers().length ? 99 : v); }
+function glassForce(t, v) { const s = _lgPrefs(), f = Object.assign({}, s.force); if (v === 'auto') delete f[t]; else f[t] = v === 'on'; s.force = f; _lgSave(s); applyLG(); }
+var GLASS_TIER_SUB = { frame: 'sidebars and topbar', float: 'player, menus, modals, popups', panel: 'album cards, search tracks, settings sections, now playing cards', control: 'active buttons, tabs, progress bars' };
+function glassFxSettingsHtml(sq) {
+  if (sq && !'glass effects blur refraction backdrop tier slider performance gpu'.includes(sq)) return '';
+  const G = window.MU && MU.glass; if (!G) return '';
+  const s = _lgPrefs(), tiers = _glassFxTiers(), n = tiers.length, v = Math.min(s.lvl, n);
+  const sw = (checked, onchange) => `
+    <label class="switch" style="flex-shrink:0">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()">
+      <div class="switch-track"><div class="switch-thumb"></div></div>
+    </label>`;
+  const line = (name, sub, ctrl, cls = '') => `
+    <div class="sb-line ${cls}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>${ctrl}</div>`;
+  const pick = t => {
+    const f = (s.force || {})[t], cur = f == null ? 'auto' : f ? 'on' : 'off';
+    return `<select class="input" style="width:110px" onchange="glassForce('${t}',this.value)">${['auto', 'on', 'off'].map(o => `<option value="${o}" ${cur === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  };
+  const forced = Object.keys(s.force || {}).length;
+  return `
+    <details class="set-blur" ${(window._gfxOpen || window._settingsSub === 'glass') ? 'open' : ''} ontoggle="window._gfxOpen=this.open">
+      <summary>
+        <div class="set-title-cell"><div class="set-lbl">glass effects</div><div class="set-sub">blur and refraction on glass panels, from nothing to everything. highlights always stay on</div></div>
+        <span class="sb-meta">${_glassLvlText(v)}</span>
+        <svg class="sb-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="sb-body">
+        ${line('effects level', 'how many glass tiers get blur and refraction, the rest keep just the highlight and a more solid background. refraction also needs liquid glass on', `<div style="display:flex;align-items:center;gap:8px">
+          <input type="range" min="0" max="${n}" step="1" value="${v}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_glassLvlText(+this.value);glassLvl(this.value)">
+          <span class="sb-meta" style="min-width:110px;text-align:right">${_glassLvlText(v)}</span></div>`)}
+        ${line('auto', 'coming later: skip blur and refraction where only a plain or paused background is behind', sw(false, ''), 'off')}
+        <details ${window._gfxAdv ? 'open' : ''} ontoggle="window._gfxAdv=this.open" style="padding-top:6px">
+          <summary style="cursor:pointer;padding:8px 0;font:var(--type-label-medium);color:var(--color-on-surface-variant)">advanced${forced ? ' · ' + forced + ' forced' : ''}</summary>
+          <div class="sb-grp">per tier, auto follows the level above</div>
+          ${tiers.map(t => line(t, GLASS_TIER_SUB[t] || '', pick(t))).join('')}
+        </details>
       </div>
     </details>`;
 }
@@ -33354,6 +33396,7 @@ function renderSettings() {
             </div>
           </div>
         `) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? glassFxSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
