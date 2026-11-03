@@ -31229,7 +31229,7 @@ function _pinLG(hdr) {
 // edit selectors and order right here. frame/float refraction comes from the LG_PARTS groups (merge + custom selectors), panel/control use generic tier groups
 var GLASS_TIERS = {
   frame:   { sel: '#sidebar,.topbar,.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar', spec: 'var(--glass-spec-panel)', important: true },
-  float:   { sel: '#player,#ctx,#dl-panel-float,.mbox,#vol-slider-popup', spec: 'var(--glass-spec-panel)', important: true },
+  float:   { sel: '#player,#ctx,#dl-panel-float,.mbox,#vol-slider-popup,.set-pc-shell:not(.set-pc-tab)', spec: 'var(--glass-spec-panel)', important: true },
   panel:   { sel: '.lib-album,.album-card,.search-track,.set-section,.np-next-card,.np-lrc-preview,.np-meta-grid', spec: 'var(--glass-spec-panel)', important: true, refract: true },
   control: { sel: '.nav-btn.active,.subnav-btn.on,.pl-item.active,.mob-sort-btn,.prog-wrap', spec: 'var(--glass-spec-panel)', important: true, refract: true },
   row:     { sel: '.song-row.playing,.song-row-mobile.playing', spec: 'var(--glass-spec-panel)', important: true, fx: false }, // spec only, never any backdrop
@@ -32067,10 +32067,7 @@ function _applyDesignImpl(design) {
   body.design-glassy .dl-item{background:var(--glass-bg-mid)!important;border-color:var(--glass-border)!important}
   body.design-glassy .set-section{background:var(--glass-bg-mid)!important}
   body.design-glassy .set-list-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important}
-  body.design-glassy .set-pc-shell:not(.set-pc-tab){background:color-mix(in oklch,var(--color-surface-container) min(100%,max(calc(75% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;border:1px solid var(--glass-border-hi)}
-  body.design-glassy .set-section{background:var(--glass-bg-mid)!important}
-  body.design-glassy .set-list-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important}
-  body.design-glassy .set-pc-shell:not(.set-pc-tab){background:color-mix(in oklch,var(--color-surface-container) min(100%,max(calc(75% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;border:1px solid var(--glass-border-hi)}
+  body.design-glassy .set-pc-shell:not(.set-pc-tab){background:var(--glass-bg-mid)!important;border:1px solid var(--glass-border-hi)}
   body.design-glassy .mob-tab{transition:color var(--dur-2)}
   body.design-glassy #mobile-nav{box-shadow:0 -1px 0 var(--glass-border-hi) inset}
   body.design-glassy .inp{background:rgba(255,255,255,.05)!important;border-color:var(--glass-border)!important}
