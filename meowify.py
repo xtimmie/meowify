@@ -12831,10 +12831,16 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 #app:not(.mobile) #vc:has(.list-header.pinned){background:linear-gradient(var(--pin-bg),var(--pin-bg)) right 0 top 0/var(--sbw,0px) var(--pin-h,34px) no-repeat}
 #app.mobile #vc{--vc-px:8px;--view-top:8px}
 /* mobile list top fade, --vcm 0..1 comes from scroll (_vcmSync). art bg on = mask, off = bg colored strip */
-@property --vcm{syntax:'<number>';inherits:true;initial-value:0}
-#app.mobile #vc{transition:--vcm var(--vcm-ms,0ms) linear}
-html.vcm-mask body.design-glassy #app.mobile #vc[data-vcm],html.vcm-auto.ga-on body.design-glassy #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
-html.vcm-solid body.design-glassy #app.mobile #vc::before,html.vcm-auto:not(.ga-on) body.design-glassy #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
+@property --vcm{syntax:'<number>';inherits:false;initial-value:0}
+@keyframes vcm-a{from{--vcm:0}to{--vcm:1}}
+@keyframes vcm-o{from{opacity:0}to{opacity:1}}
+html.vcm-js #app.mobile #vc{transition:--vcm var(--vcm-ms,0ms) linear}
+html.vcm-sda #app.mobile #vc{animation:vcm-a var(--vcm-ease,linear) both;animation-timeline:scroll(self);animation-range:0px var(--vcm-px,30px)}
+html.vcm-sda.vcm-solid #app.mobile #vc::before,html.vcm-sda.vcm-auto:not(.ga-on) #app.mobile #vc::before{animation:vcm-o var(--vcm-ease,linear) both;animation-timeline:scroll(nearest);animation-range:0px var(--vcm-px,30px)}
+html.vcm-ok:not([data-mu-design="glassy"]) #app.mobile #vc{--vcm-bg:var(--color-surface)}
+html.vcm-ok:not([data-mu-design="glassy"]) #app.mobile .topbar.topbar.topbar{background:var(--color-surface)!important;border-bottom:none!important;box-shadow:none!important}
+html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-auto.ga-on #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
+html.vcm-solid #app.mobile #vc::before,html.vcm-auto:not(.ga-on) #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcmj,0)}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
@@ -31171,21 +31177,32 @@ function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 // mobile list top fade: scroll position (0..px) drives --vcm 0..1 on #vc-wrap, css lives next to the #app.mobile #vc rule
 var _VCM_DEF = { on: true, mode: 'auto', px: 30, h: 48, ease: 'smooth', ms: 0 };
 function _vcmPrefs() { const v = DevPrefs.get('vcm'); return Object.assign({}, _VCM_DEF, v && typeof v === 'object' ? v : {}); }
+var _VCM_DESIGNS = ['glassy', 'material', 'bloom']; // designs that get the list top fade, anything not listed (paper, terminal, new designs) gets none
+function _vcmDesignOk() { return _VCM_DESIGNS.includes(document.documentElement.getAttribute('data-mu-design') || (typeof CFG !== 'undefined' && CFG.ui_design) || 'material'); }
 window._vcmSync = function (vc) {
   const s = window._vcmS || (window._vcmS = _vcmPrefs());
+  if (window._vcmSda) { // a css scroll driven animation does the fade itself, this only attaches the mask while scrolled down
+    const want = !!(window._vcmOk && isMobile() && vc.scrollTop > 0);
+    if (vc.hasAttribute('data-vcm') !== want) vc.toggleAttribute('data-vcm', want);
+    return;
+  }
   let f = 0;
-  if (s.on && isMobile() && document.body.classList.contains('design-glassy')) {
+  if (window._vcmOk && isMobile()) {
     f = Math.min(Math.max(vc.scrollTop / s.px, 0), 1);
     f = s.ease === 'in' ? f * f : s.ease === 'out' ? 1 - (1 - f) * (1 - f) : s.ease === 'smooth' ? f * f * (3 - 2 * f) : f;
     f = Math.round(f * 1000) / 1000;
   }
   if (f === vc._vcm) return;
-  vc._vcm = f; vc.style.setProperty('--vcm', f); // on #vc itself so the tab transition ghost clone keeps its own fade while the new view resets
+  vc._vcm = f; vc.style.setProperty('--vcm', f); vc.style.setProperty('--vcmj', f); // on #vc itself so the tab transition ghost clone keeps its own fade while the new view resets
   vc.toggleAttribute('data-vcm', f > 0 || (s.on && s.ms > 0 && isMobile())); // with a transition the mask stays attached so it can ease back out
 };
 function _vcmApply() {
   const s = window._vcmS = _vcmPrefs(), vc = document.getElementById('vc'), wrap = vc && vc.parentElement, root = document.documentElement;
-  ['auto', 'mask', 'solid'].forEach(m => root.classList.toggle('vcm-' + m, s.on && s.mode === m));
+  const ok = window._vcmOk = !!(s.on && _vcmDesignOk()), sda = window._vcmSda = ok && s.ms === 0 && !!(window.CSS && CSS.supports && CSS.supports('animation-timeline: scroll()'));
+  ['auto', 'mask', 'solid'].forEach(m => root.classList.toggle('vcm-' + m, ok && s.mode === m));
+  root.classList.toggle('vcm-ok', ok); root.classList.toggle('vcm-sda', sda); root.classList.toggle('vcm-js', ok && !sda);
+  root.style.setProperty('--vcm-px', s.px + 'px');
+  root.style.setProperty('--vcm-ease', { in: 'cubic-bezier(.42,0,1,1)', out: 'cubic-bezier(0,0,.58,1)', smooth: 'cubic-bezier(.33,0,.67,1)' }[s.ease] || 'linear');
   if (!wrap) return;
   wrap.style.setProperty('--vcm-h', s.h + 'px'); wrap.style.setProperty('--vcm-ms', s.ms + 'ms');
   vc._vcm = -1; window._vcmSync(vc);
@@ -31824,6 +31841,7 @@ function applyGlass(c = CFG) {
 }
 function applyDesign(design) {
   _applyDesignImpl(design);
+  try { _vcmApply(); } catch {}
   _repaintWavyColors();
   updateSpikyBtn();
   _updateMobNpSpiky();
@@ -34051,6 +34069,7 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
+        ${_vcmDesignOk() ? subRow('vcfade', 'list top fade', 'mobile only, songs fade out under the topbar when you scroll down', () => vcmSettingsHtml(_sq)) : ''}
         ${subRow('glass', 'glass & blur', 'panel opacity, blur strength and liquid glass refraction', () => `
         ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength (opacity doesnt work well lol)', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
@@ -34073,7 +34092,6 @@ function renderSettings() {
         ${(CFG.ui_design||'material')==='glassy' ? glassFxSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
-        ${(CFG.ui_design||'material')==='glassy' ? vcmSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
       `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
