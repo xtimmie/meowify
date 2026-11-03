@@ -15297,7 +15297,7 @@ function updateMobileClass(){
   const app = document.getElementById('app');
   const was = app.classList.contains('mobile');
   const now = isMobile();
-  if (was !== now) app.classList.toggle('mobile', now);
+  if (was !== now) { app.classList.toggle('mobile', now); try { applyLG(); } catch {} }
   return { was, now };
 }
 
@@ -31045,7 +31045,7 @@ var LG_PARTS = [
   ['modal',     'modals',                    'confirm, rename, add to playlist dialogs','.mbox'],
 ];
 var _LG_LS = 'meowify_lg';
-var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, lensOver: false, lensStr: .4, lvl: 99, force: {} };
+var _LG_DEF = { on: false, look: 'panel', q: 0, p: {}, off: [], sat: 1.4, br: 1, ct: 1, lensOver: false, lensStr: .4, lvl: 99, force: {}, ovr: false };
 function _lgPrefs() { const v = DevPrefs.get('lg'); return Object.assign({}, _LG_DEF, v && typeof v === 'object' ? v : {}); }
 function _lgSave(s) { DevPrefs.set('lg', s); }
 function _lgFmt(u, v) {
@@ -31072,6 +31072,14 @@ var GLASS_TIERS = {
 };
 // LG_PARTS key -> tier, an engine group only runs while its tier has the bundle
 var LG_TIER = { player: 'float', ctx: 'float', modal: 'float', topbar: 'frame', sidebar: 'frame', rsidebars: 'frame' };
+// override normal styling: every glass tier selector gets one shared look driven by the liquid glass settings (mobile topbar stays transparent, handled in the glassy css)
+function _lgOvrCss(on) {
+  let el = document.getElementById('lg-ovr-style');
+  if (!on) { if (el) el.textContent = ''; return; }
+  if (!el) { el = document.createElement('style'); el.id = 'lg-ovr-style'; document.head.appendChild(el); }
+  const sel = Object.values(GLASS_TIERS).map(t => t.sel).join(',').replace('.topbar,', '#app:not(.mobile) .topbar,'), x = ':is(' + sel + ')';
+  el.textContent = 'html.lg-ovr body.design-glassy ' + x + x + x + '{background:var(--glass-bg-mid)!important;border:1px solid var(--glass-border)!important;box-shadow:var(--glass-spec-panel)!important;filter:none!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}';
+}
 function applyLG() {
   const L = window.MU && MU.liquidGlass; if (!L || !LG_PARTS) return;
   const s = _lgPrefs();
@@ -31087,7 +31095,8 @@ function applyLG() {
   const on = !!s.on && L.supported && document.documentElement.dataset.muDesign === 'glassy';
   const lensOn = on && !s.off.includes('lens');
   const over = lensOn && !!s.lensOver;
-  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) && (!G || !LG_TIER[k] || G.active(LG_TIER[k])) });
+  const _mobTb = !!document.querySelector('#app.mobile'); // glassy mobile topbar never gets refraction
+  for (const [k, , , sel] of LG_PARTS) L.group(k, { selector: k === 'nav' && lensOn ? '.mob-nav-glass' : sel, enabled: k === 'lens' ? lensOn && !over : on && !s.off.includes(k) && !(k === 'topbar' && _mobTb) && (!G || !LG_TIER[k] || G.active(LG_TIER[k])) });
   const _lgDesk = () => !!document.querySelector('#app:not(.mobile)'), _lgFull = () => document.body.classList.contains('rs-full');
   L.merge('frame', { groups: () => _lgFull() ? ['sidebar', 'topbar', 'rsidebars'] : ['sidebar', 'topbar'], radius: '--frame-r', cut: '#vc-wrap', layer: '#app', when: _lgDesk });
   if (!window._lgSbGone) { window._lgSbGone = 1; L.removeMerge('frame-sb'); }
@@ -31097,6 +31106,8 @@ function applyLG() {
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
   document.documentElement.classList.toggle('lg-lens', lensOn);
   document.documentElement.classList.toggle('lg-lens-over', over);
+  document.documentElement.classList.toggle('lg-ovr', !!s.ovr);
+  _lgOvrCss(!!s.ovr);
   applyNavPill();
 }
 // mobile nav pill style: one shared pill that slides between tabs (spring) or a pill per tab that pops in.
@@ -31657,7 +31668,7 @@ function glassFxSettingsHtml(sq) {
     </details>`;
 }
 function lgSettingsHtml(sq) {
-  if (sq && !'liquid glass displacement refraction saturate brightness contrast glass'.includes(sq)) return '';
+  if (sq && !'liquid glass displacement refraction saturate brightness contrast glass override normal styling'.includes(sq)) return '';
   const L = window.MU && MU.liquidGlass; if (!L) return '';
   const s = _lgPrefs(), p = Object.assign({}, L.defaults, L.looks[s.look], s.p);
   const sw = (checked, onchange) => `
@@ -31686,6 +31697,7 @@ function lgSettingsHtml(sq) {
       <div class="sb-body">
         ${line('enable refraction', L.supported ? 'applies to the panels switched on below, blur and opacity above still apply on top' : 'this webview has no svg backdrop filters', sw(s.on && L.supported, `lgSet('on',this.checked);renderSettings()`), L.supported ? '' : 'off')}
         <div class="lgp"><div class="lgp-t">LIQUID GLASS</div><div class="lgp-g lgp-pill" data-lg-preview ${_lgPosStyle(0)} onpointerdown="_lgDrag(event,0)"></div><div class="lgp-g lgp-card" data-lg-preview ${_lgPosStyle(1)} onpointerdown="_lgDrag(event,1)"></div></div>
+        ${line('override normal styling', 'every panel with liquid glass on it, spec only or full bundle, drops its own blur, filter, shadow, border and background and follows one glass look from this section only', sw(!!s.ovr, "lgSet('ovr',this.checked)"))}
         <div class="sb-grp">look</div>
         <div class="lg-chips">${chips}</div>
         <div class="sb-grp">performance</div>
@@ -31745,7 +31757,7 @@ function _applyDesignImpl(design) {
   body.design-glassy #app:not(.mobile) #main{background:rgba(0,0,0,.08)!important}
   body.design-glassy #app.mobile #main{background:transparent!important}
   body.design-glassy .topbar{background:var(--glass-bg-mid)!important;border-bottom:1px solid var(--glass-border)}
-  body.design-glassy #app.mobile .topbar{border-radius:0;background:var(--color-surface-dim)!important;box-shadow:0 0 18px 25px color-mix(in srgb,var(--color-surface-dim) calc(var(--vc-fade,0)*100%),transparent), 0 0 6px 8px var(--color-surface-dim)!important;border-bottom:none}
+  html body.design-glassy #app.mobile .topbar.topbar.topbar{border-radius:0;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important}
   body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
   body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
