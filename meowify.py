@@ -32068,6 +32068,9 @@ function _applyDesignImpl(design) {
   body.design-glassy .set-section{background:var(--glass-bg-mid)!important}
   body.design-glassy .set-list-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important}
   body.design-glassy .set-pc-shell:not(.set-pc-tab){background:color-mix(in oklch,var(--color-surface-container) min(100%,max(calc(75% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;border:1px solid var(--glass-border-hi)}
+  body.design-glassy .set-section{background:var(--glass-bg-mid)!important}
+  body.design-glassy .set-list-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important}
+  body.design-glassy .set-pc-shell:not(.set-pc-tab){background:color-mix(in oklch,var(--color-surface-container) min(100%,max(calc(75% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;border:1px solid var(--glass-border-hi)}
   body.design-glassy .mob-tab{transition:color var(--dur-2)}
   body.design-glassy #mobile-nav{box-shadow:0 -1px 0 var(--glass-border-hi) inset}
   body.design-glassy .inp{background:rgba(255,255,255,.05)!important;border-color:var(--glass-border)!important}
