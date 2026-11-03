@@ -20045,8 +20045,13 @@ function _applyCoverHue(col, fadeMs) {
 }
 
 // col null = no cover (or unreadable one): theme falls back to the users own hue/sat
+// hue sync fade from settings (ms, the end-of-song fade). song changes u trigger use half. 0 = no fade
+function _hueFadeMs() { const v = Number(CFG.hue_sync_fade ?? COLOR_FADE_PREDICT_MS); return Number.isFinite(v) && v >= 0 ? v : COLOR_FADE_PREDICT_MS; }
+// scale a COLOR_FADE_* value by the setting, at the default (2000) both fades stay exactly as they were
+function _hueFadeScaled(ms) { return ms == null ? ms : Math.round(ms * _hueFadeMs() / COLOR_FADE_PREDICT_MS); }
+
 function _applyCoverColor(col, fadeMs) {
-  if (CFG.cover_art_hue_sync) _applyCoverHue(col, fadeMs);
+  if (CFG.cover_art_hue_sync) _applyCoverHue(col, _hueFadeScaled(fadeMs));
   if (CFG.cover_art_bleed) {
     const pl = document.getElementById('player');
     if (pl) _applyBleedColor(pl, col || _themeBleedColor(), fadeMs);
@@ -20094,6 +20099,8 @@ function _colorPredictTick(t, d) {
   }
   const next = getNextSong();
   if (!next || next.id === S.cur.id) return;
+  // no fade: dont switch early, the color changes on the real song change instead
+  if (CFG.cover_art_hue_sync && _hueFadeMs() === 0) return;
   const pred = { fromId: S.cur.id, toId: next.id };
   _colorPredict = pred; _colorSongId = next.id;
   _coverColorForSong(next).then(col => {
@@ -32415,7 +32422,7 @@ function applyTheme(hue, sat, bri, _noFade, _fadeMs) {
   const b = (bri == null || bri === '') ? 1.0 : parseFloat(bri);
   // bw cover sync overrides sat with a brightness-adapted low value (CFG.theme_sat itself is untouched)
   const s = _bwSync ? _bwEffSat(b) : ((sat == null || sat === '') ? 50  : parseFloat(sat));
-  if (_noFade) {
+  if (_noFade || _fadeMs === 0) {
     MU.setPalette({ hue: h, sat: s, bri: b });
   } else {
     // bri applies immediately; hue and sat share one animated transition so they dont desync
@@ -34082,6 +34089,14 @@ function renderSettings() {
             <input type="checkbox" ${CFG.cover_art_hue_sync ? 'checked' : ''} onchange="_onHueSyncToggle(this.checked)" onclick="event.stopPropagation()">
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>`)}
+        ${row('hue sync fade', 'how long the theme blends into the next cover color when a song ends, skipping uses half. all the way left = instant', `
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" min="0" max="4000" step="100" value="${CFG.hue_sync_fade ?? 2000}" class="slider" style="width:120px;"
+              oninput="CFG.hue_sync_fade=parseInt(this.value);document.getElementById('hue-fade-lbl').textContent=this.value>0?(this.value/1000).toFixed(1)+'s':'off'"
+              onpointerup="saveSetting('hue_sync_fade',CFG.hue_sync_fade)">
+            <span id="hue-fade-lbl" style="font:var(--type-label-small);color:var(--color-on-surface-variant);min-width:32px">${(CFG.hue_sync_fade ?? 2000) > 0 ? ((CFG.hue_sync_fade ?? 2000)/1000).toFixed(1)+'s' : 'off'}</span>
+          </div>
+        `)}
         ${row('font override', 'set your own font (css syntax)', `
           <input class="inp" type="text" placeholder="e.g. Inter, Arial, monospace"
             style="width:220px"
