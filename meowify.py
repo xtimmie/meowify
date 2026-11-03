@@ -12832,9 +12832,9 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 #app.mobile #vc{--vc-px:8px;--view-top:8px}
 /* mobile list top fade, --vcm 0..1 comes from scroll (_vcmSync). art bg on = mask, off = bg colored strip */
 @property --vcm{syntax:'<number>';inherits:true;initial-value:0}
-#app.mobile #vc-wrap{position:relative;transition:--vcm var(--vcm-ms,0ms) linear}
+#app.mobile #vc{transition:--vcm var(--vcm-ms,0ms) linear}
 html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-auto.ga-on #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
-html.vcm-solid #app.mobile #vc-wrap::before,html.vcm-auto:not(.ga-on) #app.mobile #vc-wrap::before{content:'';position:absolute;left:0;right:0;top:0;height:var(--vcm-h,48px);z-index:3;pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
+html.vcm-solid #app.mobile #vc::before,html.vcm-auto:not(.ga-on) #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
@@ -31172,15 +31172,15 @@ function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
 var _VCM_DEF = { on: true, mode: 'auto', px: 30, h: 48, ease: 'smooth', ms: 0 };
 function _vcmPrefs() { const v = DevPrefs.get('vcm'); return Object.assign({}, _VCM_DEF, v && typeof v === 'object' ? v : {}); }
 window._vcmSync = function (vc) {
-  const wrap = vc.parentElement, s = window._vcmS || (window._vcmS = _vcmPrefs());
+  const s = window._vcmS || (window._vcmS = _vcmPrefs());
   let f = 0;
   if (s.on && isMobile()) {
     f = Math.min(Math.max(vc.scrollTop / s.px, 0), 1);
     f = s.ease === 'in' ? f * f : s.ease === 'out' ? 1 - (1 - f) * (1 - f) : s.ease === 'smooth' ? f * f * (3 - 2 * f) : f;
     f = Math.round(f * 1000) / 1000;
   }
-  if (f === wrap._vcm) return;
-  wrap._vcm = f; wrap.style.setProperty('--vcm', f);
+  if (f === vc._vcm) return;
+  vc._vcm = f; vc.style.setProperty('--vcm', f); // on #vc itself so the tab transition ghost clone keeps its own fade while the new view resets
   vc.toggleAttribute('data-vcm', f > 0 || (s.on && s.ms > 0 && isMobile())); // with a transition the mask stays attached so it can ease back out
 };
 function _vcmApply() {
@@ -31188,7 +31188,7 @@ function _vcmApply() {
   ['auto', 'mask', 'solid'].forEach(m => root.classList.toggle('vcm-' + m, s.on && s.mode === m));
   if (!wrap) return;
   wrap.style.setProperty('--vcm-h', s.h + 'px'); wrap.style.setProperty('--vcm-ms', s.ms + 'ms');
-  wrap._vcm = -1; window._vcmSync(vc);
+  vc._vcm = -1; window._vcmSync(vc);
 }
 function vcmSet(k, v) { const s = _vcmPrefs(); s[k] = v; DevPrefs.set('vcm', s); _vcmApply(); }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _vcmApply, { once: true }); else _vcmApply();
