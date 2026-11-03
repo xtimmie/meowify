@@ -14152,8 +14152,10 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 
 html:not(.sb-cfg-tab) #nb-cfg{display:none!important}
 html.sb-cfg-tab #topbar-cfg-btn{display:none!important}
-.set-pc-shell.set-pc-tab{max-width:none;max-height:none;box-shadow:none;transform:none;transition:none}
+.set-pc-shell.set-pc-tab{max-width:none;max-height:none;border:none;border-radius:0;box-shadow:none;transform:none;transition:none}
 #vc:has(>.set-pc-tab){overflow:hidden}
+.set-pc-tab .set-pc-search{display:none}
+body.nav-back-on #app:not(.mobile) .set-pc-tab .set-head{display:none}
 @media (max-width:767px){
   #topbar-cfg-btn{display:none!important}
 }
@@ -14177,30 +14179,27 @@ html.sb-cfg-tab #topbar-cfg-btn{display:none!important}
 }
 #set-pc-overlay.open .set-pc-shell{transform:scale(1)}
 .set-pc-sidebar{
-  width:220px;flex-shrink:0;border-right:1px solid var(--line-low);
-  background:var(--color-surface-container-low);padding:12px 0;overflow-y:auto;
+  width:240px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;
+  background:var(--color-surface-container-low);border-right:1px solid var(--line-low);padding:14px 10px;overflow-y:auto;
 }
-.set-pc-sidebar-title{padding:10px 20px 14px;font:var(--type-title-medium);font-variation-settings:var(--fv-title)}
-.set-pc-item{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:10px 20px;cursor:pointer;color:var(--color-on-surface-variant);-webkit-tap-highlight-color:transparent;transition:background var(--dur-2)}
+.set-pc-sidebar-title{padding:6px 12px 12px;font:var(--type-title-medium);font-variation-settings:var(--fv-title)}
+.set-pc-item{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-md,12px);cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-large);font-variation-settings:var(--fv-label);-webkit-tap-highlight-color:transparent;transition:background var(--dur-2),color var(--dur-2)}
 @media (hover:hover){.set-pc-item:hover{background:var(--color-surface-container-high);color:var(--color-on-surface)}}
 .set-pc-item.active{background:var(--color-primary-container);color:var(--color-on-primary-container)}
-.set-pc-item .ni svg{width:18px;height:18px}
-.set-pc-content{flex:1;overflow-y:auto;padding:28px 32px}
-.set-pc-content .set-panel{max-width:none;margin:0}
+.set-pc-item svg{width:18px;height:18px;flex-shrink:0}
+.set-pc-content{flex:1;min-width:0;overflow-y:auto;padding:28px 36px}
+.set-pc-content .set-panel{max-width:none;margin:0 auto}
 .set-pc-close{position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--color-on-surface-variant);background:none;border:none;z-index:2}
 @media (hover:hover){.set-pc-close:hover{background:var(--color-surface-container-high);color:var(--color-on-surface)}}
 @media (max-width:767px){#set-pc-overlay{display:none!important}}
-.set-pc-item.set-pc-search-item{color:var(--color-on-surface-variant)}
-.set-pc-sidebar-divider{height:1px;background:var(--line-low);margin:6px 14px 8px}
-.set-pc-search-bar{position:relative;margin:0 0 14px;display:flex;align-items:center;width:100%}
-.set-pc-search-bar>.mu-ripple{flex:1!important;width:auto!important}
-.set-pc-search-bar svg{position:absolute;left:10px;pointer-events:none;color:var(--color-on-surface-variant)}
-.set-pc-search-bar input{
-  width:100%;padding:9px 12px 9px 34px;border-radius:var(--radius-sm);
-  border:1.5px solid var(--color-outline-variant);background:var(--color-surface-container-low);
+.set-pc-search{position:relative;display:flex;align-items:center;margin:0 0 10px}
+.set-pc-search svg{position:absolute;left:13px;pointer-events:none;color:var(--color-on-surface-variant)}
+.set-pc-search input{
+  box-sizing:border-box;width:100%;padding:9px 14px 9px 38px;border-radius:999px;
+  border:1.5px solid transparent;background:var(--color-surface-container-high);
   color:var(--color-on-surface);font:var(--type-body-medium);font-variation-settings:var(--fv-body);
 }
-.set-pc-search-bar input:focus{outline:none;border-color:var(--color-primary)}
+.set-pc-search input:focus{outline:none;border-color:var(--color-primary)}
 .set-panel{max-width:520px;margin:0 auto;width:100%}
 .set-panel h2{font:var(--type-headline-small);font-variation-settings:var(--fv-headline);margin-bottom:20px}
 .set-section{background:var(--color-surface-container);border-radius:var(--radius-lg);border:1px solid var(--line-container);margin-bottom:16px;overflow:hidden}
@@ -20721,6 +20720,7 @@ function onGlobalSearch(val) {
 }
 
 function _applyGlobalSearch() {
+  if (window._settingsPopupOpen) { renderSettings(); return; }
   const v = S.view;
   if (v === 'library') { S.libSearch = S.globalSearch; renderLibrary(); }
   else if (v === 'playlist' && S.activePid) renderPlaylist(S.activePid);
@@ -25716,6 +25716,10 @@ const NAV = (() => {
     desktop: { library: 'nb-lib', add: 'nb-add', stats: 'nb-stats', playlists: 'nb-pls' },
   };
   const EASE_FALLBACK = 'cubic-bezier(.16,1,.3,1)';
+  const dTabs = () => (typeof sbTabs === 'function' ? sbTabs() : []);
+  const tabOrder = () => (isMobile() ? TAB_ORDER.mobile : (dTabs().length ? [...dTabs().map(d => d.tab), 'playlists'] : TAB_ORDER.desktop));
+  const tabBtn = id => (isMobile() ? null : ((dTabs().find(d => d.tab === id) || {}).el || TAB_IDS.desktop[id] || null));
+  const scroller = () => (S.view === 'settings' && !isMobile() && $('vc').querySelector('#set-pc-content')) || $('vc');
   const stacks = {};
   let active = 'library';
   let run = null, rendering = false;
@@ -25874,7 +25878,10 @@ const NAV = (() => {
       case 'settings': return { tab: 'settings', root: !e.section && !e.sub };
       case 'stats': return isMobile() ? { tab: 'settings', root: false } : { tab: 'stats', root: true };
       case 'playlist': return { tab: 'playlists', root: false };
-      default: return { tab: null, root: false };
+      default: {
+        const d = typeof SB_ITEMS === 'object' && Object.values(SB_ITEMS).find(x => x.view === e.view && (!x.show || x.show()));
+        return d ? { tab: d.tab, root: true } : { tab: null, root: false };
+      }
     }
   }
 
@@ -25896,7 +25903,7 @@ const NAV = (() => {
   function leave(e) {
     const vc = $('vc');
     if (!e || !vc) return;
-    e.scroll = vc.scrollTop;
+    e.scroll = (e.view === 'settings' ? scroller() : vc).scrollTop;
     if (e.view === 'library') e.libTab = S.libTab;
     if (e.view === 'artist') {
       const t = $('vtitle')?.textContent;
@@ -25907,7 +25914,7 @@ const NAV = (() => {
   function kindFor(fromTab, fromIdx, toTab, toIdx, from, dest) {
     if (fromTab === toTab && from && key(from) === key(dest)) return null;
     if (fromTab !== toTab) {
-      const o = TAB_ORDER[plat()];
+      const o = tabOrder();
       return { type: 'tab', dir: o.indexOf(toTab) >= o.indexOf(fromTab) ? 1 : -1 };
     }
     return { type: toIdx < fromIdx ? 'back' : 'fwd' };
@@ -26041,7 +26048,7 @@ const NAV = (() => {
 
   function restoreScroll(top) {
     if (!top) return;
-    const vc = $('vc'), gen = window._viewGen;
+    const vc = scroller(), gen = window._viewGen;
     const apply = () => { if (window._viewGen !== gen) return true; vc.scrollTop = top; return Math.abs(vc.scrollTop - top) < 2; };
     if (apply()) return;
     const mo = new MutationObserver(() => { if (apply()) stop(); });
@@ -26064,8 +26071,9 @@ const NAV = (() => {
     if (e.view === 'settings' && S.view === 'settings') {
       window._settingsSection = e.section;
       window._settingsSub = e.sub;
-      window._setDir = null;
-      vc.scrollTop = 0;
+      window._setDir = window._setDirNext || null;
+      window._setDirNext = null;
+      scroller().scrollTop = 0;
       renderSettings();
     } else if (e.view === 'playlists-mobile') {
       window._viewGen = (window._viewGen || 0) + 1;
@@ -26082,6 +26090,10 @@ const NAV = (() => {
   }
 
   function show(e, kind) {
+    if (kind && kind.type !== 'tab' && e.view === 'settings' && S.view === 'settings' && !isMobile()) {
+      window._setDirNext = kind.type === 'back' ? 'back' : 'fwd';
+      kind = null;
+    }
     clearTimeout(titleTimer);
     cancelAnimationFrame(titleRaf);
     prevTitle = $('vtitle') ? $('vtitle').textContent : null;
@@ -26153,7 +26165,8 @@ const NAV = (() => {
       const id = 'mnt-' + TAB_IDS.mobile[active];
       document.querySelectorAll('.mob-tab').forEach(b => b.classList.toggle('active', b.id === id));
     }
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.id === TAB_IDS.desktop[active]));
+    const _tb = tabBtn(active);
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.id === _tb));
     syncBack(instant);
   }
 
@@ -26217,8 +26230,21 @@ const NAV = (() => {
     return true;
   }
 
+  function settingsPick(section, dir) {
+    if (active !== 'settings' || S.view !== 'settings') return false;
+    const st = stack('settings'), cur = st.entries[st.idx];
+    const e = section ? { ...mkEntry('settings'), section } : st.entries[0];
+    if (key(cur) === key(e)) return true;
+    leave(cur);
+    st.entries.splice(1);
+    if (section) st.entries.push(e);
+    st.idx = st.entries.length - 1;
+    show(e, { type: dir < 0 ? 'back' : 'fwd' });
+    return true;
+  }
+
   function settingsStep(section, sub) {
-    if (!isMobile() || S.view !== 'settings') return false;
+    if (S.view !== 'settings') return false;
     if (section || sub) {
       push({ ...mkEntry('settings'), section: section || null, sub: sub || null });
       return true;
@@ -26245,6 +26271,7 @@ const NAV = (() => {
     forward: () => step(1),
     canBack: () => stack(active).idx > 0,
     settingsStep,
+    settingsPick,
     settingsHtml,
     refresh: () => { endRun(); syncChrome(); },
     noteTitle: (view, id, title) => {
@@ -33737,8 +33764,8 @@ function _setPrune(html) {
 
 function renderSettings() {
   if (S.view !== 'settings' && !window._settingsPopupOpen) return;
-  if (_settingsTabPc() && !document.getElementById('set-pc-content')) { renderSettingsPopupShell(); return; } // desktop tab mode: build the two pane shell inside the view first
-  const _sq = ((!isMobile() && _setPc()) ? (window._setPopupQ || '') : (S.globalSearch || '')).trim().toLowerCase();
+  if (_settingsTabPc() && !_setPane()) { renderSettingsPopupShell(); return; }
+  const _sq = (S.globalSearch || '').trim().toLowerCase();
   const D = window._DEPS || {};
 
   const rowDisabled = (title, reason, control) => {
@@ -33803,22 +33830,9 @@ function renderSettings() {
 
   // ── mobile: section list nav ──────────────────────────────────────────────
   if (_isMob && !window._settingsSection && !_sq) {
-    // define section metadata (icons are simple SVG paths)
-    const _SET_SECTIONS = [
-      { id: 'playback',     label: 'playback',     icon: '<polygon fill="currentColor" points="5 3 19 12 5 21"/>' },
-      { id: 'audio',        label: 'audio',         icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="4" fill="currentColor"/><circle cx="18" cy="16" r="4" fill="currentColor"/>' },
-      { id: 'equalizer',    label: 'equalizer',     icon: '<line stroke="currentColor" stroke-width="2.5" x1="4" y1="21" x2="4" y2="14"/><line stroke="currentColor" stroke-width="2.5" x1="4" y1="10" x2="4" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="12" y1="21" x2="12" y2="12"/><line stroke="currentColor" stroke-width="2.5" x1="12" y1="8" x2="12" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="20" y1="21" x2="20" y2="16"/><line stroke="currentColor" stroke-width="2.5" x1="20" y1="12" x2="20" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="1" y1="14" x2="7" y2="14"/><line stroke="currentColor" stroke-width="2.5" x1="9" y1="8" x2="15" y2="8"/><line stroke="currentColor" stroke-width="2.5" x1="17" y1="16" x2="23" y2="16"/>' },
-      { id: 'appearance',   label: 'appearance',    icon: '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2.5" fill="none"/><path stroke="currentColor" stroke-width="2.5" fill="currentColor" d="M12 2a10 10 0 0 1 0 20"/><line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" stroke-width="2.5"/>' },
-      { id: 'download',     label: 'download',      icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline stroke="currentColor" stroke-width="2.5" fill="none" points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2.5"/>' },
-      { id: 'metadata',     label: 'metadata',      icon: '<path fill="currentColor" d="M3 5h18a1 1 0 0 0 0-2H3a1 1 0 0 0 0 2zm0 8h18a1 1 0 0 0 0-2H3a1 1 0 0 0 0 2zm0 8h18a1 1 0 0 0 0-2H3a1 1 0 0 0 0 2z"/>' },
-      { id: 'dropbox sync', label: 'dropbox sync',  icon: '<path fill="currentColor" d="M12 2L2 7l10 5 10-5-10-5z"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M2 17l10 5 10-5"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M2 12l10 5 10-5"/>' },
-      { id: 'library',      label: 'library',       icon: '<path fill="currentColor" d="M18 2H8a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 18H8a1 1 0 0 1 0-2h10v2z"/>' },
-      { id: '_stats',       label: 'stats',         icon: '<rect fill="currentColor" x="2" y="9" width="6" height="12" rx="1"/><rect fill="currentColor" x="10" y="13" width="5" height="8" rx="1"/><rect fill="currentColor" x="17" y="5" width="5" height="16" rx="1"/>' },
-    ];
     const chevron = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
-    _SET_SECTIONS.splice(_SET_SECTIONS.length - 1, 0, { id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
-    const listItems = _SET_SECTIONS.map(s => `
-      <div class="set-list-item mu-ripple" onclick="${s.id === '_stats' ? "setView('stats')" : `setSettingsSection('${s.id}')`}">
+    const listItems = SET_SECTIONS.filter(_setShow).map(s => `
+      <div class="set-list-item mu-ripple" onclick="${s.go || `setSettingsSection('${s.id}')`}">
         <div style="display:flex;align-items:center;gap:14px">
           <svg class="set-list-icon" viewBox="0 0 24 24" width="22" height="22">${s.icon}</svg>
           <span class="set-list-label">${s.label}</span>
@@ -33835,34 +33849,24 @@ function renderSettings() {
   }
 
   // ── mobile: single-section view / pc popup ────────────────────────────────
-  const _pcSearchMode  = _pcPopup && window._settingsSection === '_search';
-  const _mobSearchAll  = _isMob && !window._settingsSection && !!_sq;
-  const _activeSection = _isMob ? window._settingsSection : (_pcPopup ? (window._settingsSection || 'playback') : null);
-  const _sectionMatch  = (id) => (_pcSearchMode || _mobSearchAll) ? true : ((_isMob || _pcPopup) ? _activeSection === id : true);
+  const _all = !!_sq && (_pcPopup || !window._settingsSection);
+  const _activeSection = window._settingsSection || (_isMob ? null : SET_DEF);
+  const _sectionMatch  = (id) => _all || _activeSection === id;
 
-  const _pcSearchBar = _pcPopup ? `
-    <div class="set-pc-search-bar">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="set-pc-search-input" type="text" placeholder="${_pcSearchMode ? 'search all settings...' : 'search ' + _activeSection + '...'}" value="${esc(window._setPopupQ || '')}" oninput="onSettingsPopupSearch(this.value)">
-    </div>` : '';
-
-  const _backBtn = (_isMob && !_mobSearchAll) ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
+  const _backBtn = (_isMob && !_all) ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
 
   const _pcCloseBtn = (_pcPopup && window._settingsPopupOpen) ? `
     <button class="set-pc-close mu-ripple" onclick="closeSettingsPopup()">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
     </button>` : '';
 
-  const _settingsTarget = _pcPopup ? document.getElementById('set-pc-content') : document.getElementById('vc');
+  const _settingsTarget = _pcPopup ? _setPane() : document.getElementById('vc');
   if (!_settingsTarget) return;
-
-  const _existingSearchBar = _pcPopup ? _settingsTarget.querySelector('.set-pc-search-bar') : null;
 
   let _setHtml = `
     <div class="set-panel" style="max-width:640px">
       ${_backBtn}
       ${_pcCloseBtn}
-      ${_existingSearchBar ? '' : _pcSearchBar}
       ${_sectionMatch('playback') ? section('playback', `
         ${(()=>{
           const smode = S.shuffleMode || 'random';
@@ -34408,15 +34412,14 @@ function renderSettings() {
   if (window.MU) MU.init(_settingsTarget);
   requestAnimationFrame(() => { const w = document.getElementById('eq-sliders-wrap'); if (w && window.MU) MU.init(w); });
   if (document.getElementById('mu-path-cur')) _muPathRefresh();
-  if (_existingSearchBar) {
-    const panel = _settingsTarget.querySelector('.set-panel');
-    if (panel) panel.insertBefore(_existingSearchBar, panel.firstChild);
-  }
+  if (_pcPopup) _setSyncSide();
   if (_pcPopup && window.MU) MU.init(_settingsTarget);
 }
 
 // ── PC settings popup shell ─────────────────────────────────────────────────
-const _SET_PC_SECTIONS = [
+const SET_DEF = 'playback';
+const _setShow = s => !s.show || s.show();
+const SET_SECTIONS = [
   { id: 'playback',     label: 'playback',     icon: '<polygon fill="currentColor" points="5 3 19 12 5 21"/>' },
   { id: 'audio',        label: 'audio',         icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="4" fill="currentColor"/><circle cx="18" cy="16" r="4" fill="currentColor"/>' },
   { id: 'equalizer',    label: 'equalizer',     icon: '<line stroke="currentColor" stroke-width="2.5" x1="4" y1="21" x2="4" y2="14"/><line stroke="currentColor" stroke-width="2.5" x1="4" y1="10" x2="4" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="12" y1="21" x2="12" y2="12"/><line stroke="currentColor" stroke-width="2.5" x1="12" y1="8" x2="12" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="20" y1="21" x2="20" y2="16"/><line stroke="currentColor" stroke-width="2.5" x1="20" y1="12" x2="20" y2="3"/><line stroke="currentColor" stroke-width="2.5" x1="1" y1="14" x2="7" y2="14"/><line stroke="currentColor" stroke-width="2.5" x1="9" y1="8" x2="15" y2="8"/><line stroke="currentColor" stroke-width="2.5" x1="17" y1="16" x2="23" y2="16"/>' },
@@ -34427,9 +34430,11 @@ const _SET_PC_SECTIONS = [
   { id: 'library',      label: 'library',       icon: '<path fill="currentColor" d="M18 2H8a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 18H8a1 1 0 0 1 0-2h10v2z"/>' },
 ];
 
-_SET_PC_SECTIONS.push({ id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
+SET_SECTIONS.push({ id: 'updates', label: 'updates', icon: '<polyline stroke="currentColor" stroke-width="2.5" fill="none" points="23 4 23 10 17 10"/><path stroke="currentColor" stroke-width="2.5" fill="none" d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' });
 
-_SET_PC_SECTIONS.push({ id: 'debug', label: 'debug', icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M8 6l-5 6 5 6M16 6l5 6-5 6"/>' });
+SET_SECTIONS.push({ id: 'debug', label: 'debug', show: () => !isMobile(), icon: '<path stroke="currentColor" stroke-width="2.5" fill="none" d="M8 6l-5 6 5 6M16 6l5 6-5 6"/>' });
+
+SET_SECTIONS.push({ id: '_stats', label: 'stats', go: "setView('stats')", show: () => isMobile(), icon: '<rect fill="currentColor" x="2" y="9" width="6" height="12" rx="1"/><rect fill="currentColor" x="10" y="13" width="5" height="8" rx="1"/><rect fill="currentColor" x="17" y="5" width="5" height="16" rx="1"/>' });
 
 async function _muPathRefresh() {
   const el = document.getElementById('mu-path-cur');
@@ -34457,7 +34462,8 @@ async function _muPathApply(reset) {
 
 function openSettingsPopup() {
   if (isMobile() || CFG.settings_nav === 'tab') { setView('settings'); return; }
-  if (!window._settingsSection || window._settingsSection === '_stats') window._settingsSection = 'playback';
+  window._settingsSub = null;
+  if (S.globalSearchOpen || S.globalSearch) toggleGlobalSearch(true);
   window._settingsPopupOpen = true;
   let ov = document.getElementById('set-pc-overlay');
   if (!ov) {
@@ -34474,69 +34480,29 @@ function openSettingsPopup() {
 
 function closeSettingsPopup() {
   window._settingsPopupOpen = false;
-  if (window._settingsSection === '_search') window._settingsSection = 'playback';
-  window._setPopupQ = '';
+  S.globalSearch = '';
   const ov = document.getElementById('set-pc-overlay');
-  if (ov) ov.classList.remove('open');
+  if (ov) { ov.classList.remove('open'); setTimeout(() => { if (!window._settingsPopupOpen) ov.innerHTML = ''; }, 320); }
   _stopDbxTabPoll();
-}
-
-function setSettingsPopupSection(id) {
-  window._settingsSection = id;
-  window._settingsSub = null;
-  if (id !== '_search') window._setPopupQ = '';
-  renderSettingsPopupShell();
-  if (id === 'dropbox sync') { refreshDbxStatus().then(_startDbxTabPoll); } else { _stopDbxTabPoll(); }
-}
-
-function openSettingsPopupSearch() {
-  window._settingsSection = '_search';
-  window._setPopupQ = '';
-  renderSettingsPopupShell();
-  setTimeout(() => document.getElementById('set-pc-search-input')?.focus(), 30);
-}
-
-let _setPcSearchT = null;
-function onSettingsPopupSearch(val) {
-  window._setPopupQ = val;
-  const inp = document.getElementById('set-pc-search-input');
-  const caret = inp ? inp.selectionStart : null;
-  clearTimeout(_setPcSearchT);
-  _setPcSearchT = setTimeout(() => {
-    renderSettings();
-    const newInp = document.getElementById('set-pc-search-input');
-    if (newInp) {
-      newInp.focus();
-      const pos = caret == null ? newInp.value.length : Math.min(caret, newInp.value.length);
-      newInp.setSelectionRange(pos, pos);
-    }
-  }, 120);
 }
 
 function renderSettingsPopupShell() {
   const ov = _settingsHostEl();
   if (!ov) return;
   const tab = ov.id === 'vc';
-  const active = window._settingsSection || 'playback';
-  const items = `
-    <div class="set-pc-item set-pc-search-item${active === '_search' ? ' active' : ''}" data-sec="_search" onclick="openSettingsPopupSearch()">
-      <svg class="ni" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <span>search</span>
-    </div>
-    <div class="set-pc-sidebar-divider"></div>` +
-    _SET_PC_SECTIONS.map(s => `
-    <div class="set-pc-item${active === s.id ? ' active' : ''}" data-sec="${s.id}" onclick="setSettingsPopupSection('${s.id}')">
+  const items = SET_SECTIONS.filter(_setShow).map(s => `
+    <div class="set-pc-item" data-sec="${s.id}" onclick="setSettingsSection('${s.id}')">
       <svg class="ni" viewBox="0 0 24 24" width="18" height="18">${s.icon}</svg>
       <span>${s.label}</span>
-    </div>`).join('') + `
-    <div class="set-pc-item" onclick="closeSettingsPopup();setView('stats')">
-      <svg class="ni" viewBox="0 0 24 24" width="18" height="18"><rect fill="currentColor" x="2" y="9" width="6" height="12" rx="1"/><rect fill="currentColor" x="10" y="13" width="5" height="8" rx="1"/><rect fill="currentColor" x="17" y="5" width="5" height="16" rx="1"/></svg>
-      <span>stats</span>
-    </div>`;
+    </div>`).join('');
   ov.innerHTML = `
     <div class="set-pc-shell${tab ? ' set-pc-tab' : ''}">
       <div class="set-pc-sidebar">
         <div class="set-pc-sidebar-title">settings</div>
+        <div class="set-pc-search">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="set-pc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="search settings..." value="${esc(S.globalSearch || '')}" oninput="onGlobalSearch(this.value)">
+        </div>
         ${items}
       </div>
       <div class="set-pc-content" id="set-pc-content"></div>
@@ -34897,29 +34863,41 @@ function _updatesHtml(row, rowDisabled) {
 }
 
 // where the desktop two pane settings layout lives: the popup overlay, or the settings view itself when settings_nav is 'tab'. mobile always uses the single column page
-function _settingsTabPc() { return !isMobile() && S.view === 'settings' && CFG.settings_nav === 'tab' && !window._settingsPopupOpen; }
-function _setPc() { return !isMobile() && (!!window._settingsPopupOpen || (S.view === 'settings' && CFG.settings_nav === 'tab')); }
+function _settingsTabPc() { return !isMobile() && S.view === 'settings' && !window._settingsPopupOpen; }
+function _setPc() { return !isMobile() && (!!window._settingsPopupOpen || S.view === 'settings'); }
 function _settingsHostEl() { return window._settingsPopupOpen ? document.getElementById('set-pc-overlay') : (_settingsTabPc() ? document.getElementById('vc') : null); }
+function _setPane() { const h = _settingsHostEl(); return h ? h.querySelector('#set-pc-content') : null; }
+function _setSyncSide() {
+  const cur = (S.globalSearch || '').trim() ? null : (window._settingsSection || SET_DEF);
+  document.querySelectorAll('.set-pc-item[data-sec]').forEach(el => el.classList.toggle('active', el.dataset.sec === cur));
+}
 // left sidebar nav items: the one place that decides which exist, their order and when they show. a future "customize sidebar" stores CFG.sidebar_layout (array of ids, order)
 // and CFG.sidebar_hidden (array of ids), and adds more descriptors here (playlists block, divider, custom links) without touching the render code
 var SB_ITEMS = {
-  library: { el: 'nb-lib' }, add: { el: 'nb-add' }, stats: { el: 'nb-stats' },
-  settings: { el: 'nb-cfg', show: () => !isMobile() && CFG.settings_nav === 'tab' },
+  library: { tab: 'library', view: 'library', el: 'nb-lib' },
+  add: { tab: 'add', view: 'add', el: 'nb-add' },
+  stats: { tab: 'stats', view: 'stats', el: 'nb-stats' },
+  settings: { tab: 'settings', view: 'settings', el: 'nb-cfg', show: () => !isMobile() && CFG.settings_nav === 'tab' },
 };
 var SB_DEFAULT = ['library', 'add', 'stats', 'settings'];
+function _sbOrder() {
+  const lay = Array.isArray(CFG.sidebar_layout) ? CFG.sidebar_layout : [], hid = Array.isArray(CFG.sidebar_hidden) ? CFG.sidebar_hidden : [];
+  return [...lay.filter(id => SB_ITEMS[id]), ...SB_DEFAULT.filter(id => !lay.includes(id))]
+    .map(id => ({ id, ...SB_ITEMS[id], on: !hid.includes(id) && (!SB_ITEMS[id].show || SB_ITEMS[id].show()) }));
+}
+function sbTabs() { return _sbOrder().filter(d => d.on); }
 function _sbApply() {
   const sec = document.querySelector('#sidebar .nav-sec'); if (!sec) return;
-  const lay = Array.isArray(CFG.sidebar_layout) ? CFG.sidebar_layout : [], hid = Array.isArray(CFG.sidebar_hidden) ? CFG.sidebar_hidden : [];
-  const order = [...lay.filter(id => SB_ITEMS[id]), ...SB_DEFAULT.filter(id => !lay.includes(id))];
-  order.forEach(id => {
-    const d = SB_ITEMS[id], el = document.getElementById(d.el); if (!el) return;
-    sec.appendChild(el); // appendChild in order = reorder
-    el.style.display = (!hid.includes(id) && (!d.show || d.show())) ? '' : 'none';
+  _sbOrder().forEach(d => {
+    const el = document.getElementById(d.el); if (!el) return;
+    sec.appendChild(el);
+    el.style.display = d.on ? '' : 'none';
   });
   document.documentElement.classList.toggle('sb-cfg-tab', !isMobile() && CFG.settings_nav === 'tab');
+  try { NAV.refresh(); } catch {}
 }
 function _setScroller() {
-  return _setPc() ? document.getElementById('set-pc-content') : document.getElementById('vc');
+  return _setPc() ? _setPane() : document.getElementById('vc');
 }
 
 function setSettingsSub(id) {
@@ -34941,7 +34919,30 @@ function closeSettingsSub() {
   if (sc) sc.scrollTop = window._setScroll || 0;
 }
 
+function _setClearQ() {
+  if (S.globalSearchOpen) toggleGlobalSearch(true);
+  S.globalSearch = '';
+  const i = document.getElementById('set-pc-search-input');
+  if (i) i.value = '';
+}
+
+function _setPick(id) {
+  if (id === SET_DEF) id = null;
+  if ((S.globalSearch || '').trim() || S.globalSearchOpen) _setClearQ();
+  const cur = window._settingsSection || null;
+  const ids = SET_SECTIONS.filter(_setShow).map(s => s.id);
+  const dir = (id === cur || ids.indexOf(id || SET_DEF) < ids.indexOf(cur || SET_DEF)) ? -1 : 1;
+  if (NAV.settingsPick(id, dir)) return;
+  window._settingsSection = id;
+  window._settingsSub = null;
+  window._setDir = dir < 0 ? 'back' : 'fwd';
+  renderSettings();
+  const sc = _setScroller(); if (sc) sc.scrollTop = 0;
+  if (id === 'dropbox sync') { refreshDbxStatus().then(_startDbxTabPoll); } else { _stopDbxTabPoll(); }
+}
+
 function setSettingsSection(id) {
+  if (!isMobile()) { _setPick(id); return; }
   if (NAV.settingsStep(id, null)) return;
   window._settingsSection = id;
   window._settingsSub = null;
@@ -35263,8 +35264,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'f': case 'F':
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          if (_setPc()) {
-            openSettingsPopupSearch();
+          if (window._settingsPopupOpen) {
+            document.getElementById('set-pc-search-input')?.focus();
           } else {
             if (!S.globalSearchOpen) toggleGlobalSearch();
             if (S.view !== 'add') setTimeout(() => document.getElementById('tsearch-input')?.focus(), 290);
