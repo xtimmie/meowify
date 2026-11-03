@@ -31305,21 +31305,22 @@ var _LENS_SPEC = { ch: [], paint: _lensPaint, ppu: 1, abs: true, sk: 1.1, tk: .7
 var PILL = { from: .6, rest: .8 };
 function _pillTo(el, on, instant) {
   const tgt = on ? 1 : (PILL.rest - PILL.from) / (1 - PILL.from);
-  if (!el._bn) { bounceTo(el, tgt, { ch: [{ p: 'scale', a: PILL.from, b: 1 }], sk: 1.03, dn: .5 }); return; }
+  if (!el._bn) { bounceTo(el, tgt, { ch: [{ p: 'scale', a: PILL.from, b: 1 }], sk: 1.03, fk: .4, dn: .5 }); return; }
   if (instant) { bounceSnap(el, tgt); return; }
   if (el._bn.tgt === tgt) return;
   bounceTo(el, tgt, on ? { x: 0 } : null);
 }
 // ── bounce: ONE spring solver behind every procedural bouncy animation (menus, drawers, nav pills) ──
-// feel = 4 global values from the settings: overshoot (o = % of the travel, or op = px in normalized mode), bounciness b (how many swings, 0 = none),
+// feel = 4 global values from the settings: overshoot (% of the travel), bounciness b (how many swings, 0 = none),
 // bounce time t (seconds to settle, independent of the swing count), stretch str. the stretch extras live in BN (ref, ks, max, follow)
 // a run is a spring on a progress x (tgt 1 = arrived). channels map x to css: { p: 'scale'|'tx'|'ty'|'rotate'|'opacity', a, b, u, c, k, cap }
 //   value = a + (b - a) * x, c: 1 = x clamped to 0..1 (no overshoot), k = opacity gain, u = '%' of the element's own size for tx / ty, cap = soft cap of the overshoot in value units
-// spec: x / v start, tgt, ch, paint (custom painter), ppu (px per unit of x, measured from the channels and transform origin when missing), open / end hooks, origin,
-//   per call site design values (not sliders): sk stretch size, tk time scale, dk overshoot scale (default mode only), hx / vol stretch axis share and squash, abs stretch from |speed|, dn nominal travel
+// spec: x / v start, tgt, ch, paint (custom painter), ppu (px per unit of x, only used for the stop threshold, measured when missing), open / end hooks, origin,
+//   per call site design values (not sliders): sk stretch size, fk faked extra stretch (a bell over the travel, for pops too short to get a physical one), tk time scale, dk overshoot scale,
+//   hx / vol stretch axis share and squash, abs stretch from |speed|, dn nominal travel. the stretch is also scaled by where the transform origin sits, see _bnPpu
 // to bounce anything: bounce(el, { ch: [{ p: 'ty', a: 20, b: 0 }], end: bounceClean })
-var _BN_DEF = { on: true, sheets: true, norm: false, o: 15, op: 8, b: .5, t: .4, str: 1 };
-var BN = { z: .56, T: .4, pk: .12, o: .15, op: 8, norm: false, str: 1, ref: 10, ks: .3, max: .7, follow: 30 };
+var _BN_DEF = { on: true, sheets: true, o: 15, b: .5, t: .4, str: 1 };
+var BN = { z: .56, T: .4, pk: .12, o: .15, str: 1, ref: 10, ks: .3, max: .7, follow: 30 };
 var _BNS = { set: new Set(), raf: 0, t: 0 };
 function _bnFmt(u, v) { return u === 't' ? (+v).toFixed(2) + 's' : _lgFmt(u, v); }
 // overshoot only on the side past the target, blended in over the first 3% of the travel so there is no kink in the speed when it crosses
@@ -31328,7 +31329,10 @@ function _bnX(p) {
   if (d <= 0) return p.x;
   return p.tgt + p.dir * d * (p.g + (1 - p.g) * Math.exp(-d / (.03 * p.D)));
 }
-// px one unit of x moves the most visible edge: scale = distance from the transform origin to the farthest edge, so a pop from a corner counts more than one from the center
+// px one unit of x moves the most visible edge (scale = distance from the transform origin to the farthest edge), only used for the stop threshold.
+// it also measures how much the origin piles the stretch up: the leading edge moves stretch * distance to the far edge, so a popup growing from a corner shows about twice the
+// edge travel of one growing from the center. sn scales the stretch by (half the size / far edge) per axis, weighted by how much of the stretch sits on that axis (1 = centered, .5 = corner).
+// it is a ratio of the element's own size so css zoom and big vs small elements dont change it
 function _bnPpu(el, p) {
   const W = el.offsetWidth, H = el.offsetHeight;
   if (!W && !H) return 0;
@@ -31336,6 +31340,8 @@ function _bnPpu(el, p) {
   const to = getComputedStyle(el).transformOrigin.split(' ').map(parseFloat);
   if (to.length >= 2 && !isNaN(to[0]) && !isNaN(to[1])) { ox = to[0]; oy = to[1]; }
   const far = Math.max(ox, W - ox, oy, H - oy);
+  const hx = p.hx == null ? 1 : p.hx, kx = W ? Math.max(.4, W / 2 / Math.max(ox, W - ox, 1)) : 1, ky = H ? Math.max(.4, H / 2 / Math.max(oy, H - oy, 1)) : 1;
+  p.sn = hx * kx + (1 - hx) * ky;
   let m = 0;
   for (const c of p.ch) {
     if (c.c || c.p === 'opacity') continue;
@@ -31345,14 +31351,14 @@ function _bnPpu(el, p) {
   }
   return m;
 }
-// (re)start a segment toward p.tgt: travel, px per unit and the gain that makes the first overshoot exactly the wanted size whatever the bounciness is
+// (re)start a segment toward p.tgt: travel, stretch normalization and the gain that makes the first overshoot exactly the wanted share of the travel whatever the bounciness is
 function _bnStart(el, p) {
   if (p.origin) el.style.transformOrigin = p.origin;
+  p.sn = 1; p.x0 = p.x;
   p.dir = p.tgt >= p.x ? 1 : -1;
   p.D = Math.max(Math.abs(p.tgt - p.x), (p.dn || 0) * .5, 1e-4);
   const ppu = p.ppu != null ? p.ppu : _bnPpu(el, p);
-  const ox = BN.norm && ppu > 0 ? BN.op / ppu : BN.o * (p.dk == null ? 1 : p.dk) * p.D; // wanted overshoot in units of x
-  p.g = BN.pk > 0 ? Math.min(6, ox / (BN.pk * p.D)) : 0;
+  p.g = BN.pk > 0 ? Math.min(6, BN.o * (p.dk == null ? 1 : p.dk) / BN.pk) : 0;
   p.u = ppu > 0 ? ppu : 1;
 }
 function _bnPaint(el, p) {
@@ -31372,7 +31378,7 @@ function _bnPaint(el, p) {
   }
   if (tx != null || ty != null) st.translate = (tx == null ? '0' : tx.toFixed(3) + ux) + ' ' + (ty == null ? '0' : ty.toFixed(3) + uy);
   // hx = share of the stretch that lands on x, the rest goes to y, vol = how much the other side compensates (1 = keeps the area)
-  const hx = p.hx == null ? 1 : p.hx, vol = p.vol == null ? .6 : p.vol, a = 1 + p.s, b = 1 / (1 + p.s * vol);
+  const hx = p.hx == null ? 1 : p.hx, vol = p.vol == null ? .6 : p.vol, se = p.s * (p.sn || 1), a = 1 + se, b = 1 / (1 + se * vol);
   st.scale = (sc * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (sc * a ** (1 - hx) * b ** hx).toFixed(4);
 }
 function _bnTick(t) {
@@ -31382,8 +31388,10 @@ function _bnTick(t) {
   S.set.forEach(el => {
     const p = el._bn, w = 4 / (BN.z * BN.T * (p.tk || 1)), K = w * w, C = 2 * w * BN.z; // settle time and damping ratio set the spring
     for (let i = 0; i < n; i++) { p.v += (-K * (p.x - p.tgt) - C * p.v) * h; p.x += p.v * h; }
-    // stretch from the speed relative to the travel, so it feels the same for a 10px and a 500px move
-    const lim = BN.max * p.sk, want = Math.max(-lim, Math.min(lim, (p.abs ? Math.abs(p.v) : p.v) / p.D / BN.ref * BN.ks * BN.str * p.sk));
+    // stretch from the speed relative to the travel, so it feels the same for a 10px and a 500px move. fk = faked extra stretch, a bell over the travel
+    // (wider while growing, narrower while shrinking) for pops that are too short to get a physical one, it scales with the stretch slider too
+    const lim = BN.max * p.sk, want = Math.max(-lim, Math.min(lim, (p.abs ? Math.abs(p.v) : p.v) / p.D / BN.ref * BN.ks * BN.str * p.sk))
+      + (p.fk ? p.fk * p.dir * BN.str * Math.sin(Math.PI * Math.max(0, Math.min(1, (p.x - p.x0) / ((p.tgt - p.x0) || 1)))) : 0);
     p.s += (want - p.s) * Math.min(1, dt * BN.follow);
     if (Math.abs(p.x - p.tgt) * p.u < .03 && Math.abs(p.v) * p.u < .5 && Math.abs(p.s) < .002) { p.x = p.tgt; p.v = 0; p.s = 0; S.set.delete(el); }
     if (p.open && !p.open()) S.set.delete(el); else _bnPaint(el, p); // closed while still springing: let go, end() cleans up
@@ -31416,7 +31424,7 @@ function bounceSync() {
   const s = _bnPrefs(), z = s.on ? Math.max(.12, 1 - .88 * s.b) : 1; // bounciness 0 = critically damped (no overshoot), 1 = damping ratio .12. off = the springs still run but dont wobble
   BN.z = z; BN.T = Math.max(.1, +s.t || .4);
   BN.pk = z >= .999 ? 0 : Math.exp(-Math.PI * z / Math.sqrt(1 - z * z)); // first overshoot the raw spring would make, as a share of the travel
-  BN.o = s.on ? s.o / 100 : 0; BN.op = s.on ? s.op : 0; BN.norm = !!s.norm; BN.str = s.on ? s.str : 0;
+  BN.o = s.on ? s.o / 100 : 0; BN.str = s.on ? s.str : 0;
 }
 function bounceClean(el) { ['scale', 'opacity', 'translate', 'rotate'].forEach(k => el.style.removeProperty(k)); }
 function bounceStop(el) { _BNS.set.delete(el); if (el._bn) el._bn.end = null; bounceClean(el); }
@@ -31443,7 +31451,7 @@ function bounceSheet(el, x0 = 0, v0 = 0) {
   const H = el.offsetHeight || 1;
   // translate runs 110% (hidden) to 0 in % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen (cap).
   // origin is the bottom edge so the top is what stretches, vol 1 = width is the inverse of the height so the area stays the same
-  bounce(el, { x: x0, v: v0, ch: [{ p: 'ty', a: 110, b: 0, u: '%', cap: SHEET_FX.room / H * 100 }], hx: 0, vol: 1, sk: .29, tk: 1.25, dk: .2, origin: '50% 100%', open: () => _sheetOpen(el), end: bounceSheetEnd });
+  bounce(el, { x: x0, v: v0, ch: [{ p: 'ty', a: 110, b: 0, u: '%', cap: SHEET_FX.room / H * 100 }], hx: 0, vol: 1, sk: .58, tk: 1.25, dk: .2, origin: '50% 100%', open: () => _sheetOpen(el), end: bounceSheetEnd });
   // touching the sheet hands it over to the drag, so the spring lets go
   const grab = () => { _BNS.set.delete(el); bounceSheetEnd(el); };
   el.addEventListener('touchstart', grab, { once: true, passive: true });
@@ -31454,7 +31462,7 @@ function bounceSheet(el, x0 = 0, v0 = 0) {
 function bounceIn(el, o = {}) {
   const ch = [{ p: 'scale', a: 1 - (o.dist == null ? 0 : o.dist), b: 1 }, { p: 'opacity', a: 0, b: 1, k: 1.8, c: 1 }];
   if (o.ty) ch.push({ p: 'ty', a: o.ty, b: 0, c: 1 });
-  bounce(el, { ch, hx: o.hx, sk: .46, end: bounceClean });
+  bounce(el, { ch, hx: o.hx, sk: .7, end: bounceClean });
 }
 function bounceSet(k, v) { const s = _bnPrefs(); s[k] = v; DevPrefs.set('bounce', s); bounceSync(); }
 function bounceReset() { DevPrefs.del('bounce'); bounceSync(); renderSettings(); }
@@ -31488,13 +31496,7 @@ function bounceSettingsHtml(sq) {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         </div>
-        <div class="sb-line ${s.on ? '' : 'off'}"><div class="sb-l"><div class="sb-n">px normalized overshoot</div><div class="sb-s">off = overshoot is a share of the travel, so bigger or longer moves overshoot more. on = the same visible px everywhere, measured from the transform origin (a popup growing from a corner and one from its center overshoot the same px)</div></div>
-          <label class="switch" style="flex-shrink:0">
-            <input type="checkbox" ${s.norm ? 'checked' : ''} onchange="bounceSet('norm',this.checked);renderSettings()" onclick="event.stopPropagation()">
-            <div class="switch-track"><div class="switch-thumb"></div></div>
-          </label>
-        </div>
-        ${sl('overshoot', s.norm ? 'how far it passes the target, in px' : 'how far it passes the target, as % of the travel', 0, s.norm ? 30 : 40, 1, s.norm ? s.op : s.o, s.norm ? 'op' : 'o', s.norm ? 'px' : '%')}
+        ${sl('overshoot', 'how far it passes the target, as % of the travel', 0, 40, 1, s.o, 'o', '%')}
         ${sl('bounciness', 'how many times it swings back and forth, 0 settles with no overshoot', 0, 1, .05, s.b, 'b')}
         ${sl('bounce time', 'how long it takes to settle, separate from how many swings', .15, 1.2, .05, s.t, 't', 't')}
         ${sl('stretch', 'how much the speed stretches it, 0 = none', 0, 2, .05, s.str, 'str')}
