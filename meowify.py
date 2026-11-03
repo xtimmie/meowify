@@ -400,9 +400,84 @@ def _art_map_refresh(force=False):
             m.setdefault(_k, _v)
         if m != _ART_STATE['map']:
             _art_disp_cache.clear()
+        try:
+            _cn2 = sqlite3.connect(str(db_path()), timeout=2)
+            try:
+                m, alts, _rm, _gr = _art_cluster_build(_cn2)
+            finally:
+                _cn2.close()
+            _ART_STATE['rid_main'] = _rm
+            _ART_STATE['groups'] = _gr
+            if m != _ART_STATE['map']:
+                _art_disp_cache.clear()
+        except Exception:
+            pass
         _ART_STATE['map'] = m
         _ART_STATE['alts'] = alts
         _ART_STATE['t'] = time.monotonic()
+
+def _art_cluster_build(cn):
+    counts = dict(cn.execute("SELECT artist_id, COUNT(DISTINCT song_id) FROM song_artists GROUP BY artist_id").fetchall())
+    rows = cn.execute("SELECT id, name, aliases, created_at FROM artists").fetchall()
+    info, by_key = {}, {}
+    for rid, name, al, ts in rows:
+        if not name:
+            continue
+        try:
+            lst = [str(x).strip() for x in json.loads(al or '[]') if str(x).strip()]
+        except Exception:
+            lst = []
+        info[rid] = (name, lst, ts or 0, counts.get(rid, 0))
+        by_key.setdefault(_akey(name), []).append(rid)
+    par = {r: r for r in info}
+    def _find(x):
+        while par[x] != x:
+            par[x] = par[par[x]]
+            x = par[x]
+        return x
+    def _union(a, b):
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            par[ra] = rb
+    claim = {}
+    for rid, (name, lst, ts, n) in info.items():
+        for a in lst:
+            k = _akey(a)
+            if not k:
+                continue
+            hits = by_key.get(k)
+            if hits:
+                for oid in hits:
+                    _union(rid, oid)
+            elif k in claim:
+                _union(rid, claim[k])
+            else:
+                claim[k] = rid
+    groups = {}
+    for rid in info:
+        groups.setdefault(_find(rid), []).append(rid)
+    m, alts, rid_main, out_groups = {}, {}, {}, {}
+    for members in groups.values():
+        members.sort()
+        main = max(members, key=lambda r: (info[r][3], -info[r][2]))
+        mname = info[main][0]
+        names = [mname]
+        for r in members:
+            names.append(info[r][0])
+            names.extend(info[r][1])
+        seen, uniq = set(), []
+        for t in names:
+            k = _akey(t)
+            if k and k not in seen:
+                seen.add(k)
+                uniq.append(t)
+        for t in uniq:
+            m[_akey(t)] = mname
+        alts[_akey(mname)] = uniq
+        out_groups[main] = members
+        for r in members:
+            rid_main[r] = main
+    return m, alts, rid_main, out_groups
 
 def _artist_alt_names(raw):
     try:
@@ -5963,7 +6038,9 @@ def api_artists():
                         owner.setdefault(k, r['id'])
             except Exception:
                 pass
-        out = [r for r in out if owner.get(_akey(r['name']), r['id']) == r['id']]
+        _art_map_refresh()
+        _rm = _ART_STATE.get('rid_main') or {}
+        out = [r for r in out if _rm.get(r['id'], r['id']) == r['id']]
     return jsonify(out)
 
 @app.route('/api/artists/<aid>')
@@ -5978,13 +6055,12 @@ def _artist_link_ids(c, aid):
     try:
         if not CFG.get('artist_use_main_name', True):
             return ids
-        row = c.execute("SELECT aliases FROM artists WHERE id=?", (aid,)).fetchone()
-        keys = {_akey(str(a)) for a in json.loads((row[0] if row else None) or '[]')}
-        keys.discard('')
-        if keys:
-            for oid, oname in c.execute("SELECT id, name FROM artists WHERE id!=?", (aid,)).fetchall():
-                if _akey(oname) in keys:
-                    ids.append(oid)
+        _art_map_refresh()
+        _rm = _ART_STATE.get('rid_main') or {}
+        _gr = _ART_STATE.get('groups') or {}
+        for oid in _gr.get(_rm.get(aid, aid), []):
+            if oid not in ids:
+                ids.append(oid)
     except Exception:
         pass
     return ids
