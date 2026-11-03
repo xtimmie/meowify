@@ -31048,7 +31048,7 @@ function blurSettingsHtml(sq) {
   }
   const pct = Math.round(solid * 100);
   return `
-    <details class="set-blur" ${window._blurOpen ? 'open' : ''} ontoggle="window._blurOpen=this.open">
+    <details class="set-blur" ${(window._blurOpen || window._settingsSub === 'glass') ? 'open' : ''} ontoggle="window._blurOpen=this.open">
       <summary>
         <div class="set-title-cell"><div class="set-lbl">blur</div><div class="set-sub">backdrop blur is the heaviest thing on the gpu, turn parts off to find what lags</div></div>
         <span class="sb-meta">${all ? 'all off' : off.length ? off.length + ' off' : 'all on'}</span>
@@ -31689,7 +31689,7 @@ function gaSettingsHtml(sq) {
     <span class="sb-meta" style="min-width:52px;text-align:right">${_lgFmt(unit, val)}</span></div>`, cls);
   const modeSel = `<select class="input" style="width:170px" onchange="gaSet('mode',this.value,true)">${[['mirror', 'mirrored tiles'], ['discs', 'rotating discs']].map(([v, n]) => `<option value="${v}" ${s.mode === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
   return `
-    <details class="set-blur" ${(window._gaOpen || window._settingsSub === 'glassart') ? 'open' : ''} ontoggle="window._gaOpen=this.open">
+    <details class="set-blur" ${(window._gaOpen || window._settingsSub === 'glass') ? 'open' : ''} ontoggle="window._gaOpen=this.open">
       <summary>
         <div class="set-title-cell"><div class="set-lbl">art background</div><div class="set-sub">the playing cover, blurred into a color wash behind the glass panels · glassy only</div></div>
         <span class="sb-meta">${!GA.ok ? 'unsupported' : s.on ? 'on' : 'off'}</span>
