@@ -19769,7 +19769,10 @@ function _extractCoverColor(imgEl) {
   if (!_coverHueCanvas) _coverHueCanvas = document.createElement('canvas');
   const c = _coverHueCanvas; c.width = 32; c.height = 32;
   const ctx2 = c.getContext('2d', { willReadFrequently: true });
-  ctx2.drawImage(imgEl, 0, 0, 32, 32);
+  // covers are 1:1 but yt-dlp thumbs can come letterboxed (16:9 with solid bars), so sample the centered square only
+  const _iw = imgEl.naturalWidth || imgEl.width, _ih = imgEl.naturalHeight || imgEl.height;
+  const _sq = Math.min(_iw, _ih);
+  ctx2.drawImage(imgEl, (_iw - _sq) / 2, (_ih - _sq) / 2, _sq, _sq, 0, 0, 32, 32);
   const d = ctx2.getImageData(0, 0, 32, 32).data;
   const N = _COVER_HUE_BINS;
   const mk = () => ({ w:new Float32Array(N), r:new Float32Array(N), g:new Float32Array(N), b:new Float32Array(N), tot:0, n:0 });
@@ -20037,7 +20040,7 @@ function _applyCoverHue(col, fadeMs) {
   const slider = document.getElementById('hue-slider');
   const lbl = document.getElementById('hue-lbl');
   if (slider) slider.value = h;
-  if (lbl) lbl.textContent = h + 'deg ' + (col ? col.kind + ' oh' + Math.round(col.oh) + ' h' + Math.round(col.h) : 'null');
+  if (lbl) lbl.textContent = h + 'deg';
   _updateSatSliderDisabled();
 }
 
