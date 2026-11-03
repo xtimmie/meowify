@@ -31117,7 +31117,7 @@ function applyLG() {
   const s = _lgPrefs();
   const _sig = s.sat + '|' + s.br + '|' + s.ct;
   if (_sig !== window._lgSig) { window._lgSig = _sig; MU.setGlass({ sat: s.sat, bright: s.br, contrast: s.ct }); }
-  L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q });
+  L.configure({ params: Object.assign({}, L.looks[s.look], s.p), quality: s.q, live: { budget: 6, settle: 70 } });
   const G = MU.glass;
   if (G) {
     if (!window._glassDef) { window._glassDef = 1; G.define(GLASS_TIERS); }
