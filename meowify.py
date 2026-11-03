@@ -14154,7 +14154,7 @@ html:not(.sb-cfg-tab) #nb-cfg{display:none!important}
 html.sb-cfg-tab #topbar-cfg-btn{display:none!important}
 .set-pc-shell.set-pc-tab{max-width:none;max-height:none;border:none;border-radius:0;box-shadow:none;transform:none;transition:none}
 #vc:has(>.set-pc-tab){overflow:hidden}
-.set-pc-tab .set-pc-search{display:none}
+.set-pc-tab .set-pc-bar{display:none}
 body.nav-back-on #app:not(.mobile) .set-pc-tab .set-head{display:none}
 @media (max-width:767px){
   #topbar-cfg-btn{display:none!important}
@@ -14178,21 +14178,26 @@ body.nav-back-on #app:not(.mobile) .set-pc-tab .set-head{display:none}
   transform:scale(.97);transition:transform var(--dur-3,.2s) ease;
 }
 #set-pc-overlay.open .set-pc-shell{transform:scale(1)}
-.set-pc-sidebar{
-  width:240px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;
-  background:var(--color-surface-container-low);border-right:1px solid var(--line-low);padding:14px 10px;overflow-y:auto;
-}
-.set-pc-sidebar-title{padding:6px 12px 12px;font:var(--type-title-medium);font-variation-settings:var(--fv-title)}
-.set-pc-item{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-md,12px);cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-large);font-variation-settings:var(--fv-label);-webkit-tap-highlight-color:transparent;transition:background var(--dur-2),color var(--dur-2)}
-@media (hover:hover){.set-pc-item:hover{background:var(--color-surface-container-high);color:var(--color-on-surface)}}
-.set-pc-item.active{background:var(--color-primary-container);color:var(--color-on-primary-container)}
-.set-pc-item svg{width:18px;height:18px;flex-shrink:0}
-.set-pc-content{flex:1;min-width:0;overflow-y:auto;padding:28px 36px}
+.set-pc-shell{flex-direction:column;max-width:1040px}
+.set-pc-bar{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:10px 14px;border-bottom:1px solid var(--line-low)}
+.set-pc-bar .set-back{margin-left:0;transition:width .25s,margin .25s,opacity .2s}
+.set-pc-bar .set-back.off{width:0;margin-right:-8px;opacity:0;pointer-events:none}
+.set-pc-bar .set-head-title{flex:1}
+.set-pc-bar .set-pc-close{position:static;flex-shrink:0}
+.set-pc-body{flex:1;min-height:0;display:flex;gap:16px;padding:16px}
+.set-pc-rail{width:272px;flex-shrink:0;overflow-y:auto}
+.set-pc-rail .set-section{margin-bottom:0}
+.set-pc-rail .set-list-item{padding:12px 16px}
+.set-pc-rail .set-list-chevron{display:none}
+.set-list-item.active{background:var(--color-primary-container)}
+.set-list-item.active .set-list-icon,.set-list-item.active .set-list-label{color:var(--color-on-primary-container)}
+.set-pc-content{flex:1;min-width:0;overflow-y:auto;padding:0 4px 0 0}
 .set-pc-content .set-panel{max-width:none;margin:0 auto}
+#set-pc-overlay .set-head{display:none}
 .set-pc-close{position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--color-on-surface-variant);background:none;border:none;z-index:2}
 @media (hover:hover){.set-pc-close:hover{background:var(--color-surface-container-high);color:var(--color-on-surface)}}
 @media (max-width:767px){#set-pc-overlay{display:none!important}}
-.set-pc-search{position:relative;display:flex;align-items:center;margin:0 0 10px}
+.set-pc-search{position:relative;display:flex;align-items:center;width:240px;flex-shrink:0}
 .set-pc-search svg{position:absolute;left:13px;pointer-events:none;color:var(--color-on-surface-variant)}
 .set-pc-search input{
   box-sizing:border-box;width:100%;padding:9px 14px 9px 38px;border-radius:999px;
@@ -26033,7 +26038,7 @@ const NAV = (() => {
     const el = $('vtitle');
     if (!el) return;
     let t = null;
-    if (e.view === 'settings' && isMobile()) t = e.sub ? (window._settingsSubTitle || e.sub) : (e.section || 'settings');
+    if (e.view === 'settings') t = e.sub ? (window._settingsSubTitle || e.sub) : (e.section || (isMobile() ? 'settings' : SET_DEF));
     else if (e.view === 'artist' || e.view === 'album' || e.view === 'playlist') t = titleOf(e);
     if (t == null) return;
     if (el.textContent !== t) el.textContent = t;
@@ -33830,15 +33835,7 @@ function renderSettings() {
 
   // ── mobile: section list nav ──────────────────────────────────────────────
   if (_isMob && !window._settingsSection && !_sq) {
-    const chevron = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
-    const listItems = SET_SECTIONS.filter(_setShow).map(s => `
-      <div class="set-list-item mu-ripple" onclick="${s.go || `setSettingsSection('${s.id}')`}">
-        <div style="display:flex;align-items:center;gap:14px">
-          <svg class="set-list-icon" viewBox="0 0 24 24" width="22" height="22">${s.icon}</svg>
-          <span class="set-list-label">${s.label}</span>
-        </div>
-        ${chevron}
-      </div>`).join('');
+    const listItems = _setListHtml();
     const vc = document.getElementById('vc');
     vc.innerHTML = `
       <div class="set-panel ${(() => { const d = window._setDir; window._setDir = null; return d === 'back' ? 'set-anim-back' : d === 'fwd' ? 'set-anim-fwd' : ''; })()}" style="max-width:640px">
@@ -33855,18 +33852,12 @@ function renderSettings() {
 
   const _backBtn = (_isMob && !_all) ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
 
-  const _pcCloseBtn = (_pcPopup && window._settingsPopupOpen) ? `
-    <button class="set-pc-close mu-ripple" onclick="closeSettingsPopup()">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
-    </button>` : '';
-
   const _settingsTarget = _pcPopup ? _setPane() : document.getElementById('vc');
   if (!_settingsTarget) return;
 
   let _setHtml = `
     <div class="set-panel" style="max-width:640px">
       ${_backBtn}
-      ${_pcCloseBtn}
       ${_sectionMatch('playback') ? section('playback', `
         ${(()=>{
           const smode = S.shuffleMode || 'random';
@@ -34401,7 +34392,6 @@ function renderSettings() {
   if (_SUBS.active) {
     _setHtml = `
     <div class="set-panel set-sub-page" style="max-width:640px">
-      ${_pcCloseBtn}
       ${_setHead(_SUBS.active.title, 'closeSettingsSub()')}
       <div class="set-section ui-panel"><div style="padding:6px 20px 8px">${_SUBS.active.html}</div></div>
     </div>`;
@@ -34490,23 +34480,25 @@ function renderSettingsPopupShell() {
   const ov = _settingsHostEl();
   if (!ov) return;
   const tab = ov.id === 'vc';
-  const items = SET_SECTIONS.filter(_setShow).map(s => `
-    <div class="set-pc-item" data-sec="${s.id}" onclick="setSettingsSection('${s.id}')">
-      <svg class="ni" viewBox="0 0 24 24" width="18" height="18">${s.icon}</svg>
-      <span>${s.label}</span>
-    </div>`).join('');
   ov.innerHTML = `
     <div class="set-pc-shell${tab ? ' set-pc-tab' : ''}">
-      <div class="set-pc-sidebar">
-        <div class="set-pc-sidebar-title">settings</div>
+      <div class="set-pc-bar">
+        <button class="set-back off" id="set-pc-back" aria-label="back" onclick="closeSettingsSub()"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <div class="set-head-title" id="set-pc-title">settings</div>
         <div class="set-pc-search">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input id="set-pc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="search settings..." value="${esc(S.globalSearch || '')}" oninput="onGlobalSearch(this.value)">
         </div>
-        ${items}
+        <button class="set-pc-close" aria-label="close" onclick="closeSettingsPopup()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
       </div>
-      <div class="set-pc-content" id="set-pc-content"></div>
+      <div class="set-pc-body">
+        <div class="set-pc-rail"><div class="set-section ui-panel">${_setListHtml()}</div></div>
+        <div class="set-pc-content" id="set-pc-content"></div>
+      </div>
     </div>`;
+  if (window.MU) MU.init(ov.querySelector('.set-pc-rail'));
   renderSettings();
 }
 
@@ -34867,9 +34859,28 @@ function _settingsTabPc() { return !isMobile() && S.view === 'settings' && !wind
 function _setPc() { return !isMobile() && (!!window._settingsPopupOpen || S.view === 'settings'); }
 function _settingsHostEl() { return window._settingsPopupOpen ? document.getElementById('set-pc-overlay') : (_settingsTabPc() ? document.getElementById('vc') : null); }
 function _setPane() { const h = _settingsHostEl(); return h ? h.querySelector('#set-pc-content') : null; }
+function _setListHtml() {
+  const chev = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+  return SET_SECTIONS.filter(_setShow).map(s => `
+      <div class="set-list-item mu-ripple" data-sec="${s.id}" onclick="${s.go || `setSettingsSection('${s.id}')`}">
+        <div style="display:flex;align-items:center;gap:14px">
+          <svg class="set-list-icon" viewBox="0 0 24 24" width="22" height="22">${s.icon}</svg>
+          <span class="set-list-label">${s.label}</span>
+        </div>
+        ${chev}
+      </div>`).join('');
+}
 function _setSyncSide() {
-  const cur = (S.globalSearch || '').trim() ? null : (window._settingsSection || SET_DEF);
-  document.querySelectorAll('.set-pc-item[data-sec]').forEach(el => el.classList.toggle('active', el.dataset.sec === cur));
+  const q = !!(S.globalSearch || '').trim(), sec = window._settingsSection || SET_DEF;
+  document.querySelectorAll('.set-list-item[data-sec]').forEach(el => el.classList.toggle('active', !q && el.dataset.sec === sec));
+  const t = document.getElementById('set-pc-title');
+  if (t) {
+    const s = SET_SECTIONS.find(x => x.id === sec);
+    const txt = window._settingsSub ? (window._settingsSubTitle || window._settingsSub) : (q ? 'search' : (s ? s.label : 'settings'));
+    if (t.textContent !== txt) t.textContent = txt;
+  }
+  const b = document.getElementById('set-pc-back');
+  if (b) b.classList.toggle('off', !window._settingsSub);
 }
 // left sidebar nav items: the one place that decides which exist, their order and when they show. a future "customize sidebar" stores CFG.sidebar_layout (array of ids, order)
 // and CFG.sidebar_hidden (array of ids), and adds more descriptors here (playlists block, divider, custom links) without touching the render code
