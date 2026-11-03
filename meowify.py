@@ -13145,7 +13145,7 @@ html.lg-pad body.design-glassy #app:not(.mobile) #player{--lg-pad:72px;bottom:ca
 .mob-nav-glass,.mob-lens{display:none}
 html.lg-lens body.design-glassy #app.mobile #mobile-nav{background:none!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 html.lg-lens body.design-glassy #app.mobile .mob-nav-glass{display:block;position:absolute;inset:0;z-index:-2;pointer-events:none;border-radius:41px 41px 0 0;background:var(--glass-bg-mid);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--glass-spec-panel);--lg-pad:10px}
-/* mobile nav pill, any theme: one pill per tab pops in (spring scale + stretch, _pillTo) or one shared pill slides between tabs (spring + stretch, _lensPaint), both run on bounce().
+/* mobile nav pill, any theme: one pill per tab pops in (spring scale + stretch, popTo) or one shared pill slides between tabs (spring + stretch, lensTick).
    glassy only restyles them, liquid glass adds the blur/refraction on top */
 #app.mobile .mob-lens{display:none;position:absolute;left:0;z-index:-1;pointer-events:none;border-radius:999px;corner-shape:superellipse(1.5);background:color-mix(in oklch,var(--color-primary) 20%,#0000);will-change:translate,scale;opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s}
 #app.mobile .mob-lens.on{opacity:1;visibility:visible;transition:opacity .1s,visibility 0s}
@@ -14558,7 +14558,7 @@ body.nav-back-on #app:not(.mobile) .set-pc-tab .set-head{display:none}
   border-top: 1px solid var(--line-low);
 }
 #app.mobile #mobile-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 101; height: 54px; box-sizing: border-box; container-type: size; padding-inline: 8px; /* outer margin, matches .mob-tab --py */ }
-/* nav pill = the .mob-lens elements, styled in the lens section and animated by _pillTo / _lensPaint through bounce() */
+/* nav pill = the .mob-lens elements, styled in the lens section and animated by popTo / lensTick */
 .mob-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0; flex: 1; padding: 2px 0 3px;
@@ -19773,7 +19773,7 @@ function _extractCoverColor(imgEl) {
   const d = ctx2.getImageData(0, 0, 32, 32).data;
   const N = _COVER_HUE_BINS;
   const mk = () => ({ w:new Float32Array(N), r:new Float32Array(N), g:new Float32Array(N), b:new Float32Array(N), tot:0, n:0 });
-  const S1 = mk(), S2 = mk(); // strong (chroma² weighted) / faint (chroma weighted)
+  const S1 = mk(), S2 = mk(); // strong (chroma weighted, ch>=0.1 only) / faint (chroma weighted)
   let lum = 0, np = 0;
   for (let i=0;i<d.length;i+=4) {
     if (d[i+3] < 128) continue;
@@ -19790,7 +19790,7 @@ function _extractCoverColor(imgEl) {
     const k = Math.min(N-1, Math.floor(hh*N));
     S2.w[k]+=ch; S2.r[k]+=pr*ch; S2.g[k]+=pg*ch; S2.b[k]+=pb*ch; S2.tot+=ch; S2.n++;
     if (ch >= 0.1) {
-      const w = ch*ch;
+      const w = ch;
       S1.w[k]+=w; S1.r[k]+=pr*w; S1.g[k]+=pg*w; S1.b[k]+=pb*w; S1.tot+=w;
     }
   }
@@ -31280,145 +31280,126 @@ function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
 function lgReset() { DevPrefs.del('lg'); applyLG(); renderSettings(); }
 // mobile nav lens: one glass pill per tab (pop mode) + one shared pill (slide mode), positioned over the tabs, sitting inside the nav under the icons
-// slide pill look, tweak here. how it moves comes from the unified bounce engine further down
+// slide mode feel, tweak here. spring: higher stiffness = faster, lower damping = more wobble (damping ~ 2*sqrt(stiffness) is no overshoot at all)
 var LENS_FX = {
+  stiffness: 480, damping: 30,
   lead: 0,           // 0 = stretch around the center, 1 = tail stays pinned and the head leads (more slide back)
+  stretch: .22,      // extra scaleX at refSpeed, 0 = no squash and stretch
+  refSpeed: 1400,    // px/s that counts as a full stretch
+  maxStretch: .35,   // hard cap of the extra scaleX
   squash: .6,        // how much scaleY shrinks while stretching, 1 = keeps volume
+  follow: 28,        // how fast the stretch follows the speed, higher = snappier
   edgeInset: 2,      // px the pill always stays away from the nav edge
+  settle: .02,       // stop threshold in px
 };
-var _LENS = { ready: false, nw: 0, w: 0, limL: 0, limR: 0 };
-// the one custom painter: x is the pill's left in nav px. stretch around an origin, then clip the box to the nav instead of pushing the whole pill (a push relaxes back as the stretch fades = slide at the end)
-function _lensPaint(el, p, xs) {
-  const L = _LENS, F = LENS_FX, w = L.w || 1, sx = 1 + p.s, sy = 1 / (1 + p.s * F.squash);
+var _LENS = { x: 0, v: 0, tgt: 0, w: 0, s: 0, dir: 1, t: 0, raf: 0, ready: false, nw: 0, limL: 0, limR: 0 };
+function lensPaint() {
+  const sl = document.querySelector('#mobile-nav .mob-lens-slide'); if (!sl) return;
+  const L = _LENS, F = LENS_FX, sx = 1 + L.s, sy = 1 / (1 + L.s * F.squash);
   // origin slides with the velocity instead of flipping with the direction: 0 = left edge, .5 = center, 1 = right edge
-  const o = .5 - .5 * F.lead * Math.max(-1, Math.min(1, p.v / 300));
-  const lo0 = xs + o * w * (1 - sx), lo = Math.max(L.limL, lo0), hi = Math.min(L.limR, lo0 + w * sx);
-  el.style.transformOrigin = '0% 50%';
-  el.style.translate = lo.toFixed(2) + 'px 0';
-  el.style.scale = (Math.max(.01, hi - lo) / w).toFixed(4) + ' ' + sy.toFixed(4);
+  const o = .5 - .5 * F.lead * Math.max(-1, Math.min(1, L.v / 300));
+  // stretch around the origin, then clip the box to the nav instead of pushing the whole pill (a push relaxes back as the stretch fades = slide at the end)
+  const lo0 = L.x + o * L.w * (1 - sx), lo = Math.max(L.limL, lo0), hi = Math.min(L.limR, lo0 + L.w * sx);
+  sl.style.transformOrigin = '0% 50%';
+  sl.style.translate = lo.toFixed(2) + 'px 0';
+  sl.style.scale = (Math.max(.01, hi - lo) / L.w).toFixed(4) + ' ' + sy.toFixed(4);
 }
-var _LENS_SPEC = { ch: [], paint: _lensPaint, ppu: 1, abs: true, sk: 1.1, tk: .7, dk: .6, dn: 60 }; // x is in px (ppu 1), stretch from the absolute speed, a bit quicker and calmer than the global feel
-// pop mode: every tab has its own pill, each one is a bounce on its scale. progress 0 = PILL.from scale, 1 = full size, an inactive pill rests at PILL.rest scale
-var PILL = { from: .6, rest: .8 };
-function _pillTo(el, on, instant) {
-  const tgt = on ? 1 : (PILL.rest - PILL.from) / (1 - PILL.from);
-  if (!el._bn) { bounceTo(el, tgt, { ch: [{ p: 'scale', a: PILL.from, b: 1 }], sk: 1.03, dn: .5 }); return; }
-  if (instant) { bounceSnap(el, tgt); return; }
-  if (el._bn.tgt === tgt) return;
-  bounceTo(el, tgt, on ? { x: 0 } : null);
+function lensTick(t) {
+  const L = _LENS, F = LENS_FX; L.raf = 0;
+  const dt = Math.min(.05, (t - (L.t || t)) / 1000); L.t = t;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  for (let i = 0; i < n; i++) { L.v += (-F.stiffness * (L.x - L.tgt) - F.damping * L.v) * h; L.x += L.v * h; }
+  const want = Math.min(F.maxStretch, Math.abs(L.v) / F.refSpeed * F.stretch);
+  L.s += (want - L.s) * Math.min(1, dt * F.follow);
+  if (Math.abs(L.v) > 20) L.dir = L.v > 0 ? 1 : -1;
+  if (Math.abs(L.x - L.tgt) < F.settle && Math.abs(L.v) < F.settle * 20 && L.s < .002) { L.x = L.tgt; L.v = 0; L.s = 0; L.t = 0; lensPaint(); return; }
+  lensPaint(); L.raf = requestAnimationFrame(lensTick);
 }
-// ── bounce: ONE spring solver behind every procedural bouncy animation (menus, drawers, nav pills) ──
-// feel = 4 global values from the settings: overshoot (o = % of the travel, or op = px in normalized mode), bounciness b (how many swings, 0 = none),
-// bounce time t (seconds to settle, independent of the swing count), stretch str. the stretch extras live in BN (ref, ks, max, follow)
-// a run is a spring on a progress x (tgt 1 = arrived). channels map x to css: { p: 'scale'|'tx'|'ty'|'rotate'|'opacity', a, b, u, c, k, cap }
-//   value = a + (b - a) * x, c: 1 = x clamped to 0..1 (no overshoot), k = opacity gain, u = '%' of the element's own size for tx / ty, cap = soft cap of the overshoot in value units
-// spec: x / v start, tgt, ch, paint (custom painter), ppu (px per unit of x, measured from the channels and transform origin when missing), open / end hooks, origin,
-//   per call site design values (not sliders): sk stretch size, tk time scale, dk overshoot scale (default mode only), hx / vol stretch axis share and squash, abs stretch from |speed|, dn nominal travel
-// to bounce anything: bounce(el, { ch: [{ p: 'ty', a: 20, b: 0 }], end: bounceClean })
-var _BN_DEF = { on: true, sheets: true, norm: false, o: 15, op: 8, b: .5, t: .4, str: 1 };
-var BN = { z: .56, T: .4, pk: .12, o: .15, op: 8, norm: false, str: 1, ref: 10, ks: .3, max: .7, follow: 30 };
-var _BNS = { set: new Set(), raf: 0, t: 0 };
-function _bnFmt(u, v) { return u === 't' ? (+v).toFixed(2) + 's' : _lgFmt(u, v); }
-// overshoot only on the side past the target, blended in over the first 3% of the travel so there is no kink in the speed when it crosses
-function _bnX(p) {
-  const d = (p.x - p.tgt) * p.dir;
-  if (d <= 0) return p.x;
-  return p.tgt + p.dir * d * (p.g + (1 - p.g) * Math.exp(-d / (.03 * p.D)));
-}
-// px one unit of x moves the most visible edge: scale = distance from the transform origin to the farthest edge, so a pop from a corner counts more than one from the center
-function _bnPpu(el, p) {
-  const W = el.offsetWidth, H = el.offsetHeight;
-  if (!W && !H) return 0;
-  let ox = W / 2, oy = H / 2;
-  const to = getComputedStyle(el).transformOrigin.split(' ').map(parseFloat);
-  if (to.length >= 2 && !isNaN(to[0]) && !isNaN(to[1])) { ox = to[0]; oy = to[1]; }
-  const far = Math.max(ox, W - ox, oy, H - oy);
-  let m = 0;
-  for (const c of p.ch) {
-    if (c.c || c.p === 'opacity') continue;
-    const d = Math.abs(c.b - c.a);
-    const px = c.p === 'scale' ? d * far : c.p === 'rotate' ? d * Math.PI / 180 * far : c.p === 'tx' ? (c.u === '%' ? d / 100 * W : d) : c.p === 'ty' ? (c.u === '%' ? d / 100 * H : d) : 0;
-    if (px > m) m = px;
+function lensKick() { if (!_LENS.raf) { _LENS.t = 0; _LENS.raf = requestAnimationFrame(lensTick); } }
+// pop mode: every tab has its own pill and each one is a spring on its scale. same idea as the slide pill, the stretch comes from the spring velocity
+// (growing = wider and flatter, the overshoot on the way back = narrower and taller) so it wobbles like jelly instead of replaying a fixed keyframe
+var POP_FX = {
+  stiffness: 520, damping: 22,   // damping 2*sqrt(stiffness) = no overshoot, lower = more wobble
+  from: .6, rest: .8,            // scale a pop starts from, and the scale an inactive pill sits at
+  stretch: .28,                  // extra scaleX at refSpeed, 0 = plain scale pop
+  refSpeed: 5,                   // scale units per second that count as a full stretch
+  maxStretch: .45,               // hard cap, applies both ways
+  squash: .6,                    // how much scaleY compensates, 1 = keeps volume
+  follow: 30,                    // how fast the stretch follows the velocity, higher = snappier
+  settle: .002,                  // stop threshold
+};
+var _POP = { set: new Set(), raf: 0, t: 0 };
+function popPaint(el) {
+  const p = el._pop, F = POP_FX;
+  if (p.sheet) {
+    // closed while still springing: let go, popTick then runs end() to clean up
+    if (!p.open()) { _POP.set.delete(el); return; }
+    // % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen
+    const H = el.offsetHeight || 1, room = SHEET_FX.room / H * 100, dn = Math.max(0, 1 - p.x) * 110, over = Math.max(0, p.x - 1) * 110 * SHEET_FX.over;
+    el.style.translate = '0 ' + (dn - (over ? room * Math.tanh(over / room) : 0)).toFixed(3) + '%';
+    const sy = 1 + p.s * SHEET_FX.jelly; // origin is the bottom edge so the top is what stretches
+    el.style.scale = Math.pow(sy, -SHEET_FX.wide).toFixed(4) + ' ' + sy.toFixed(4); // wide: 1 = width is the inverse of the height so the area stays the same, 0 = off
+    return;
   }
-  return m;
-}
-// (re)start a segment toward p.tgt: travel, px per unit and the gain that makes the first overshoot exactly the wanted size whatever the bounciness is
-function _bnStart(el, p) {
-  if (p.origin) el.style.transformOrigin = p.origin;
-  p.dir = p.tgt >= p.x ? 1 : -1;
-  p.D = Math.max(Math.abs(p.tgt - p.x), (p.dn || 0) * .5, 1e-4);
-  const ppu = p.ppu != null ? p.ppu : _bnPpu(el, p);
-  const ox = BN.norm && ppu > 0 ? BN.op / ppu : BN.o * (p.dk == null ? 1 : p.dk) * p.D; // wanted overshoot in units of x
-  p.g = BN.pk > 0 ? Math.min(6, ox / (BN.pk * p.D)) : 0;
-  p.u = ppu > 0 ? ppu : 1;
-}
-function _bnPaint(el, p) {
-  const xs = _bnX(p);
-  if (p.paint) { p.paint(el, p, xs); return; }
-  const st = el.style;
-  let sc = 1, tx = null, ty = null, ux = 'px', uy = 'px';
-  for (const c of p.ch) {
-    const q = c.c ? Math.max(0, Math.min(1, xs)) : xs;
-    let v = c.a + (c.b - c.a) * q;
-    if (c.cap) { const sg = c.b >= c.a ? 1 : -1, e = (v - c.b) * sg; if (e > 0) v = c.b + sg * c.cap * Math.tanh(e / c.cap); }
-    if (c.p === 'scale') sc = v;
-    else if (c.p === 'opacity') st.opacity = Math.max(0, Math.min(1, v * (c.k || 1))).toFixed(3);
-    else if (c.p === 'rotate') st.rotate = v.toFixed(2) + 'deg';
-    else if (c.p === 'tx') { tx = v; ux = c.u || 'px'; }
-    else if (c.p === 'ty') { ty = v; uy = c.u || 'px'; }
+  // hx = share of the stretch that lands on x (dx² of the origin to center direction), the rest goes to y, 1 = plain horizontal stretch
+  const hx = p.hx == null ? 1 : p.hx, a = 1 + p.s, b = 1 / (1 + p.s * F.squash);
+  el.style.scale = (p.x * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (p.x * a ** (1 - hx) * b ** hx).toFixed(4);
+  if (p.pop) {
+    const t = Math.max(0, Math.min(1, (p.x - p.pop.from) / (1 - p.pop.from)));
+    el.style.opacity = Math.min(1, t * 1.8).toFixed(3);
+    el.style.translate = '0 ' + ((1 - t) * p.pop.ty).toFixed(2) + 'px';
   }
-  if (tx != null || ty != null) st.translate = (tx == null ? '0' : tx.toFixed(3) + ux) + ' ' + (ty == null ? '0' : ty.toFixed(3) + uy);
-  // hx = share of the stretch that lands on x, the rest goes to y, vol = how much the other side compensates (1 = keeps the area)
-  const hx = p.hx == null ? 1 : p.hx, vol = p.vol == null ? .6 : p.vol, a = 1 + p.s, b = 1 / (1 + p.s * vol);
-  st.scale = (sc * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (sc * a ** (1 - hx) * b ** hx).toFixed(4);
 }
-function _bnTick(t) {
-  const S = _BNS; S.raf = 0;
-  const dt = Math.min(.05, (t - (S.t || t)) / 1000); S.t = t;
-  const n = Math.max(1, Math.ceil(dt * 480)), h = dt / n;
-  S.set.forEach(el => {
-    const p = el._bn, w = 4 / (BN.z * BN.T * (p.tk || 1)), K = w * w, C = 2 * w * BN.z; // settle time and damping ratio set the spring
+function popTick(t) {
+  const P = _POP, F = POP_FX; P.raf = 0;
+  const dt = Math.min(.05, (t - (P.t || t)) / 1000); P.t = t;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  P.set.forEach(el => {
+    const p = el._pop;
+    const K = p.k || F.stiffness, C = p.c || F.damping; // sheets bring their own spring
     for (let i = 0; i < n; i++) { p.v += (-K * (p.x - p.tgt) - C * p.v) * h; p.x += p.v * h; }
-    // stretch from the speed relative to the travel, so it feels the same for a 10px and a 500px move
-    const lim = BN.max * p.sk, want = Math.max(-lim, Math.min(lim, (p.abs ? Math.abs(p.v) : p.v) / p.D / BN.ref * BN.ks * BN.str * p.sk));
-    p.s += (want - p.s) * Math.min(1, dt * BN.follow);
-    if (Math.abs(p.x - p.tgt) * p.u < .03 && Math.abs(p.v) * p.u < .5 && Math.abs(p.s) < .002) { p.x = p.tgt; p.v = 0; p.s = 0; S.set.delete(el); }
-    if (p.open && !p.open()) S.set.delete(el); else _bnPaint(el, p); // closed while still springing: let go, end() cleans up
-    if (p.end && !S.set.has(el)) p.end(el);
+    const want = Math.max(-F.maxStretch, Math.min(F.maxStretch, p.v / F.refSpeed * F.stretch));
+    p.s += (want - p.s) * Math.min(1, dt * F.follow);
+    if (Math.abs(p.x - p.tgt) < F.settle * .1 && Math.abs(p.v) < F.settle * 2 && Math.abs(p.s) < F.settle * .1) { p.x = p.tgt; p.v = 0; p.s = 0; P.set.delete(el); }
+    popPaint(el);
+    if (p.end && !P.set.has(el)) p.end(el);
   });
-  if (S.set.size) S.raf = requestAnimationFrame(_bnTick); else S.t = 0;
+  if (P.set.size) P.raf = requestAnimationFrame(popTick); else P.t = 0;
 }
-function _bnRun(el) { _BNS.set.add(el); if (!_BNS.raf) { _BNS.t = 0; _BNS.raf = requestAnimationFrame(_bnTick); } }
-// run from o.x (default 0) to o.tgt (default 1)
-function bounce(el, o) {
-  const p = el._bn = Object.assign({ x: 0, v: 0, tgt: 1, s: 0, sk: 1, ch: [] }, o);
-  _bnStart(el, p); _bnPaint(el, p); _bnRun(el);
+function popTo(el, on, instant) {
+  const F = POP_FX, tgt = on ? 1 : F.rest;
+  let p = el._pop;
+  if (!p) { p = el._pop = { x: tgt, v: 0, tgt, s: 0 }; instant = true; }
+  if (instant) { p.x = p.tgt = tgt; p.v = 0; p.s = 0; _POP.set.delete(el); popPaint(el); return; }
+  if (p.tgt === tgt) return;
+  if (on) { p.x = F.from; p.v = 0; }
+  p.tgt = tgt;
+  _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
 }
-// aim a running (or settled) bounce at a new target keeping its position and speed. o = the spec when there is none yet (then it starts settled at tgt), or { x } to restart from there
-function bounceTo(el, tgt, o) {
-  let p = el._bn;
-  if (!p) { p = el._bn = Object.assign({ x: tgt, v: 0, s: 0, sk: 1, ch: [] }, o); p.tgt = tgt; _bnStart(el, p); _bnPaint(el, p); return; }
-  if (o && o.x != null) { p.x = o.x; p.v = 0; p.s = 0; }
-  p.tgt = tgt; _bnStart(el, p); _bnRun(el);
-}
-// jump without motion
-function bounceSnap(el, x) {
-  const p = el._bn; if (!p) return;
-  p.x = p.tgt = x; p.v = 0; p.s = 0; _BNS.set.delete(el); _bnPaint(el, p);
-}
+var _BN_DEF = { on: true, str: 1, b: .5, sheets: true };
+var _BN_BASE = null;
+var _BN_SLIDE = 3;
 function _bnPrefs() { const v = DevPrefs.get('bounce'); return Object.assign({}, _BN_DEF, v && typeof v === 'object' ? v : {}); }
 function bounceOn() { return !!_bnPrefs().on; }
 function bounceSheetOn() { return bounceOn() && !!_bnPrefs().sheets; }
 function bounceSync() {
-  const s = _bnPrefs(), z = s.on ? Math.max(.12, 1 - .88 * s.b) : 1; // bounciness 0 = critically damped (no overshoot), 1 = damping ratio .12. off = the springs still run but dont wobble
-  BN.z = z; BN.T = Math.max(.1, +s.t || .4);
-  BN.pk = z >= .999 ? 0 : Math.exp(-Math.PI * z / Math.sqrt(1 - z * z)); // first overshoot the raw spring would make, as a share of the travel
-  BN.o = s.on ? s.o / 100 : 0; BN.op = s.on ? s.op : 0; BN.norm = !!s.norm; BN.str = s.on ? s.str : 0;
+  const s = _bnPrefs(), m = s.b / .5;
+  if (!_BN_BASE) _BN_BASE = { pk: POP_FX.stiffness, pd: POP_FX.damping, ps: POP_FX.stretch, pf: POP_FX.from, lk: LENS_FX.stiffness, ld: LENS_FX.damping, ls: LENS_FX.stretch, lm: LENS_FX.maxStretch };
+  const B = _BN_BASE;
+  const damp = (k, d) => { const c = 2 * Math.sqrt(k), z0 = d / c; return c * (s.on ? Math.max(.12, Math.min(1, 1 - (1 - z0) * m)) : 1); };
+  POP_FX.damping = damp(B.pk, B.pd);
+  POP_FX.stretch = s.on ? B.ps * s.str : 0;
+  POP_FX.from = s.on ? Math.max(.05, Math.min(.98, 1 - (1 - B.pf) * s.str)) : B.pf;
+  LENS_FX.damping = damp(B.lk, B.ld);
+  LENS_FX.stretch = s.on ? B.ls * s.str * _BN_SLIDE : 0;
+  LENS_FX.maxStretch = B.lm * _BN_SLIDE;
 }
-function bounceClean(el) { ['scale', 'opacity', 'translate', 'rotate'].forEach(k => el.style.removeProperty(k)); }
-function bounceStop(el) { _BNS.set.delete(el); if (el._bn) el._bn.end = null; bounceClean(el); }
-// bottom sheet entrance (ctx / sort / downloads drawers). room = px it may rise above rest (the strip the sheet hides under the screen)
-var SHEET_FX = { room: 90 };
+function bounceClean(el) { el.style.removeProperty('scale'); el.style.removeProperty('opacity'); el.style.removeProperty('translate'); }
+function bounceStop(el) { _POP.set.delete(el); if (el._pop) el._pop.end = null; bounceClean(el); }
+// bottom sheet entrance (ctx / sort / downloads drawers). t = settle time in seconds, z = damping ratio at default bounciness (1 = no wobble), zmin = lowest ratio at max bounciness,
+// over = overshoot size multiplier (1 = as the spring gives, 0 = none), room = px it may rise above rest (the strip the sheet hides under the screen), jelly = how much the speed stretches it
+var SHEET_FX = { t: .5, z: .01, zmin: .55, over: .2, room: 90, jelly: .15, wide: 1 };
 function bounceSheetEnd(el) {
   el.style.removeProperty('translate'); el.style.removeProperty('scale'); el.style.removeProperty('transition'); el.style.removeProperty('transform-origin');
   if (el._popOff) { el._popOff(); el._popOff = null; }
@@ -31436,33 +31417,34 @@ function _sheetSnap(dy, vel) {
 }
 function bounceSheet(el, x0 = 0, v0 = 0) {
   if (el._popOff) { el._popOff(); el._popOff = null; }
+  const s = _bnPrefs(), m = s.b / .5, z = Math.max(SHEET_FX.zmin, Math.min(1, 1 - (1 - SHEET_FX.z) * m)), w = 4 / (z * SHEET_FX.t);
   el.style.setProperty('transition', 'none', 'important'); // css transition off for the entrance, the spring owns it
-  const H = el.offsetHeight || 1;
-  // translate runs 110% (hidden) to 0 in % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen (cap).
-  // origin is the bottom edge so the top is what stretches, vol 1 = width is the inverse of the height so the area stays the same
-  bounce(el, { x: x0, v: v0, ch: [{ p: 'ty', a: 110, b: 0, u: '%', cap: SHEET_FX.room / H * 100 }], hx: 0, vol: 1, sk: .29, tk: 1.25, dk: .2, origin: '50% 100%', open: () => _sheetOpen(el), end: bounceSheetEnd });
+  el.style.transformOrigin = '50% 100%';
+  el._pop = { x: x0, v: v0, tgt: 1, s: 0, sheet: true, open: () => _sheetOpen(el), k: w * w, c: 2 * w * z, end: bounceSheetEnd };
+  popPaint(el); _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
   // touching the sheet hands it over to the drag, so the spring lets go
-  const grab = () => { _BNS.set.delete(el); bounceSheetEnd(el); };
+  const grab = () => { _POP.set.delete(el); bounceSheetEnd(el); };
   el.addEventListener('touchstart', grab, { once: true, passive: true });
   el.addEventListener('pointerdown', grab, { once: true });
   el._popOff = () => { el.removeEventListener('touchstart', grab); el.removeEventListener('pointerdown', grab); };
 }
-// popup entrance: scale from 1 - dist (fixed per call site, no dist = plain), fades in and slides ty px. hx = share of the stretch on x
 function bounceIn(el, o = {}) {
-  const ch = [{ p: 'scale', a: 1 - (o.dist == null ? 0 : o.dist), b: 1 }, { p: 'opacity', a: 0, b: 1, k: 1.8, c: 1 }];
-  if (o.ty) ch.push({ p: 'ty', a: o.ty, b: 0, c: 1 });
-  bounce(el, { ch, hx: o.hx, sk: .46, end: bounceClean });
+  const s = _bnPrefs(), from = Math.max(.05, Math.min(.98, 1 - (o.dist == null ? .18 : o.dist) * s.str));
+  el._pop = { x: from, v: 0, tgt: 1, s: 0, hx: o.hx, pop: { from, ty: (o.ty || 0) * s.str }, end: bounceClean };
+  popPaint(el); _POP.set.add(el);
+  if (!_POP.raf) { _POP.t = 0; _POP.raf = requestAnimationFrame(popTick); }
 }
 function bounceSet(k, v) { const s = _bnPrefs(); s[k] = v; DevPrefs.set('bounce', s); bounceSync(); }
 function bounceReset() { DevPrefs.del('bounce'); bounceSync(); renderSettings(); }
 function bounceSettingsHtml(sq) {
   if (sq && !'bounce bouncy spring animation pop stretch wobble jelly menu popup nav pill'.includes(sq)) return '';
   const s = _bnPrefs();
-  const sl = (name, sub, min, max, step, val, key, u = 'f100') => `
+  const sl = (name, sub, min, max, step, val, key) => `
     <div class="sb-line ${s.on ? '' : 'off'}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>
       <div style="display:flex;align-items:center;gap:8px">
-        <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_bnFmt('${u}',+this.value);bounceSet('${key}',+this.value)">
-        <span class="sb-meta" style="min-width:52px;text-align:right">${_bnFmt(u, val)}</span>
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=_lgFmt('f100',+this.value);bounceSet('${key}',+this.value)">
+        <span class="sb-meta" style="min-width:52px;text-align:right">${_lgFmt('f100', val)}</span>
       </div>
     </div>`;
   return `
@@ -31485,16 +31467,8 @@ function bounceSettingsHtml(sq) {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         </div>
-        <div class="sb-line ${s.on ? '' : 'off'}"><div class="sb-l"><div class="sb-n">px normalized overshoot</div><div class="sb-s">off = overshoot is a share of the travel, so bigger or longer moves overshoot more. on = the same visible px everywhere, measured from the transform origin (a popup growing from a corner and one from its center overshoot the same px)</div></div>
-          <label class="switch" style="flex-shrink:0">
-            <input type="checkbox" ${s.norm ? 'checked' : ''} onchange="bounceSet('norm',this.checked);renderSettings()" onclick="event.stopPropagation()">
-            <div class="switch-track"><div class="switch-thumb"></div></div>
-          </label>
-        </div>
-        ${sl('overshoot', s.norm ? 'how far it passes the target, in px' : 'how far it passes the target, as % of the travel', 0, s.norm ? 30 : 40, 1, s.norm ? s.op : s.o, s.norm ? 'op' : 'o', s.norm ? 'px' : '%')}
-        ${sl('bounciness', 'how many times it swings back and forth, 0 settles with no overshoot', 0, 1, .05, s.b, 'b')}
-        ${sl('bounce time', 'how long it takes to settle, separate from how many swings', .15, 1.2, .05, s.t, 't', 't')}
-        ${sl('stretch', 'how much the speed stretches it, 0 = none', 0, 2, .05, s.str, 'str')}
+        ${sl('strength', 'how far the pop starts and how much it stretches', 0, 2, .05, s.str, 'str')}
+        ${sl('bounciness', 'how long it keeps wobbling, 0 settles with no overshoot', 0, 1, .05, s.b, 'b')}
         <div class="sb-line"><div class="sb-l"><div class="sb-n">reset bounce</div><div class="sb-s">back to the defaults</div></div><button class="lg-chip" onclick="bounceReset()">reset</button></div>
       </div>
     </details>`;
@@ -31518,7 +31492,7 @@ function lensLayout() {
     if (on) act = r;
     if (!l) return;
     const w = place(l, r); l.style.left = Math.max(0, Math.min(cw - w, (r.left - ox) / k)) + 'px'; l.classList.toggle('on', on);
-    if (!slide) _pillTo(l, on, !l._bn || _LENS.popStale);
+    if (!slide) popTo(l, on, !l._pop || _LENS.popStale);
   });
   _LENS.popStale = slide; // pills are not tracked while sliding, so snap them when pop mode comes back
   const sl = nav.querySelector('.mob-lens-slide'), L = _LENS;
@@ -31526,8 +31500,8 @@ function lensLayout() {
   if (!slide || !sl || !act) { L.ready = false; return; }
   const w = place(sl, act), tgt = Math.max(F.edgeInset, Math.min(cw - F.edgeInset - w, (act.left - ox) / k));
   L.w = w; L.limL = F.edgeInset; L.limR = cw - F.edgeInset;
-  if (!L.ready || !sl._bn || Math.abs(cw - L.nw) > .5) { L.nw = cw; L.ready = true; if (sl._bn) bounceSnap(sl, tgt); else bounceTo(sl, tgt, _LENS_SPEC); return; }
-  if (Math.abs(tgt - sl._bn.tgt) > .01) bounceTo(sl, tgt);
+  if (!L.ready || Math.abs(cw - L.nw) > .5) { L.nw = cw; L.ready = true; L.x = L.tgt = tgt; L.v = 0; L.s = 0; lensPaint(); return; }
+  if (Math.abs(tgt - L.tgt) > .01) { L.tgt = tgt; lensKick(); }
 }
 function _lensInit() {
   const nav = document.getElementById('mobile-nav');
