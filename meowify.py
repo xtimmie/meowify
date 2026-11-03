@@ -12830,6 +12830,11 @@ body.design-paper #vc{--pin-bg:var(--paper-surface)}
 body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 #app:not(.mobile) #vc:has(.list-header.pinned){background:linear-gradient(var(--pin-bg),var(--pin-bg)) right 0 top 0/var(--sbw,0px) var(--pin-h,34px) no-repeat}
 #app.mobile #vc{--vc-px:8px;--view-top:8px}
+/* mobile list top fade, --vcm 0..1 comes from scroll (_vcmSync). art bg on = mask, off = bg colored strip */
+@property --vcm{syntax:'<number>';inherits:true;initial-value:0}
+#app.mobile #vc-wrap{position:relative;transition:--vcm var(--vcm-ms,0ms) linear}
+html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-auto.ga-on #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
+html.vcm-solid #app.mobile #vc-wrap::before,html.vcm-auto:not(.ga-on) #app.mobile #vc-wrap::before{content:'';position:absolute;left:0;right:0;top:0;height:var(--vcm-h,48px);z-index:3;pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
@@ -15293,6 +15298,7 @@ function isMobile(){return window.innerWidth<768;}
   if (!vc || !bar) return;
   let last = -1;
   const sync = () => {
+    if (window._vcmSync) window._vcmSync(vc);
     const f = Math.round(Math.min(Math.max(vc.scrollTop / VC_FADE_PX, 0), 1) * 100) / 100;
     if (f === last) return;
     last = f;
@@ -31162,6 +31168,61 @@ function _lensOverLG(over) {
   });
 }
 function lgSet(k, v) { const s = _lgPrefs(); s[k] = v; _lgSave(s); applyLG(); }
+// mobile list top fade: scroll position (0..px) drives --vcm 0..1 on #vc-wrap, css lives next to the #app.mobile #vc rule
+var _VCM_DEF = { on: true, mode: 'auto', px: 30, h: 48, ease: 'smooth', ms: 0 };
+function _vcmPrefs() { const v = DevPrefs.get('vcm'); return Object.assign({}, _VCM_DEF, v && typeof v === 'object' ? v : {}); }
+window._vcmSync = function (vc) {
+  const wrap = vc.parentElement, s = window._vcmS || (window._vcmS = _vcmPrefs());
+  let f = 0;
+  if (s.on && isMobile()) {
+    f = Math.min(Math.max(vc.scrollTop / s.px, 0), 1);
+    f = s.ease === 'in' ? f * f : s.ease === 'out' ? 1 - (1 - f) * (1 - f) : s.ease === 'smooth' ? f * f * (3 - 2 * f) : f;
+    f = Math.round(f * 1000) / 1000;
+  }
+  if (f === wrap._vcm) return;
+  wrap._vcm = f; wrap.style.setProperty('--vcm', f);
+  vc.toggleAttribute('data-vcm', f > 0 || (s.on && s.ms > 0 && isMobile())); // with a transition the mask stays attached so it can ease back out
+};
+function _vcmApply() {
+  const s = window._vcmS = _vcmPrefs(), vc = document.getElementById('vc'), wrap = vc && vc.parentElement, root = document.documentElement;
+  ['auto', 'mask', 'solid'].forEach(m => root.classList.toggle('vcm-' + m, s.on && s.mode === m));
+  if (!wrap) return;
+  wrap.style.setProperty('--vcm-h', s.h + 'px'); wrap.style.setProperty('--vcm-ms', s.ms + 'ms');
+  wrap._vcm = -1; window._vcmSync(vc);
+}
+function vcmSet(k, v) { const s = _vcmPrefs(); s[k] = v; DevPrefs.set('vcm', s); _vcmApply(); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _vcmApply, { once: true }); else _vcmApply();
+function vcmSettingsHtml(sq) {
+  if (sq && !'list top fade mask scroll songs titlebar mobile'.includes(sq)) return '';
+  const s = _vcmPrefs(), off = s.on ? '' : 'off';
+  const sw = (checked, onchange) => `
+    <label class="switch" style="flex-shrink:0">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()">
+      <div class="switch-track"><div class="switch-thumb"></div></div>
+    </label>`;
+  const line = (name, sub, ctrl, cls = '') => `
+    <div class="sb-line ${cls}"><div class="sb-l"><div class="sb-n">${name}</div><div class="sb-s">${sub}</div></div>${ctrl}</div>`;
+  const sel = (k, opts) => `<select class="input" style="width:130px" onchange="vcmSet('${k}',this.value)">${opts.map(([v, n]) => `<option value="${v}" ${s[k] === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+  const sl = (name, sub, min, max, step, val, k, u) => line(name, sub, `<div style="display:flex;align-items:center;gap:8px">
+    <input type="range" min="${min}" max="${max}" step="${step}" value="${val}" class="slider" style="width:120px" oninput="this.nextElementSibling.textContent=+this.value+'${u}';vcmSet('${k}',+this.value)">
+    <span class="sb-meta" style="min-width:52px;text-align:right">${val}${u}</span></div>`, off);
+  return `
+    <details class="set-blur" ${(window._vcmOpen || window._settingsSub === 'vcfade') ? 'open' : ''} ontoggle="window._vcmOpen=this.open">
+      <summary>
+        <div class="set-title-cell"><div class="set-lbl">list top fade</div><div class="set-sub">mobile only, songs fade out under the topbar once you scroll down</div></div>
+        <span class="sb-meta">${s.on ? s.mode : 'off'}</span>
+        <svg class="sb-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="sb-body">
+        ${line('enable', 'fade the top of the songs list while scrolled down', sw(s.on, "vcmSet('on',this.checked);renderSettings()"))}
+        ${line('mode', 'auto = mask while art background is on, plain bg color strip when it is off (cheapest). mask / solid force one', sel('mode', [['auto', 'auto'], ['mask', 'mask'], ['solid', 'solid']]), off)}
+        ${sl('distance', 'scroll distance until the top is fully faded', 10, 120, 1, s.px, 'px', 'px')}
+        ${sl('height', 'how tall the faded zone at the top is', 8, 120, 1, s.h, 'h', 'px')}
+        ${line('interpolation', 'how the fade follows the scroll position', sel('ease', [['linear', 'linear'], ['in', 'ease in'], ['out', 'ease out'], ['smooth', 'smooth']]), off)}
+        ${sl('in transition', '0 = instant, tied straight to scroll. higher smooths it out over time, keeps the mask attached on art bg', 0, 400, 10, s.ms, 'ms', 'ms')}
+      </div>
+    </details>`;
+}
 function lgSetP(k, v, rerender) { const s = _lgPrefs(); s.p = Object.assign({}, s.p, { [k]: v }); _lgSave(s); applyLG(); if (rerender) renderSettings(); }
 function lgLook(name) { const s = _lgPrefs(); s.look = name; s.p = {}; _lgSave(s); applyLG(); renderSettings(); }
 function lgPart(k, off) { const s = _lgPrefs(); s.off = s.off.filter(x => x !== k); if (off) s.off.push(k); _lgSave(s); applyLG(); }
@@ -34012,6 +34073,7 @@ function renderSettings() {
         ${(CFG.ui_design||'material')==='glassy' ? glassFxSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
+        ${vcmSettingsHtml(_sq)}
         ${blurSettingsHtml(_sq)}
       `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
