@@ -20078,7 +20078,8 @@ function _onSongColorChange(song) {
 function _colorPredictTick(t, d) {
   if (!S.cur || !d || (!CFG.cover_art_hue_sync && !CFG.cover_art_bleed)) return;
   const rem  = d - t;
-  const lead = COLOR_PREDICT_LEAD_S + (engine.crossfade || 0);
+  // with hue sync the lead is half the fade so it straddles the song switch (2s default = the old 1s lead). bleed only keeps the fixed lead
+  const lead = (CFG.cover_art_hue_sync ? _hueFadeMs() / 2000 : COLOR_PREDICT_LEAD_S) + (engine.crossfade || 0);
   if (_colorPredict) {
     // seeked back after we already faded ahead: go back to this song's color
     if (_colorPredict.fromId === S.cur.id && rem > lead + 1.5) {
