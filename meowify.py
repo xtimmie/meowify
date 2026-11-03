@@ -12840,7 +12840,7 @@ html.vcm-sda.vcm-solid #app.mobile #vc::before,html.vcm-sda.vcm-auto:not(.ga-on)
 html.vcm-ok:not([data-mu-design="glassy"]) #app.mobile #vc{--vcm-bg:var(--color-surface)}
 html.vcm-ok:not([data-mu-design="glassy"]) #app.mobile .topbar.topbar.topbar{background:var(--color-surface)!important;border-bottom:none!important;box-shadow:none!important}
 html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-auto.ga-on #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
-html.vcm-solid #app.mobile #vc::before,html.vcm-auto:not(.ga-on) #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcmj,0)}
+html.vcm-solid #app.mobile #vc[data-vcm]::before,html.vcm-auto:not(.ga-on) #app.mobile #vc[data-vcm]::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcmj,0)}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
@@ -15311,7 +15311,7 @@ function isMobile(){return window.innerWidth<768;}
     bar.style.setProperty('--vc-fade', f);
   };
   vc.addEventListener('scroll', sync, { passive: true });
-  new MutationObserver(sync).observe(vc, { childList: true });
+  new MutationObserver(() => { sync(); requestAnimationFrame(() => requestAnimationFrame(sync)); }).observe(vc, { childList: true }); // second pass once the new tab has laid out
   new ResizeObserver(sync).observe(vc);
   window._syncVcFade = sync; // called right after programmatic scrollTop resets so tab switches snap instantly
   sync();
@@ -31182,7 +31182,7 @@ function _vcmDesignOk() { return _VCM_DESIGNS.includes(document.documentElement.
 window._vcmSync = function (vc) {
   const s = window._vcmS || (window._vcmS = _vcmPrefs());
   if (window._vcmSda) { // a css scroll driven animation does the fade itself, this only attaches the mask while scrolled down
-    const want = !!(window._vcmOk && isMobile() && vc.scrollTop > 0);
+    const want = !!(window._vcmOk && isMobile() && vc.scrollTop > 0 && vc.scrollHeight > vc.clientHeight + 1);
     if (vc.hasAttribute('data-vcm') !== want) vc.toggleAttribute('data-vcm', want);
     return;
   }
