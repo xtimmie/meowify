@@ -12833,8 +12833,8 @@ body.design-terminal #vc{--pin-bg:var(--trm-bg)}
 /* mobile list top fade, --vcm 0..1 comes from scroll (_vcmSync). art bg on = mask, off = bg colored strip */
 @property --vcm{syntax:'<number>';inherits:true;initial-value:0}
 #app.mobile #vc{transition:--vcm var(--vcm-ms,0ms) linear}
-html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-auto.ga-on #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
-html.vcm-solid #app.mobile #vc::before,html.vcm-auto:not(.ga-on) #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
+body.design-glassy.design-glassy html.vcm-mask #app.mobile #vc[data-vcm],html.vcm-mask body.design-glassy #app.mobile #vc[data-vcm],html.vcm-auto.ga-on body.design-glassy #app.mobile #vc[data-vcm]{-webkit-mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px));mask-image:linear-gradient(to bottom,rgb(0 0 0 / calc(1 - var(--vcm))) 0,#000 var(--vcm-h,48px))}
+html.vcm-solid body.design-glassy #app.mobile #vc::before,html.vcm-auto:not(.ga-on) body.design-glassy #app.mobile #vc::before{content:'';display:block;position:sticky;top:0;z-index:3;height:var(--vcm-h,48px);margin:0 calc(-1 * var(--vc-px)) calc(-1 * var(--vcm-h,48px));pointer-events:none;background:linear-gradient(to bottom,var(--vcm-bg,var(--color-surface-dim)),transparent);opacity:var(--vcm)}
 .queue-sidebar{ width:280px;flex-shrink:0; background:var(--color-surface-container-lowest); display:flex;flex-direction:column;overflow:hidden; transition:width var(--dur-8) var(--ease-spring-soft),transform var(--dur-8) var(--ease-spring-soft); position:relative;min-width:0;box-shadow:-2px 0 8px rgba(0,0,0,.10); }
 .queue-sidebar.hidden{width:0!important;box-shadow:none;transform:translateX(0);}
 .queue-sidebar:not(.hidden){transform:translateX(0);}
@@ -31174,7 +31174,7 @@ function _vcmPrefs() { const v = DevPrefs.get('vcm'); return Object.assign({}, _
 window._vcmSync = function (vc) {
   const s = window._vcmS || (window._vcmS = _vcmPrefs());
   let f = 0;
-  if (s.on && isMobile()) {
+  if (s.on && isMobile() && document.body.classList.contains('design-glassy')) {
     f = Math.min(Math.max(vc.scrollTop / s.px, 0), 1);
     f = s.ease === 'in' ? f * f : s.ease === 'out' ? 1 - (1 - f) * (1 - f) : s.ease === 'smooth' ? f * f * (3 - 2 * f) : f;
     f = Math.round(f * 1000) / 1000;
@@ -34073,7 +34073,7 @@ function renderSettings() {
         ${(CFG.ui_design||'material')==='glassy' ? glassFxSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
         ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
-        ${vcmSettingsHtml(_sq)}
+        ${(CFG.ui_design||'material')==='glassy' ? vcmSettingsHtml(_sq) : ''}
         ${blurSettingsHtml(_sq)}
       `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
