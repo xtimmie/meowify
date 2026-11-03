@@ -20527,6 +20527,7 @@ function _setViewRaw(v, pid, aid) {
     window._setDir = null;
     document.getElementById('vtitle').textContent = 'settings';
     renderSettings();
+    requestAnimationFrame(() => window.gearRelease?.(true)); // the page is in, let the wound up gear spin forward
   }
 
   renderTopbarSearch(v);
@@ -35337,6 +35338,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     const p = document.getElementById(id);
     if (p) MU.animateSpikyCircle(p, cfg, { duration: p.getClientRects().length ? duration : 1, easing: 'cubic-bezier(.2,0,.2,1)' });
   });
+  // gear tab anticipation: pointerdown winds the gear back a bit, the settings render finishing (see _setViewRaw) releases it forward.
+  // rotation is WAAPI on the individual rotate property so it runs on the compositor and stays smooth while the main thread renders the view.
+  // 8 teeth repeat every 45deg so ending the spin at 45deg looks identical to resting at 0
+  let _gearWindT = 0;
+  const _gearSvgs = () => ['gear-path', 'mobile-gear-path'].map(id => document.getElementById(id)?.closest('svg')).filter(s => s && s.getClientRects().length);
+  const _gearAngle = s => { const r = getComputedStyle(s).rotate; return !r || r === 'none' ? 0 : parseFloat(r) || 0; };
+  window.gearWind = function () {
+    _gearSvgs().forEach(s => {
+      const from = _gearAngle(s); if (s._gw) s._gw.cancel();
+      s._gw = s.animate([{ rotate: from + 'deg' }, { rotate: '-28deg' }], { duration: 170, easing: 'cubic-bezier(.3,0,.2,1)', fill: 'forwards' });
+    });
+    clearTimeout(_gearWindT); _gearWindT = setTimeout(() => window.gearRelease(false), 1500); // never stay wound up if the view never commits
+  };
+  window.gearRelease = function (spin = true) {
+    clearTimeout(_gearWindT); _gearWindT = 0;
+    _gearSvgs().forEach(s => {
+      if (!s._gw) return;
+      const from = _gearAngle(s); s._gw.cancel(); s._gw = null;
+      s.animate([{ rotate: from + 'deg' }, { rotate: spin ? '45deg' : '0deg' }], { duration: spin ? 420 : 220, easing: spin ? 'cubic-bezier(.2,.9,.3,1.25)' : 'cubic-bezier(.2,0,.2,1)' });
+    });
+  };
+  document.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('#nb-cfg,#mnt-cfg') && S.view !== 'settings') window.gearWind(); }, { passive: true });
+  document.addEventListener('pointercancel', () => { if (_gearWindT) window.gearRelease(false); }, { passive: true });
   window.animateGear = function() {
     _gearTo({ cx: 12, cy: 12, outerR: 12, innerR: 7.5, spikes: 8, smooth: 0.55, holeR: 4 }, 300);
   };
