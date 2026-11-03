@@ -31328,7 +31328,7 @@ function _pillTo(el, on, instant) {
 //   hx / vol stretch axis share and squash, abs stretch from |speed|, dn nominal travel. the stretch is also scaled by where the transform origin sits, see _bnPpu
 // to bounce anything: bounce(el, { ch: [{ p: 'ty', a: 20, b: 0 }], end: bounceClean })
 var _BN_DEF = { on: true, sheets: true, o: 15, b: .5, t: .4, str: 1 };
-var BN = { z: .56, T: .4, pk: .12, o: .15, str: 1, ref: 10, ks: .3, max: .7, follow: 30 };
+var BN = { z: .56, T: .4, kz: 4, pk: .12, o: .15, str: 1, ref: 10, ks: .3, max: .7, follow: 30 };
 var _BNS = { set: new Set(), raf: 0, t: 0 };
 function _bnFmt(u, v) { return u === 't' ? (+v).toFixed(2) + 's' : _lgFmt(u, v); }
 // overshoot only on the side past the target, blended in over the first 3% of the travel so there is no kink in the speed when it crosses
@@ -31386,7 +31386,7 @@ function _bnPaint(el, p) {
   }
   if (tx != null || ty != null) st.translate = (tx == null ? '0' : tx.toFixed(3) + ux) + ' ' + (ty == null ? '0' : ty.toFixed(3) + uy);
   // hx = share of the stretch that lands on x, the rest goes to y, vol = how much the other side compensates (1 = keeps the area)
-  const hx = p.hx == null ? 1 : p.hx, vol = p.vol == null ? .6 : p.vol, se = p.s * (p.sn || 1), a = 1 + se, b = 1 / (1 + se * vol);
+  const hx = p.hx == null ? 1 : p.hx, vol = p.vol == null ? .6 : p.vol, se = Math.max(-.6, Math.min(1.2, p.s * (p.sn || 1))), a = 1 + se, b = 1 / (1 + se * vol); // clamped so a stacked fake + physical stretch can never flip the scale or divide by 0
   st.scale = (sc * a ** hx * b ** (1 - hx)).toFixed(4) + ' ' + (sc * a ** (1 - hx) * b ** hx).toFixed(4);
 }
 function _bnTick(t) {
@@ -31394,7 +31394,7 @@ function _bnTick(t) {
   const dt = Math.min(.05, (t - (S.t || t)) / 1000); S.t = t;
   const n = Math.max(1, Math.ceil(dt * 480)), h = dt / n;
   S.set.forEach(el => {
-    const p = el._bn, w = 4 / (BN.z * BN.T * (p.tk || 1)), K = w * w, C = 2 * w * BN.z; // settle time and damping ratio set the spring
+    const p = el._bn, w = BN.kz / (BN.z * BN.T * (p.tk || 1)), K = w * w, C = 2 * w * BN.z; // settle time and damping ratio set the spring
     for (let i = 0; i < n; i++) { p.v += (-K * (p.x - p.tgt) - C * p.v) * h; p.x += p.v * h; }
     // stretch from the speed relative to the travel, so it feels the same for a 10px and a 500px move. fk = faked extra stretch, a bell over the travel
     // (wider while growing, narrower while shrinking) for pops that are too short to get a physical one, it scales with the stretch slider too
@@ -31431,6 +31431,7 @@ function bounceSheetOn() { return bounceOn() && !!_bnPrefs().sheets; }
 function bounceSync() {
   const s = _bnPrefs(), z = s.on ? Math.max(.12, 1 - .88 * s.b) : 1; // bounciness 0 = critically damped (no overshoot), 1 = damping ratio .12. off = the springs still run but dont wobble
   BN.z = z; BN.T = Math.max(.1, +s.t || .4);
+  BN.kz = 4 + 1.83 * (Math.max(0, z - .7) / .3) ** 2; // 4 = settle time of a wobbling spring (2% envelope), 5.83 = same for a critically damped one, so bounce time means the same at every bounciness
   BN.pk = z >= .999 ? 0 : Math.exp(-Math.PI * z / Math.sqrt(1 - z * z)); // first overshoot the raw spring would make, as a share of the travel
   BN.o = s.on ? s.o / 100 : 0; BN.str = s.on ? s.str : 0;
 }
@@ -31459,7 +31460,7 @@ function bounceSheet(el, x0 = 0, v0 = 0) {
   const H = el.offsetHeight || 1;
   // translate runs 110% (hidden) to 0 in % of the sheet's own height so css zoom doesnt matter. past rest it rises, saturating smoothly at the hidden strip under the screen (cap).
   // origin is the bottom edge so the top is what stretches, vol 1 = width is the inverse of the height so the area stays the same
-  bounce(el, { x: x0, v: v0, ch: [{ p: 'ty', a: 110, b: 0, u: '%', cap: SHEET_FX.room / H * 100 }], hx: 0, vol: 1, sk: .58, tk: 1.25, dk: .2, origin: '50% 100%', open: () => _sheetOpen(el), end: bounceSheetEnd });
+  bounce(el, { x: x0, v: v0, ch: [{ p: 'ty', a: 110, b: 0, u: '%', cap: SHEET_FX.room / H * 100 }], hx: 0, vol: 1, sk: .58, tk: 1.25, dk: .2, dn: 1, origin: '50% 100%', open: () => _sheetOpen(el), end: bounceSheetEnd });
   // touching the sheet hands it over to the drag, so the spring lets go
   const grab = () => { _BNS.set.delete(el); bounceSheetEnd(el); };
   el.addEventListener('touchstart', grab, { once: true, passive: true });
