@@ -396,7 +396,8 @@ def _art_map_refresh(force=False):
             for a in lst:
                 am.setdefault(_akey(a), name)
             alts[_akey(name)] = [name] + lst
-        m.update(am)
+        for _k, _v in am.items():
+            m.setdefault(_k, _v)
         if m != _ART_STATE['map']:
             _art_disp_cache.clear()
         _ART_STATE['map'] = m
@@ -3224,6 +3225,8 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
                         row = c.execute("SELECT id, aliases FROM artists WHERE _ulower(name)=?", (yt_name.lower(),)).fetchone()
                         if not row:
                             continue
+                        if c.execute("SELECT 1 FROM artists WHERE _ulower(name)=? AND id!=?", (genius_name.lower(), row[0])).fetchone():
+                            continue
                         try:
                             aliases = _json.loads(row[1] or '[]')
                         except Exception:
@@ -5951,11 +5954,12 @@ def api_artists():
     out = [dict(r) for r in rows]
     if CFG.get('artist_use_main_name', True):
         owner = {}
+        _real_names = {_akey(r['name']) for r in out}
         for r in out:
             try:
                 for al in json.loads(r.get('aliases') or '[]'):
                     k = _akey(str(al))
-                    if k:
+                    if k and k not in _real_names:
                         owner.setdefault(k, r['id'])
             except Exception:
                 pass
