@@ -6043,10 +6043,11 @@ def api_artist_page(aid):
                     'appears_songs': appears, 'appears_albums': appears_albums})
 
 def _art_alias_clean(raw):
+    import unicodedata as _ud
     out, seen = [], set()
     for a in (raw or []):
-        t = str(a).strip()
-        k = t.lower()
+        t = ''.join(ch for ch in str(a) if _ud.category(ch) != 'Cf').strip()
+        k = _akey(t)
         if t and k not in seen:
             seen.add(k)
             out.append(t)
