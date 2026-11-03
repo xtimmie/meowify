@@ -35331,26 +35331,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })();
 
+  // only the gears that mirror the settings view animate (desktop sidebar + mobile tab), the top right one opens the popup and keeps its own static shape.
+  // a gear that is hidden in the current mode snaps instead of animating so the two never drift apart
+  const _gearTo = (cfg, duration) => ['gear-path', 'mobile-gear-path'].forEach(id => {
+    const p = document.getElementById(id);
+    if (p) MU.animateSpikyCircle(p, cfg, { duration: p.getClientRects().length ? duration : 1, easing: 'cubic-bezier(.2,0,.2,1)' });
+  });
   window.animateGear = function() {
-    const cfg = { cx: 12, cy: 12, outerR: 12, innerR: 7.5, spikes: 8, smooth: 0.55, holeR: 4 };
-    const opts = { duration: 300, easing: 'cubic-bezier(.2,0,.2,1)' };
-    const p1 = document.getElementById('gear-path');
-    if (p1) MU.animateSpikyCircle(p1, cfg, opts);
-    const p2 = document.getElementById('mobile-gear-path');
-    if (p2) MU.animateSpikyCircle(p2, cfg, opts);
-    const p3 = document.getElementById('topbar-gear-path');
-    if (p3) MU.animateSpikyCircle(p3, cfg, opts);
+    _gearTo({ cx: 12, cy: 12, outerR: 12, innerR: 7.5, spikes: 8, smooth: 0.55, holeR: 4 }, 300);
   };
 
   window.resetGear = function() {
-    const cfg = { cx: 12, cy: 12, outerR: 12, innerR: 6, spikes: 8, smooth: 1.0, holeR: 4 };
-    const opts = { duration: 380, easing: 'cubic-bezier(.2,0,.2,1)' };
-    const p1 = document.getElementById('gear-path');
-    if (p1) MU.animateSpikyCircle(p1, cfg, opts);
-    const p2 = document.getElementById('mobile-gear-path');
-    if (p2) MU.animateSpikyCircle(p2, cfg, opts);
-    const p3 = document.getElementById('topbar-gear-path');
-    if (p3) MU.animateSpikyCircle(p3, cfg, opts);
+    _gearTo({ cx: 12, cy: 12, outerR: 12, innerR: 6, spikes: 8, smooth: 1.0, holeR: 4 }, 380);
   };
 
 
