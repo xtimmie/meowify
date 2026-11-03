@@ -8327,6 +8327,7 @@ _DBX_SHARED_PREFS = frozenset([
     'theme_hue', 'theme_sat', 'theme_bri',
     'prev_restarts', 'dl_speed_single', 'dl_speed_batch',
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
+    'settings_nav', 'sidebar_layout', 'sidebar_hidden',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
     'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums',
 ])
@@ -14149,9 +14150,10 @@ textarea.inp{resize:none;min-height:40px;overflow:hidden}
 .set-pin{position:sticky;top:0;z-index:6;display:flex;justify-content:center;margin:0 -20px 6px;padding:14px 20px 12px;background:var(--color-surface-container);border-bottom:1px solid var(--line-container)}
 .set-mob-back{position:relative;overflow:hidden;display:flex;align-items:center;gap:4px;padding:6px 8px 6px 2px;margin-bottom:8px;cursor:pointer;color:var(--color-primary);font:var(--type-label-large);font-variation-settings:var(--fv-label);-webkit-tap-highlight-color:transparent;border:none;background:none;border-radius:var(--radius-sm)}
 
-@media (min-width:768px){
-  #nb-cfg{display:none!important}
-}
+html:not(.sb-cfg-tab) #nb-cfg{display:none!important}
+html.sb-cfg-tab #topbar-cfg-btn{display:none!important}
+.set-pc-shell.set-pc-tab{max-width:none;max-height:none;box-shadow:none;transform:none;transition:none}
+#vc:has(>.set-pc-tab){overflow:hidden}
 @media (max-width:767px){
   #topbar-cfg-btn{display:none!important}
 }
@@ -15335,7 +15337,7 @@ function updateMobileClass(){
   const app = document.getElementById('app');
   const was = app.classList.contains('mobile');
   const now = isMobile();
-  if (was !== now) { app.classList.toggle('mobile', now); try { applyLG(); } catch {} }
+  if (was !== now) { app.classList.toggle('mobile', now); try { applyLG(); } catch {} try { _sbApply(); } catch {} }
   return { was, now };
 }
 
@@ -24261,7 +24263,7 @@ let _dbxTabPollId = null;
 function _dbxTabIsOpen() {
   const _isMob = isMobile();
   if (_isMob) return S.view === 'settings' && window._settingsSection === 'dropbox sync';
-  return !!window._settingsPopupOpen && (window._settingsSection || 'playback') === 'dropbox sync';
+  return _setPc() && (window._settingsSection || 'playback') === 'dropbox sync';
 }
 function _startDbxTabPoll() {
   if (_dbxTabPollId) return;
@@ -32472,6 +32474,7 @@ async function loadData() {
     if (_chg('glass_alpha') || _chg('glass_blur') || _chg('rs_full_height')) applyGlass(cfg);
     if (_chg('nav_pill_slide')) applyNavPill();
     if (cfg.ui_design !== undefined && _chg('ui_design')) applyDesign(cfg.ui_design);
+    if (_chg('settings_nav') || _chg('sidebar_layout') || _chg('sidebar_hidden')) _sbApply();
     if (cfg.font_override !== undefined && _chg('font_override')) applyFontOverride(cfg.font_override);
     applyPlayerBtnVisibility();
     applyVolSliderOrientation();
@@ -33734,7 +33737,8 @@ function _setPrune(html) {
 
 function renderSettings() {
   if (S.view !== 'settings' && !window._settingsPopupOpen) return;
-  const _sq = ((!isMobile() && window._settingsPopupOpen) ? (window._setPopupQ || '') : (S.globalSearch || '')).trim().toLowerCase();
+  if (_settingsTabPc() && !document.getElementById('set-pc-content')) { renderSettingsPopupShell(); return; } // desktop tab mode: build the two pane shell inside the view first
+  const _sq = ((!isMobile() && _setPc()) ? (window._setPopupQ || '') : (S.globalSearch || '')).trim().toLowerCase();
   const D = window._DEPS || {};
 
   const rowDisabled = (title, reason, control) => {
@@ -33787,7 +33791,7 @@ function renderSettings() {
     </label>`;
 
   const _isMob = isMobile();
-  const _pcPopup = !_isMob && window._settingsPopupOpen;
+  const _pcPopup = !_isMob && _setPc();
   const _SUBS = { active: null };
   const _navChev = `<svg class="set-list-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
   const _setHead = (title, fn) => `<div class="set-head"><button class="set-back mu-ripple" aria-label="back" onclick="${fn}"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button><div class="set-head-title">${esc(title)}</div></div>`;
@@ -33844,7 +33848,7 @@ function renderSettings() {
 
   const _backBtn = (_isMob && !_mobSearchAll) ? _setHead(_activeSection || 'settings', 'setSettingsSection(null)') : '';
 
-  const _pcCloseBtn = _pcPopup ? `
+  const _pcCloseBtn = (_pcPopup && window._settingsPopupOpen) ? `
     <button class="set-pc-close mu-ripple" onclick="closeSettingsPopup()">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
     </button>` : '';
@@ -34066,6 +34070,15 @@ function renderSettings() {
             <select class="input" style="width:160px" onchange="saveSetting('ui_design',this.value).then(()=>{applyDesign(this.value);renderSettings();})">
               ${MU.designs()
                 .map(d=>`<option value="${d.id}" ${(CFG.ui_design||'material')===d.id?'selected':''}>${d.label.toLowerCase()}</option>`).join('')}
+            </select>
+            <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        `)}
+        ${isMobile() ? '' : row('settings page', 'popup window from the top right button, or a tab in the left sidebar', `
+          <div class="select-wrap" style="width:160px">
+            <select class="input" style="width:160px" onchange="const v=this.value;saveSetting('settings_nav',v).then(()=>{_sbApply();if(S.view==='settings'&&v!=='tab'){setView('library');setTimeout(openSettingsPopup,0);}else renderSettings();})">
+              <option value="popup" ${CFG.settings_nav !== 'tab' ? 'selected' : ''}>popup</option>
+              <option value="tab" ${CFG.settings_nav === 'tab' ? 'selected' : ''}>tab</option>
             </select>
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -34443,7 +34456,7 @@ async function _muPathApply(reset) {
 }
 
 function openSettingsPopup() {
-  if (isMobile()) { setView('settings'); return; }
+  if (isMobile() || CFG.settings_nav === 'tab') { setView('settings'); return; }
   if (!window._settingsSection || window._settingsSection === '_stats') window._settingsSection = 'playback';
   window._settingsPopupOpen = true;
   let ov = document.getElementById('set-pc-overlay');
@@ -34501,8 +34514,9 @@ function onSettingsPopupSearch(val) {
 }
 
 function renderSettingsPopupShell() {
-  const ov = document.getElementById('set-pc-overlay');
+  const ov = _settingsHostEl();
   if (!ov) return;
+  const tab = ov.id === 'vc';
   const active = window._settingsSection || 'playback';
   const items = `
     <div class="set-pc-item set-pc-search-item${active === '_search' ? ' active' : ''}" data-sec="_search" onclick="openSettingsPopupSearch()">
@@ -34520,7 +34534,7 @@ function renderSettingsPopupShell() {
       <span>stats</span>
     </div>`;
   ov.innerHTML = `
-    <div class="set-pc-shell">
+    <div class="set-pc-shell${tab ? ' set-pc-tab' : ''}">
       <div class="set-pc-sidebar">
         <div class="set-pc-sidebar-title">settings</div>
         ${items}
@@ -34882,8 +34896,30 @@ function _updatesHtml(row, rowDisabled) {
   return h;
 }
 
+// where the desktop two pane settings layout lives: the popup overlay, or the settings view itself when settings_nav is 'tab'. mobile always uses the single column page
+function _settingsTabPc() { return !isMobile() && S.view === 'settings' && CFG.settings_nav === 'tab' && !window._settingsPopupOpen; }
+function _setPc() { return !isMobile() && (!!window._settingsPopupOpen || (S.view === 'settings' && CFG.settings_nav === 'tab')); }
+function _settingsHostEl() { return window._settingsPopupOpen ? document.getElementById('set-pc-overlay') : (_settingsTabPc() ? document.getElementById('vc') : null); }
+// left sidebar nav items: the one place that decides which exist, their order and when they show. a future "customize sidebar" stores CFG.sidebar_layout (array of ids, order)
+// and CFG.sidebar_hidden (array of ids), and adds more descriptors here (playlists block, divider, custom links) without touching the render code
+var SB_ITEMS = {
+  library: { el: 'nb-lib' }, add: { el: 'nb-add' }, stats: { el: 'nb-stats' },
+  settings: { el: 'nb-cfg', show: () => !isMobile() && CFG.settings_nav === 'tab' },
+};
+var SB_DEFAULT = ['library', 'add', 'stats', 'settings'];
+function _sbApply() {
+  const sec = document.querySelector('#sidebar .nav-sec'); if (!sec) return;
+  const lay = Array.isArray(CFG.sidebar_layout) ? CFG.sidebar_layout : [], hid = Array.isArray(CFG.sidebar_hidden) ? CFG.sidebar_hidden : [];
+  const order = [...lay.filter(id => SB_ITEMS[id]), ...SB_DEFAULT.filter(id => !lay.includes(id))];
+  order.forEach(id => {
+    const d = SB_ITEMS[id], el = document.getElementById(d.el); if (!el) return;
+    sec.appendChild(el); // appendChild in order = reorder
+    el.style.display = (!hid.includes(id) && (!d.show || d.show())) ? '' : 'none';
+  });
+  document.documentElement.classList.toggle('sb-cfg-tab', !isMobile() && CFG.settings_nav === 'tab');
+}
 function _setScroller() {
-  return (window._settingsPopupOpen && !isMobile()) ? document.getElementById('set-pc-content') : document.getElementById('vc');
+  return _setPc() ? document.getElementById('set-pc-content') : document.getElementById('vc');
 }
 
 function setSettingsSub(id) {
@@ -35043,6 +35079,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     applyGlass(cfg);
     if (cfg.ui_design !== undefined) applyDesign(cfg.ui_design);
+    _sbApply();
   }
   renderPlNav();
   _refreshCurNormGain();
@@ -35226,7 +35263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'f': case 'F':
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          if (window._settingsPopupOpen) {
+          if (_setPc()) {
             openSettingsPopupSearch();
           } else {
             if (!S.globalSearchOpen) toggleGlobalSearch();
