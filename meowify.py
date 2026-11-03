@@ -20037,7 +20037,7 @@ function _applyCoverHue(col, fadeMs) {
   const slider = document.getElementById('hue-slider');
   const lbl = document.getElementById('hue-lbl');
   if (slider) slider.value = h;
-  if (lbl) lbl.textContent = h + 'deg';
+  if (lbl) lbl.textContent = h + 'deg ' + (col ? col.kind + ' oh' + Math.round(col.oh) + ' h' + Math.round(col.h) : 'null');
   _updateSatSliderDisabled();
 }
 
