@@ -8668,6 +8668,25 @@ def _dbx_merge_db(local_path, remote_path):
                     if nm_idx is not None:
                         for _lid, _lnm in c.execute("SELECT id, name FROM artists").fetchall():
                             _local_by_name.setdefault(_ulower(_lnm), _lid)
+                    al_idx = cols.index('aliases') if 'aliases' in cols else None
+                    _local_al = {}
+                    _al_upd = {}
+                    if al_idx is not None:
+                        _local_al = {_r[0]: (_r[1], _r[2]) for _r in c.execute("SELECT id, aliases, name FROM artists").fetchall()}
+                    def _al_union(tid, raw_json):
+                        if al_idx is None or tid not in _local_al or not raw_json:
+                            return
+                        try:
+                            rem_al = [str(x) for x in json.loads(raw_json)]
+                            cur_json, nm = _local_al[tid]
+                            cur_al = [str(x) for x in json.loads(cur_json or '[]')]
+                        except Exception:
+                            return
+                        merged = [a for a in _art_alias_clean(cur_al + rem_al) if _akey(a) != _akey(nm)]
+                        if {_akey(a) for a in merged} != {_akey(a) for a in cur_al}:
+                            _aj = json.dumps(merged, ensure_ascii=False)
+                            _local_al[tid] = (_aj, nm)
+                            _al_upd[tid] = _aj
                     del_rows = c.execute(
                         "SELECT target, MAX(ts) FROM sync_actions "
                         "WHERE action='artist_delete' GROUP BY target").fetchall()
@@ -8677,6 +8696,8 @@ def _dbx_merge_db(local_path, remote_path):
                         row = list(row)
                         if id_idx is not None and row[id_idx] in deleted_ts:
                             continue
+                        if al_idx is not None and id_idx is not None:
+                            _al_union(row[id_idx], row[al_idx])
                         if nm_idx is not None and id_idx is not None:
                             # unique index on lower(name): an artist the other device
                             # created independently has a different id but the same name.
@@ -8685,6 +8706,8 @@ def _dbx_merge_db(local_path, remote_path):
                             _key = _ulower(row[nm_idx])
                             _existing = _local_by_name.get(_key)
                             if _existing is not None and _existing != row[id_idx]:
+                                if al_idx is not None:
+                                    _al_union(_existing, row[al_idx])
                                 _artist_remap[row[id_idx]] = _existing
                                 continue
                             _local_by_name[_key] = row[id_idx]
@@ -8701,6 +8724,8 @@ def _dbx_merge_db(local_path, remote_path):
                             f'bio=COALESCE(artists.bio, excluded.bio)',
                             _batched_rows
                         )
+                    for _tid, _aj in _al_upd.items():
+                        c.execute("UPDATE artists SET aliases=? WHERE id=?", (_aj, _tid))
                     if deleted_ts:
                         c.executemany("DELETE FROM artists WHERE id=?",
                                       [(k,) for k in deleted_ts])
