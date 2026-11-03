@@ -2982,6 +2982,8 @@ def _upsert_song_artists(c, song_id, artist_str, feat_str, ytm_artists=None):
             _ytm_ch[_n.lower()] = _ch
 
     def _get_or_create_artist(name):
+        import unicodedata as _ud
+        name = ''.join(ch for ch in name if _ud.category(ch) != 'Cf').strip() or name
         key = name.lower()
         row = c.execute("SELECT id, ytm_channel_id FROM artists WHERE _ulower(name)=?", (key,)).fetchone()
         if row:
