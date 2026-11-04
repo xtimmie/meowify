@@ -30930,6 +30930,7 @@ function showModal(title, body, acts) {
     ov.addEventListener('mousedown', e => { if (e.target === ov) dismissModal(); });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && ov.classList.contains('open')) dismissModal();
+      else if (e.key === 'Enter' && ov.classList.contains('open')) _modalEnterSubmit(e, ov);
     });
     (document.getElementById('app') || document.body).appendChild(ov);
   }
@@ -30965,6 +30966,19 @@ window.meowifyBack = function () {
   } catch (e) { console.warn('meowifyBack', e); }
   return false;
 };
+
+function _modalEnterSubmit(e, ov) {
+  // enter inside a text field = click the popup's primary (filled) button
+  if (e.defaultPrevented || e.isComposing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target;
+  if (!t || t.tagName !== 'INPUT' || !ov.contains(t)) return;
+  if (!['text', 'search', 'number', 'url', 'email', 'password'].includes(t.type || 'text')) return;
+  if (t.hasAttribute('onkeydown')) return; // field already has its own enter behaviour (prompt, genius search)
+  const btn = [...ov.querySelectorAll('#macts .btn-fill:not([disabled])')].pop();
+  if (!btn) return;
+  e.preventDefault();
+  btn.click();
+}
 
 function closeModal() {
   const ov = document.getElementById('modal-overlay');
