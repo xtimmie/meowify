@@ -4223,6 +4223,13 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         if not meta['title']: meta['title'] = src_file.stem[:100]
 
         album     = meta.get('album') or info.get('album') or ''
+        # only trust an album tag for real ytm songs. soundcloud and plain yt videos have no real
+        # album, whatever is in that tag is uploader junk or a leftover status string
+        _ie0 = (info.get('ie_key') or info.get('extractor') or '').lower()
+        if ('soundcloud' in _ie0
+                or (is_video and not ytm_album)
+                or re.search(r'reinitializ|downloading\.\.\.|^untitled$', album, re.IGNORECASE)):
+            album = ''
         # _pre_track_num comes from the Genius-matched album_tracks row when
         # available - that's the verified album-correct track order. YouTube's
         # own info.get('track_number') is unverified per-video metadata and can
