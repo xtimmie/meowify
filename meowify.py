@@ -193,7 +193,7 @@ _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.envir
 _SCFG   = _HOME / "settings.json"
 _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_boost": False, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
-_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "artist_show_aliases": True, "hide_single_albums": True})
+_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -3165,6 +3165,9 @@ _RESOLVE_PRIORITY = {
     'release_date': ('genius', 'source'),
 }
 _GENIUS_APPLY_MIN = 0.70
+# fields where genius is authoritative even when it has nothing: genius splits producers etc out of the feats,
+# so empty genius feats means no feats, not 'fall back to the youtube list'
+_GENIUS_AUTHORITATIVE = {'featuring'}
 _GENIUS_KEEP = ('id', 'title', 'full_title', 'url', 'primary_artist', 'primary_artists',
                 'featured_artists', 'writer_artists', 'producer_artists', 'custom_performances',
                 'album', 'release_date_components', 'media', 'song_art_image_url',
@@ -3274,7 +3277,7 @@ def _genius_view(data, opts):
             out['artist'] = pa
     feat = ', '.join((a.get('name') or '').strip() for a in (data.get('featured_artists') or [])
                      if (a.get('name') or '').strip())
-    if feat:
+    if feat or 'featured_artists' in data:
         out['featuring'] = feat
     alb = ((data.get('album') or {}).get('name') or '').strip()
     if alb:
@@ -3319,7 +3322,24 @@ def _rebuild_song_credits(sid, data):
             c.execute("INSERT OR IGNORE INTO song_credits (song_id, role, name, artist_id, position) VALUES (?,?,?,?,?)",
                       (sid, role, name, ar[0] if ar else None, pos))
 
+_resolve_lock = threading.RLock()
+
 def resolve_song(sid, sync_artists=False):
+    # serialized so a genius thread and the download worker can never write stale display values over each other
+    with _resolve_lock:
+        return _resolve_song_impl(sid, sync_artists)
+
+def _resolve_all_songs(sync_artists=True):
+    """re-resolve every song that has a genius layer (setting toggled, peer data merged, trust rules changed)"""
+    with db() as c:
+        ids = [r[0] for r in c.execute("SELECT song_id FROM song_genius").fetchall()]
+    n = 0
+    for sid in ids:
+        if resolve_song(sid, sync_artists=sync_artists):
+            n += 1
+    return n
+
+def _resolve_song_impl(sid, sync_artists=False):
     """merge user edits > genius (if trusted) > source into the display columns. safe to call any time,
     songs without a source row and without a genius blob are left exactly as they are"""
     try:
@@ -3344,10 +3364,12 @@ def resolve_song(sid, sync_artists=False):
             except Exception:
                 gdata, gopts = None, {}
             if gdata and _genius_trusted({'confidence': gr[1], 'confirmed': gr[2]}):
-                gv = _genius_view(gdata, gopts)
+                with _cfg_lock:
+                    _use_g = CFG.get('genius_override', True)
+                gv = _genius_view(gdata, gopts) if _use_g else {}
             else:
                 gdata = None
-        if not src and not gv:
+        if not src and not gv and not gdata:
             return True
         def pick(field):
             for layer in _RESOLVE_PRIORITY[field]:
@@ -3355,7 +3377,7 @@ def resolve_song(sid, sync_artists=False):
                     if field in ue:
                         return ue[field]
                 elif layer == 'genius':
-                    if gv.get(field):
+                    if gv.get(field) or (field in _GENIUS_AUTHORITATIVE and field in gv):
                         return gv[field]
                 elif srcv.get(field):
                     return srcv[field]
@@ -8807,7 +8829,7 @@ _DBX_SHARED_PREFS = frozenset([
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
     'settings_nav', 'sidebar_layout', 'sidebar_hidden',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
-    'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums',
+    'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums', 'genius_override',
 ])
 
 def _dbx_push_prefs(dbx):
@@ -8902,6 +8924,8 @@ def _dbx_fix_song_artist_rows(c, cols, rows, remap):
 
 _DBX_FK_PARENTS = {
     'lyrics':         (('song_id', 'songs'),),
+    'song_source':    (('song_id', 'songs'),),
+    'song_genius':    (('song_id', 'songs'),),
     'album_tracks':   (('album_id', 'albums'),),
     'playlist_songs': (('playlist_id', 'playlists'), ('song_id', 'songs')),
     'play_events':    (('song_stats_id', 'song_stats'),),
@@ -8940,7 +8964,7 @@ def _dbx_merge_db(local_path, remote_path):
         rc = rem.cursor()
         tables_data = {}
         for tbl in ('songs', 'song_stats', 'play_events', 'playlists', 'playlist_songs',
-                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics', 'devices'):
+                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics', 'song_source', 'song_genius', 'devices'):
             try:
                 rc.execute(f'SELECT * FROM {tbl}')
                 rows = rc.fetchall()
@@ -9230,6 +9254,30 @@ def _dbx_merge_db(local_path, remote_path):
                         f'(lyrics.fetched_at IS NULL OR excluded.fetched_at > lyrics.fetched_at)',
                         rows
                     )
+                elif tbl == 'song_source':
+                    # raw source layer, last write wins by updated_at
+                    _sets = ', '.join(f'{k}=excluded.{k}' for k in cols if k != 'song_id')
+                    c.executemany(
+                        f'INSERT INTO song_source ({col_str}) VALUES ({placeholders}) '
+                        f'ON CONFLICT(song_id) DO UPDATE SET {_sets} '
+                        f'WHERE excluded.updated_at IS NOT NULL AND '
+                        f'(song_source.updated_at IS NULL OR excluded.updated_at > song_source.updated_at)',
+                        rows
+                    )
+                elif tbl == 'song_genius':
+                    # raw genius layer, last write wins by fetched_at, a user confirmation is never lost for the same match
+                    _sets = ', '.join(
+                        ("confirmed=CASE WHEN song_genius.genius_id=excluded.genius_id "
+                         "THEN MAX(song_genius.confirmed, excluded.confirmed) ELSE excluded.confirmed END")
+                        if k == 'confirmed' else f'{k}=excluded.{k}'
+                        for k in cols if k != 'song_id')
+                    c.executemany(
+                        f'INSERT INTO song_genius ({col_str}) VALUES ({placeholders}) '
+                        f'ON CONFLICT(song_id) DO UPDATE SET {_sets} '
+                        f'WHERE excluded.fetched_at IS NOT NULL AND '
+                        f'(song_genius.fetched_at IS NULL OR excluded.fetched_at > song_genius.fetched_at)',
+                        rows
+                    )
                 elif tbl == 'devices':
                     c.executemany(
                         f'INSERT INTO devices ({col_str}) VALUES ({placeholders}) '
@@ -9362,6 +9410,10 @@ def _dbx_merge_db(local_path, remote_path):
             merge_duplicate_stats(c)
     except Exception as e:
         _log_dbx.warning(f'[dbx merge] post-merge migrations err: {e}')
+    try:
+        _resolve_all_songs()
+    except Exception as e:
+        _log_dbx.warning(f'[dbx merge] resolve err: {e}')
     return _merge_ok
 
 # ── action log: deletions / membership / pref-resets ─────────────────────────
@@ -11747,12 +11799,18 @@ def api_set_cfg():
         resets = [k for k, v in data.items()
                   if k in _DBX_SHARED_PREFS and k in _DEFS
                   and v == _DEFS[k] and CFG.get(k) != v]
+        _go_old = CFG.get('genius_override', True)
         CFG.update(data)
         if any(k in _DBX_SHARED_PREFS for k in data):
             t = int(_time.time())
             CFG['_prefs_modified'] = t
             CFG['_prefs_local_modified'] = t
         save_cfg(CFG)
+    if 'genius_override' in data and bool(data['genius_override']) != bool(_go_old):
+        try:
+            _resolve_all_songs()
+        except Exception as _ge:
+            _log_genius.warning('genius_override re-resolve err: %s', _ge)
     for k in resets:
         _record_sync_action('pref_reset', k)
     return jsonify({'ok':True})
@@ -34713,6 +34771,7 @@ function renderSettings() {
         ${row('cover art bleed', 'nice colors around the currently playing song cover art :3', toggle('cover_art_bleed', CFG.cover_art_bleed, 'refreshBleed()'))}
         ${row('extra info on artist page', 'pull genius / youtube music stuff on artist pages (bio, top songs, discography, related). off = only your library', toggle('artist_extra_info', CFG.artist_extra_info))}
         ${row('use main artist name', 'always show an artist by their main name, aliases resolve to it everywhere. off = show names exactly as tagged', toggle('artist_use_main_name', CFG.artist_use_main_name !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('use genius metadata', 'show names, feats, album and release date from genius when a match exists, genius also splits producers out of the feats. off = show what youtube music or the file gave. nothing stored is changed, flip it any time', toggle('genius_override', CFG.genius_override !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
         ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('sync hue to cover', 'make interface colors match the song cover art', `
