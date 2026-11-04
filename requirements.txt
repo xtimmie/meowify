@@ -4,6 +4,7 @@ numpy
 miniaudio
 ytmusicapi
 dropbox
+certifi
 yt-dlp
 duckduckgo-search
 pillow
