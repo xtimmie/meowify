@@ -1667,6 +1667,14 @@ def _next_spotify_ua():
         _sp_ua_idx[0] = (_sp_ua_idx[0] + 1) % len(_UA_POOL)
         return _UA_POOL[_sp_ua_idx[0]]
 
+def _sp_ssl_ctx():
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl._create_unverified_context()
+
 def _spotify_track_info(track_url, retries=4):
     """resolve a spotify track url → {title, artist} via oembed + __NEXT_DATA__ + title tag"""
     import urllib.request, urllib.parse
@@ -1678,7 +1686,7 @@ def _spotify_track_info(track_url, retries=4):
                 'https://open.spotify.com/oembed?url=' + urllib.parse.quote(clean),
                 headers={'User-Agent': _next_spotify_ua()}
             )
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=10, context=_sp_ssl_ctx()) as r:
                 title = json.loads(r.read()).get('title', '').strip()
             break
         except Exception as e:
@@ -1707,7 +1715,7 @@ def _spotify_track_info(track_url, retries=4):
                         'Sec-Fetch-Site': 'none',
                         'Cache-Control': 'max-age=0',
                     })
-                with urllib.request.urlopen(embed_req, timeout=14) as r:
+                with urllib.request.urlopen(embed_req, timeout=14, context=_sp_ssl_ctx()) as r:
                     raw = r.read()
                     enc = r.headers.get('Content-Encoding', '')
                 if enc == 'gzip':
