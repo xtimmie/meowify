@@ -1699,7 +1699,7 @@ def _spotify_track_info(track_url, retries=4):
                         'User-Agent': ua,
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                         'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept-Encoding': 'gzip, deflate',
+                        'Accept-Encoding': 'gzip',
                         'Connection': 'keep-alive',
                         'Upgrade-Insecure-Requests': '1',
                         'Sec-Fetch-Dest': 'document',
@@ -1737,7 +1737,7 @@ def _spotify_track_info(track_url, retries=4):
                         try: entity = path(nd_data); break
                         except Exception: pass
                     if entity:
-                        if not title: title = (entity.get('name') or '').strip()
+                        if not title: title = (entity.get('name') or entity.get('title') or '').strip()
                         raw_artists = entity.get('artists', {})
                         items_list = raw_artists.get('items', []) if isinstance(raw_artists, dict) else (raw_artists or [])
                         names = []
@@ -1745,6 +1745,7 @@ def _spotify_track_info(track_url, retries=4):
                             n = (a.get('profile') or {}).get('name') or a.get('name', '')
                             if n: names.append(n)
                         if names: artist = ', '.join(names)
+                        elif entity.get('subtitle') and not artist: artist = str(entity.get('subtitle')).strip()
                         _log_spotify.debug(f'spotify __NEXT_DATA__: title={title!r} artist={artist!r}')
                 except Exception as _ne:
                     _log_spotify.warning('spotify next_data parse err: %s', _ne)
@@ -1771,6 +1772,13 @@ def _spotify_track_info(track_url, retries=4):
                         if not title: title = m2.group(1).strip()
                         artist = m2.group(2).strip()
 
+            if not title:
+                om = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html)
+                if om:
+                    from html import unescape as _unesc
+                    title = _unesc(om.group(1)).strip()
+            if not (title or artist):
+                _log_spotify.warning(f'spotify attempt {attempt+1}: nothing parsed, html={len(html)} chars, next_data={bool(nd)}, head={html[:120]!r}')
             _log_spotify.debug(f'spotify resolved: title={title!r} artist={artist!r}')
             if title or artist: break
         except Exception as e:
