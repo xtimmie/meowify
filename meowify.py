@@ -24720,6 +24720,26 @@ function albumHeader(alb, owned, total) {
   </div>`;
 }
 
+const _DL_HINT_KEYS = ['video_id', 'genius_track_id', 'is_video', 'ytm_album', 'ytm_track_num', 'ytm_track_title', 'is_batch', 'batch_id', 'spotify_url', 'confirm_video'];
+
+function _buildDlPayload(input, hints) {
+  const p = {query: String(input || '').trim()};
+  const h = hints || {};
+  for (const k of _DL_HINT_KEYS) {
+    const v = h[k];
+    if (v !== undefined && v !== null && v !== '') p[k] = v;
+  }
+  return p;
+}
+
+// single entry point for every download. res._payload is the exact payload that was sent (used for auto-retry)
+async function startDownload(input, hints) {
+  const payload = _buildDlPayload(input, hints);
+  const res = await api('POST', '/api/download', payload);
+  if (res && typeof res === 'object') res._payload = payload;
+  return res;
+}
+
 async function startGhostDownload(tid) {
   const btn = document.getElementById('gdl-btn-' + tid);
   const row = document.querySelector('[data-ghost-id="' + tid + '"]');
@@ -24728,9 +24748,7 @@ async function startGhostDownload(tid) {
   const td = await api('GET', '/api/album_tracks/' + tid);
   if (!td || td.error) { if (btn) { btn.disabled = false; btn.innerHTML = MEOW_ICONS.download; } return; }
   const q = td.search_query || td.title;
-  const payload = {query: q, genius_track_id: tid};
-  if (td.video_id) payload.video_id = td.video_id;
-  const res = await api('POST', '/api/download', payload);
+  const res = await startDownload(q, {genius_track_id: tid, video_id: td.video_id});
   if (res.error) { if (btn) { btn.disabled = false; btn.textContent = '!'; } return; }
   const did = res.download_id;
   _ops[did] = {status: 'pending', progress: 0};
@@ -27651,7 +27669,7 @@ async function _loadArtistYtmProfile(aid, artist) {
         : `<div style="width:40px;height:40px;border-radius:var(--radius-sm);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">♪</div>`;
       const badge = local
         ? `<div style="color:var(--color-primary);padding:0 4px;flex-shrink:0;display:flex;align-items:center">${MEOW_ICONS.check}</div>`
-        : (s.videoId ? `<button class="smenu-btn mu-ripple" title="download" style="flex-shrink:0;opacity:0.7" onclick="event.stopPropagation();api('POST','/api/download',{query:${JSON.stringify(s.title+' '+res.name)}}).then(r=>{if(r&&r.download_id){_ops[r.download_id]={status:'pending',progress:0};_updateGlobalProg();}});">${MEOW_ICONS.download}</button>` : '');
+        : (s.videoId ? `<button class=\"smenu-btn mu-ripple\" title=\"download\" style=\"flex-shrink:0;opacity:0.7\" onclick=\"event.stopPropagation();startDownload(${esc(JSON.stringify(s.title+' '+res.name))}).then(r=>{if(r&&r.download_id){_ops[r.download_id]={status:'pending',progress:0};_updateGlobalProg();}});\">${MEOW_ICONS.download}</button>` : '');
       const click = local ? `onclick="(()=>{const _i=S.viewSongs.findIndex(sg=>sg.id==='${local.id}');if(_i>=0)playFromList(S.viewSongs,_i);else playFromList([S.library.find(sg=>sg.id==='${local.id}')].filter(Boolean),0);})()"` : '';
       return `<div class="disco-row song-row ui-list-item mu-ripple" style="grid-template-columns:40px 1fr auto;gap:10px;padding:6px 8px;${local?'':'opacity:0.7;'}${hidden?'display:none;':''}" ${click}>
         ${cov}
@@ -27763,7 +27781,7 @@ async function _discoDownload(geniusSongId, title, artist, rowEl) {
   rowEl.dataset.dlState = 'loading';
   const dlBtn = rowEl.querySelector('[data-disco-dl]');
   if (dlBtn) { dlBtn.disabled = true; dlBtn.innerHTML = '...'; }
-  const res = await api('POST', '/api/download', {query: `${artist} ${title}`, genius_track_id: geniusSongId});
+  const res = await startDownload(`${artist} ${title}`, {genius_track_id: geniusSongId});
   if (res?.error) {
     rowEl.dataset.dlState = '';
     if (dlBtn) { dlBtn.disabled = false; dlBtn.innerHTML = MEOW_ICONS.download; }
@@ -28349,12 +28367,15 @@ async function startBatchDl(items) {
     const q = isObj ? (item.query || '') : item;
     const deezer_data = isObj ? (item.deezer_data || null) : null;
     const video_id = isObj ? (item.video_id || '') : '';
-    const payload = {query: q, is_batch: isBatch, batch_id: batchId, confirm_video: true};
-    if (video_id) payload.video_id = video_id;
-    if (isObj && item.spotify_url) payload.spotify_url = item.spotify_url;
-    if (isObj && item.is_video !== undefined) payload.is_video = item.is_video;
-    if (isObj && item.ytm_album) { payload.ytm_album = item.ytm_album; payload.ytm_track_num = item.ytm_track_num; payload.ytm_track_title = item.ytm_track_title; }
-    const res = await api('POST', '/api/download', payload);
+    const res = await startDownload(q, {
+      is_batch: isBatch, batch_id: batchId, confirm_video: true, video_id,
+      spotify_url: isObj ? item.spotify_url : undefined,
+      is_video: isObj ? item.is_video : undefined,
+      ytm_album: isObj ? item.ytm_album : undefined,
+      ytm_track_num: isObj && item.ytm_album ? item.ytm_track_num : undefined,
+      ytm_track_title: isObj && item.ytm_album ? item.ytm_track_title : undefined,
+    });
+    const payload = res && res._payload;
     if (res.error) continue;
     const did = res.download_id;
     _dlPanelItems[did] = {
@@ -28930,7 +28951,7 @@ async function pollDl(did, batchId) {
         item.error = null;
         item.statusLabel = `retrying (${item._retries}/${MAX_RETRIES})...`;
         _updateDlPanelBadge();
-        const res2 = await api('POST', '/api/download', item._payload);
+        const res2 = await startDownload(item._payload.query, item._payload);
         if (res2 && res2.download_id) {
           const newDid = res2.download_id;
           _dlPanelItems[newDid] = {...item, did: newDid};
