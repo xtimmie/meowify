@@ -3578,7 +3578,8 @@ def _await_video_confirm(did, cand, timeout=900):
     _dl(did, status='awaiting_confirm', video_candidate={
         'title': cand.get('title', ''), 'artist': cand.get('artist', ''),
         'thumbnail': cand.get('thumbnail', ''), 'duration': cand.get('duration'),
-        'url': cand.get('url', ''), 'video_id': cand.get('video_id', '')})
+        'url': cand.get('url', ''), 'video_id': cand.get('video_id', ''),
+        'source': cand.get('source', ''), 'uploader': cand.get('uploader', '')})
     ev.wait(timeout)
     with _vid_confirm_lock:
         act = (_vid_confirm.pop(did, None) or {}).get('action')
@@ -3833,6 +3834,59 @@ def _get_url_metadata(url):
         _log_library.warning('_get_url_metadata err: %s', _e)
     return {}
 
+_YT_ID_RE = re.compile(r'(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})')
+
+def _canon_dl_url(u):
+    """full url as source_id: no fragment, and no tracking query on soundcloud"""
+    u = (u or '').strip().split('#', 1)[0]
+    if 'soundcloud.com' in u:
+        u = u.split('?', 1)[0]
+    return u
+
+def _resolve_dl_source(q, video_id=''):
+    """source_id we can know before the download starts: bare video id hint,
+    youtube url -> 11 char id, any other url -> full canonical url, plain text -> None"""
+    vid = (video_id or '').strip()
+    if re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
+        return vid
+    qq = (q or '').strip()
+    if qq.startswith(('http://', 'https://')):
+        m = _YT_ID_RE.search(qq)
+        return m.group(1) if m else _canon_dl_url(qq)
+    return None
+
+def _find_dl_dup_by_source(source_id, sid):
+    """another library song (or in-flight placeholder) with the exact same source_id"""
+    if not source_id:
+        return None
+    with db() as c:
+        r = c.execute("SELECT id FROM songs WHERE source_id=? AND id!=? ORDER BY (source='downloading') LIMIT 1",
+                      (source_id, sid)).fetchone()
+    return r[0] if r else None
+
+def _pin_dl_source(sid, source_id):
+    """write source_id on the placeholder right away, return an exact-id duplicate if there is one"""
+    with db() as c:
+        c.execute("UPDATE songs SET source_id=? WHERE id=?", (source_id, sid))
+    return _find_dl_dup_by_source(source_id, sid)
+
+def _sc_search_preview(q):
+    """what scsearch1 would grab for this text, so the user can confirm before we download it"""
+    try:
+        r = _subrun(['yt-dlp', '--dump-json', '--no-playlist', '--', f'scsearch1:{q}'],
+                    capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and r.stdout.strip():
+            d = json.loads(r.stdout.strip().splitlines()[0])
+            url = _canon_dl_url(d.get('webpage_url') or d.get('original_url') or '')
+            if url.startswith('http'):
+                return {'title': d.get('title', ''), 'artist': d.get('artist') or d.get('uploader') or '',
+                        'uploader': d.get('uploader') or d.get('channel') or '',
+                        'thumbnail': d.get('thumbnail', ''), 'duration': d.get('duration'),
+                        'url': url, 'video_id': '', 'source': 'soundcloud'}
+    except Exception as _e:
+        _log_ytm.warning('sc preview err: %s', _e)
+    return None
+
 def _delete_placeholder(sid):
     """Delete a placeholder song that never got a real file (download failed)."""
     cover_path = None
@@ -3969,6 +4023,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         elif not is_url and q:
             pre_title = q[:200]
 
+        _pre_source_id = _resolve_dl_source(q, video_id)
         pre_cover = None
         pre_genius_id = None
         pre_album_id  = None
@@ -4044,6 +4099,11 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 if _ts > _DUP_TITLE_MIN and _as > _DUP_ARTIST_MIN:
                     _dup_sid = _cd[0]; break
 
+        # exact source_id match beats the fuzzy title check
+        _id_dup = _find_dl_dup_by_source(_pre_source_id, sid)
+        if _id_dup:
+            _dup_sid = _id_dup
+
         # insert placeholder - song appears in library immediately
         mkdirs()
         with db() as c:
@@ -4055,7 +4115,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 (sid, sync_id,
                  pre_title or (q[:100] if not is_url else 'downloading...'),
                  pre_artist, pre_album, None,
-                 '', pre_cover, 'downloading', None,
+                 '', pre_cover, 'downloading', _pre_source_id,
                  _now, _now, pre_album_id, _pre_track_num, 0, None, pre_genius_id))
 
         _dl(did, status='downloading', progress=5, song_id=sid, duplicate_sid=_dup_sid)
@@ -4149,6 +4209,14 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             except Exception as _ye:
                 _log_ytm.warning('ytm pre-search err: %s', _ye)
 
+        # ytm pre-search resolved an id for a text query: pin it now and re-check for an exact duplicate
+        if video_id_r and not _pre_source_id and re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id_r):
+            _pre_source_id = video_id_r
+            _id_dup = _pin_dl_source(sid, _pre_source_id)
+            if _id_dup:
+                _dup_sid = _id_dup
+                _dl(did, song_id=sid, duplicate_sid=_dup_sid)
+
         _cls_type = ''
         if is_url and not is_video:
             _cls_vid = video_id_r
@@ -4184,10 +4252,24 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                     _log_ytm.info('ytsearch: retrying with stripped query: %r', _q2)
                     time.sleep(1.5)
                     out, rc = ydl(f'ytsearch1:{_q2}')
-            # final fallback: soundcloud
+            # final fallback: soundcloud, only after the user confirms the exact upload
             if rc != 0 or _ydl_no_results(out):
                 _log_ytm.info('ytsearch: all retries failed, falling back to scsearch: %r', q)
-                out, rc = ydl(f'scsearch1:{q}', _no_yt_args=True)
+                _sc_prev = _sc_search_preview(q)
+                if not _sc_prev:
+                    rc = 1
+                elif _await_video_confirm(did, _sc_prev) != 'download':
+                    _delete_placeholder(sid)
+                    _dl(did, status='done', progress=100, song_id=sid, duplicate_sid=None, skipped=True)
+                    return
+                else:
+                    _pre_source_id = _sc_prev['url']
+                    _id_dup = _pin_dl_source(sid, _pre_source_id)
+                    if _id_dup:
+                        _dup_sid = _id_dup
+                        _dl(did, song_id=sid, duplicate_sid=_dup_sid)
+                    # download the exact url that was confirmed, not a second search
+                    out, rc = ydl(_sc_prev['url'], _no_yt_args=True)
 
         if rc != 0:
             _dl(did, status='error', error='download failed - check query or URL',
@@ -4430,12 +4512,16 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                      src_name, now, album_id, track_num, _yt_featuring or '', sid, sid))
             # store the video id we actually downloaded, overrides whatever enrichment guessed
             _dl_vid = info.get('id') or ''
-            if src_name in ('youtube', 'youtube_video') and re.fullmatch(r'[A-Za-z0-9_-]{11}', _dl_vid):
+            if src_name in ('youtube', 'youtube_video') and 'youtube' in _ie_key and re.fullmatch(r'[A-Za-z0-9_-]{11}', _dl_vid):
                 c.execute("UPDATE songs SET source_id=? WHERE id=?", (_dl_vid, sid))
                 if is_video:
                     # the downloaded video is the music video, link it so the mv feature has it from the start
                     c.execute("UPDATE songs SET mv_video_id=?, mv_url=? WHERE id=?",
                               (_dl_vid, f'https://www.youtube.com/watch?v={_dl_vid}', sid))
+            # soundcloud / other sites: full canonical url as source_id
+            _wp_url = _canon_dl_url(info.get('webpage_url') or '')
+            if 'youtube' not in _ie_key and _wp_url.startswith('http'):
+                c.execute("UPDATE songs SET source_id=? WHERE id=?", (_wp_url, sid))
             if spotify_url:
                 c.execute("UPDATE songs SET spotify_url=? WHERE id=?", (spotify_url, sid))
             _final = c.execute("SELECT title,artist,album,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
@@ -24214,9 +24300,10 @@ function showVideoConfirmPopup(did, c, batchId) {
       _answerVideoConfirm(did, action);
     };
     window._currentModalDone = done;
-    showModal('youtube video found',
+    const _sc = c.source === 'soundcloud';
+    showModal(_sc ? 'soundcloud track found' : 'youtube video found',
       `<p style="margin:0 0 12px;font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">
-        the best match for this track is a regular youtube video, not an official song - download it anyway?
+        ${_sc ? `nothing was found on youtube, the closest match is this soundcloud upload by <b>${esc(c.uploader||c.artist||'unknown')}</b> (<a href="${esc(c.url||'')}" target="_blank" rel="noopener">open on soundcloud</a>) - download it anyway?` : 'the best match for this track is a regular youtube video, not an official song - download it anyway?'}
        </p>
        <div class="search-track" style="cursor:default;background:var(--color-surface-container-high);border-radius:var(--radius-md);padding:10px;display:flex;align-items:center;gap:12px">
          <img src="${esc(c.thumbnail||'')}" onerror="this.style.display='none'" alt=""
