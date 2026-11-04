@@ -18220,7 +18220,6 @@ const S = {
   _chaosContext: [],       // snapshot of context songs when chaos started
   _chaosHistory: [],       // songs played before current, oldest first
   _chaosNext: null,        // pre-picked next song (materialized 1 ahead)
-  _chaosQueue: [],         // explicit play next / add to queue songs, played before the random pick
   _chaosOn: false,         // true while S.queue is the fake [current] queue chaos uses
   _chaosStash: null,       // the real queue from before chaos, handed back when chaos turns off
   gapless: true, volume: 0.8,
@@ -18600,23 +18599,20 @@ const _chaosRecentArtists = [];
 const CHAOS_ARTIST_WINDOW = 4;
 
 function _chaosReset() {
-  S._chaosOn = false; S._chaosStash = null; S._chaosQueue = [];
+  S._chaosOn = false; S._chaosStash = null;
   S._chaosContext = []; S._chaosPlayed = new Set(); S._chaosHistory = []; S._chaosNext = null;
   _chaosRecentArtists.length = 0;
 }
 
-// leave chaos: reset all chaos state and give the real queue back (current song first, pending play next songs after it,
-// then everything that was queued before chaos). returns the pending play next songs for callers that place them themselves
+// leave chaos: reset all chaos state and give the real queue back (current song first, then everything that was queued before chaos)
 function _chaosLeave() {
   const inLib = new Set(S.library.map(s => s.id));
   const base = (S._chaosStash && S._chaosStash.queue.length) ? S._chaosStash.queue : S._chaosContext;
-  const pending = S._chaosQueue.filter(s => inLib.has(s.id));
   const curId = S.cur && S.cur.id;
   const rest = base.filter(s => inLib.has(s.id) && s.id !== curId);
-  S.queue = [...(S.cur ? [S.cur] : []), ...pending, ...rest];
+  S.queue = [...(S.cur ? [S.cur] : []), ...rest];
   S.qi = 0;
   _chaosReset();
-  return pending;
 }
 
 function _chaosPickNext() {
@@ -18657,7 +18653,7 @@ function getNextSong() {
   if (!S.queue.length) return null;
   if (S.repeat === 'one') return S.queue[S.qi];
   if (S.shuffle && S.shuffleMode === 'chaos') {
-    return S._chaosQueue.length ? S._chaosQueue[0] : S._chaosNext;
+    return S._chaosNext;
   }
   const ni = S.qi + 1;
   if (ni >= S.queue.length) return S.repeat === 'all' ? S.queue[0] : null;
@@ -19039,8 +19035,7 @@ async function _doOnSongEnd(scheduledNid) {
 
   // chaos mode: advance using pre-picked next
   if (S.shuffle && S.shuffleMode === 'chaos') {
-    const _chFromQ = S._chaosQueue.length > 0;
-    const next = _chFromQ ? S._chaosQueue.shift() : S._chaosNext;
+    const next = S._chaosNext;
     if (!next) {
       // exhausted all songs (repeat:none, all played)
       S.isPlaying = false; S.cur = null;
@@ -19058,7 +19053,7 @@ async function _doOnSongEnd(scheduledNid) {
       const allPlayed = [...uniqueIds].every(id => S._chaosPlayed.has(id));
       if (allPlayed) { S._chaosPlayed = new Set([next.id]); S._chaosHistory = []; }
     }
-    if (!_chFromQ) S._chaosNext = _chaosPickNext();
+    S._chaosNext = _chaosPickNext();
     S.queue = [next];
     S.qi = 0;
     S.cur = next; S.isPlaying = true;
@@ -19134,9 +19129,8 @@ function _applyContinueFrom() {
   if (keep) engine.nxt = null;
   const _ch = S.shuffle && S.shuffleMode === 'chaos';
   const _chHist = _ch ? [...S._chaosHistory, ...(S.cur ? [S.cur] : [])] : null;
-  const _chQ = _ch ? [...S._chaosQueue] : null;
   buildQueue(songs, idx, p.source);
-  if (_ch) { S._chaosHistory = _chHist; S._chaosQueue = _chQ; }
+  if (_ch) S._chaosHistory = _chHist;
   if (keep) engine.nxt = keep;
   return S.queue[S.qi];
 }
@@ -19250,7 +19244,7 @@ async function prevSong() {
           const prev = S._chaosHistory.pop();
           _fireSkip(_skippedSong, 'backbtn');
           window._nextReasonStart = 'backbtn';
-          if (S._chaosQueue.length) S._chaosQueue.unshift(S.cur); else S._chaosNext = S.cur;
+          S._chaosNext = S.cur;
           engine._stopNxt();
           S.queue = [prev];
           S.qi = 0;
@@ -19298,8 +19292,7 @@ async function nextSong() {
       window._nextReasonStart = 'fwdbtn';
       { const _cf = _applyContinueFrom(); if (_cf) { S.cur = _cf; await playSong(S.cur); if (S.queueOpen) renderQueueSidebar(); return; } }
       if (S.shuffle && S.shuffleMode === 'chaos') {
-        const _chFromQ = S._chaosQueue.length > 0;
-        const next = _chFromQ ? S._chaosQueue.shift() : S._chaosNext;
+        const next = S._chaosNext;
         if (!next) return;
         if (S.cur) S._chaosHistory.push(S.cur);
         S._chaosPlayed.add(next.id);
@@ -19310,7 +19303,7 @@ async function nextSong() {
           const allPlayed = [...uniqueIds].every(id => S._chaosPlayed.has(id));
           if (allPlayed) { S._chaosPlayed = new Set([next.id]); S._chaosHistory = []; }
         }
-        if (!_chFromQ) S._chaosNext = _chaosPickNext();
+        S._chaosNext = _chaosPickNext();
         S.queue = [next];
         S.qi = 0;
         S.cur = next;
@@ -19349,7 +19342,6 @@ function _shuffleRemaining() {
       S._chaosContext = [...S.queue];
       S._chaosPlayed = curId ? new Set([curId]) : new Set();
       S._chaosHistory = [];
-      S._chaosQueue = [];
       _chaosRecentArtists.length = 0;
       S._chaosOn = true;
       S.queue = S.cur ? [S.cur] : [];
@@ -19442,8 +19434,8 @@ function toggleShuffle() {
   if (S.shuffle) {
     _shuffleRemaining();
   } else {
-    // leaving chaos: reset chaos state, pending play next songs get placed right after current below
-    const _chPend = S._chaosOn ? _chaosLeave() : [];
+    // leaving chaos: reset chaos state (queue gets rebuilt below, or by _chaosLeave if there is no snapshot)
+    if (S._chaosOn) _chaosLeave();
     // unshuffle: restore initial source order from the snapshot taken in buildQueue
     // filter out songs no longer in the library (deleted), but don't restrict to current
     // flow-pruned queue - flow deletions only apply during shuffle playback
@@ -19458,7 +19450,6 @@ function toggleShuffle() {
       S.queue = ordered;
       S.qi = curId ? Math.max(0, ordered.findIndex(s => s.id === curId)) : 0;
       S.cur = S.queue[S.qi] || null;
-      if (_chPend.length) S.queue.splice(S.qi + 1, 0, ..._chPend);
     }
   }
   updateHighlights();
@@ -23241,7 +23232,8 @@ function _queueNextChanged() {
 function _qPlayNext(songs) {
   if (!songs.length) return;
   if (S.shuffle && S.shuffleMode === 'chaos') {
-    S._chaosQueue = [...songs, ...S._chaosQueue];
+    // chaos: the song replaces the pre-picked random next (first one if several are selected)
+    S._chaosNext = songs[0];
     _queueNextChanged();
     if (S.queueOpen) renderQueueSidebar();
     return;
@@ -23252,8 +23244,11 @@ function _qPlayNext(songs) {
 function _qAddToQueue(songs) {
   if (!songs.length) return;
   if (S.shuffle && S.shuffleMode === 'chaos') {
-    S._chaosQueue = [...S._chaosQueue, ...songs];
-    _queueNextChanged();
+    // chaos: add to the pool it randomizes from (songs already in the pool are skipped)
+    const _inPool = new Set(S._chaosContext.map(s => s.id));
+    const _fresh = songs.filter(s => !_inPool.has(s.id));
+    S._chaosContext.push(..._fresh);
+    if (S._chaosStash) S._chaosStash.queue.push(..._fresh);
     if (S.queueOpen) renderQueueSidebar();
     return;
   }
@@ -23371,10 +23366,7 @@ function renderQueueSidebar() {
     }
     const cur = S.cur || S.queue[0];
     const history = S._chaosHistory || [];
-    const ups = S._continueFrom
-      ? [S._continueFrom.start, ...S._chaosQueue]
-      : [...S._chaosQueue, ...(S._chaosNext ? [S._chaosNext] : [])];
-    const next = ups[0];
+    const next = S._chaosNext;
     let rowsHtml = '';
     history.forEach((s, hi) => {
       const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
@@ -23400,16 +23392,6 @@ function renderQueueSidebar() {
         + '<div class="sdur">' + (next.duration ? fmt(next.duration) : '') + '</div>'
         + '</div>';
     }
-    ups.slice(1).forEach(s => {
-      const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
-      rowsHtml +=
-        '<div class="song-row" style="grid-template-columns:28px 40px 1fr auto;gap:8px;padding:6px 8px;align-items:center;display:grid;border-radius:var(--radius-md);opacity:0.55;width:100%;min-width:0">'
-        + '<div class="snum" style="display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="opacity:0.5"><path d="M8 5v14l11-7z"/></svg></div>'
-        + '<div class="sthumb" style="width:36px;height:36px;font-size:16px;background:var(--color-surface-container-high);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">' + cov + '</div>'
-        + '<div class="sinfo" style="overflow:hidden"><div class="stitle">' + esc(s.title || 'untitled') + '</div><div class="sartist">' + esc(s.artist || '') + '</div></div>'
-        + '<div class="sdur">' + (s.duration ? fmt(s.duration) : '') + '</div>'
-        + '</div>';
-    });
     // patch instead of rebuild: history rows never change, so only the rows from the first difference on get replaced
     const _rows = rowsHtml.split(/(?=<div class="song-row)/).filter(Boolean);
     const _list = inner.firstElementChild;
@@ -32671,7 +32653,6 @@ async function loadData() {
   if (S._continueFrom && _libById.has(S._continueFrom.startId)) S._continueFrom.start = _libById.get(S._continueFrom.startId);
   if (S._chaosNext && _libById.has(S._chaosNext.id)) S._chaosNext = _libById.get(S._chaosNext.id);
   if (Array.isArray(S._chaosHistory)) S._chaosHistory = S._chaosHistory.filter(s => _libById.has(s.id)).map(s => _libById.get(s.id));
-  if (Array.isArray(S._chaosQueue)) S._chaosQueue = S._chaosQueue.filter(s => _libById.has(s.id)).map(s => _libById.get(s.id));
   if (oldCurId) {
     const newQi = S.queue.findIndex(s => s.id === oldCurId);
     S.qi = newQi !== -1 ? newQi : Math.max(0, Math.min(S.qi, S.queue.length - 1));
