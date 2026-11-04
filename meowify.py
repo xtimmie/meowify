@@ -32066,6 +32066,7 @@ function _applyDesignImpl(design) {
   @media (hover: hover) {body.design-glassy .search-track:hover{background:var(--glass-bg-hi)!important}}
   body.design-glassy .dl-item{background:var(--glass-bg-mid)!important;border-color:var(--glass-border)!important}
   body.design-glassy .set-section{background:var(--glass-bg-mid)!important}
+  body.design-glassy .set-pc-shell.set-pc-tab{background:none!important}
   body.design-glassy .set-list-item.active{background:color-mix(in oklch,var(--color-primary) 14%,rgba(255,255,255,.04))!important}
   body.design-glassy .set-pc-shell:not(.set-pc-tab){background:var(--glass-bg-mid)!important;border:1px solid var(--glass-border-hi)}
   body.design-glassy .mob-tab{transition:color var(--dur-2)}
