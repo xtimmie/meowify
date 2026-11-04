@@ -3563,6 +3563,24 @@ def _ytm_enrich(sid, video_id=None):
 # ── download manager ───────────────────────────────────────────────────────────
 _dls     = {}
 _dl_lock = threading.Lock()
+_vid_confirm = {}  # did -> {'ev': Event, 'action': 'download'|'skip'|None}
+_vid_confirm_lock = threading.Lock()
+
+def _await_video_confirm(did, cand, timeout=900):
+    """park the worker until the ui answers the 'this is a yt video, not a song' popup.
+    returns 'download' or 'skip' (timeout = skip)"""
+    ev = threading.Event()
+    with _vid_confirm_lock:
+        _vid_confirm[did] = {'ev': ev, 'action': None}
+    _dl(did, status='awaiting_confirm', video_candidate={
+        'title': cand.get('title', ''), 'artist': cand.get('artist', ''),
+        'thumbnail': cand.get('thumbnail', ''), 'duration': cand.get('duration'),
+        'url': cand.get('url', ''), 'video_id': cand.get('video_id', '')})
+    ev.wait(timeout)
+    with _vid_confirm_lock:
+        act = (_vid_confirm.pop(did, None) or {}).get('action')
+    _dl(did, status='downloading', video_candidate=None)
+    return act or 'skip'
 _stats_upsert_lock = threading.Lock()
 _export_tokens = {}
 _cfg_lock      = threading.Lock()
@@ -3829,7 +3847,7 @@ def _delete_placeholder(sid):
     if deleted:
         _safe_remove_cover(cover_path, exclude_song_id=sid)
 
-def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=False, is_video=False, ytm_album=None, ytm_track_num=0, ytm_track_title='', batch_id=None, spotify_url=None):
+def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=False, is_video=False, ytm_album=None, ytm_track_num=0, ytm_track_title='', batch_id=None, spotify_url=None, confirm_video=False):
     import tempfile, random as _rnd
     with _cfg_lock:
         _pname = CFG.get('dl_speed_batch' if is_batch else 'dl_speed_single',
@@ -4113,6 +4131,12 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                     video_id_r = _sr_top['video_id']
                     _sr_is_video = _sr_top.get('result_type') == 'video'
                     if _sr_is_video:
+                        with _cfg_lock:
+                            _cv = CFG.get('confirm_video_dl', True)
+                        if _cv and confirm_video and _await_video_confirm(did, _sr_top) != 'download':
+                            _delete_placeholder(sid)
+                            _dl(did, status='done', progress=100, song_id=sid, duplicate_sid=None, skipped=True)
+                            return
                         is_video = True
                     # stash raw ytmusicapi artist dicts (have .id = channel_id) for later
                     _dl(did, _ytm_artists=_sr_top.get('_ytm_artists') or [])
@@ -6606,7 +6630,7 @@ def api_dl():
     with _dl_lock:
         _dls[did] = {'status': 'pending', 'progress': 0, 'error': None, 'song_id': None, 'query': q or video_id}
     threading.Thread(target=_run_dl, args=(did, q, fmt, quality, genius_track_id, video_id),
-                     kwargs={'is_video': is_video, 'ytm_album': ytm_album, 'ytm_track_num': int(ytm_track_num or 0), 'ytm_track_title': ytm_track_title, 'is_batch': is_batch, 'batch_id': batch_id, 'spotify_url': spotify_url},
+                     kwargs={'is_video': is_video, 'ytm_album': ytm_album, 'ytm_track_num': int(ytm_track_num or 0), 'ytm_track_title': ytm_track_title, 'is_batch': is_batch, 'batch_id': batch_id, 'spotify_url': spotify_url, 'confirm_video': bool(data.get('confirm_video', False))},
                      daemon=True).start()
     return jsonify({'download_id': did})
 
@@ -6626,6 +6650,17 @@ def api_dl_batch():
         threading.Thread(target=_run_dl, args=(did,q,fmt,quality), kwargs={'is_batch':True, 'batch_id':batch_id}, daemon=True).start()
         ids.append(did)
     return jsonify({'download_ids': ids})
+
+@app.route('/api/download/<did>/video-confirm', methods=['POST'])
+def api_dl_video_confirm(did):
+    act = 'download' if (request.json or {}).get('action') == 'download' else 'skip'
+    with _vid_confirm_lock:
+        w = _vid_confirm.get(did)
+        if w:
+            w['action'] = act
+    if w:
+        w['ev'].set()
+    return jsonify({'ok': bool(w)})
 
 @app.route('/api/download/<did>')
 def api_dl_status(did):
@@ -24124,6 +24159,49 @@ function _queuedCloseModal(done) {
   done();
 }
 
+async function _answerVideoConfirm(did, action) {
+  await api('POST', '/api/download/' + did + '/video-confirm', {action});
+}
+
+function showVideoConfirmPopup(did, c, batchId) {
+  const pre = _getBatchOverride(batchId, 'video_dl');
+  if (pre) { _answerVideoConfirm(did, pre); return; }
+  _queueModal((done) => {
+    // apply-all may have been ticked on an earlier popup while this one was queued
+    const late = _getBatchOverride(batchId, 'video_dl');
+    if (late) { _answerVideoConfirm(did, late); done(); return; }
+    const key = '_vidResolve_' + did.replace(/-/g, '');
+    const applyAllId = 'vid-apply-all-' + Math.random().toString(36).slice(2);
+    const dur = c.duration ? Math.floor(c.duration / 60) + ':' + String(Math.round(c.duration % 60)).padStart(2, '0') : '';
+    window[key] = (action) => {
+      if (document.getElementById(applyAllId)?.checked) _setBatchOverride(batchId, 'video_dl', action);
+      _queuedCloseModal(done);
+      delete window[key];
+      _answerVideoConfirm(did, action);
+    };
+    window._currentModalDone = done;
+    showModal('youtube video found',
+      `<p style="margin:0 0 12px;font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">
+        the best match for this track is a regular youtube video, not an official song - download it anyway?
+       </p>
+       <div class="search-track" style="cursor:default;background:var(--color-surface-container-high);border-radius:var(--radius-md);padding:10px;display:flex;align-items:center;gap:12px">
+         <img src="${esc(c.thumbnail||'')}" onerror="this.style.display='none'" alt=""
+              style="width:48px;height:48px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">
+         <div style="overflow:hidden;flex:1">
+           <div style="font:var(--type-body-medium);font-variation-settings:var(--fv-body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title||'')}</div>
+           <div style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.artist||'')}${dur ? ' · ' + dur : ''}</div>
+         </div>
+       </div>
+       ${batchId ? `<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);cursor:pointer">
+         <input type="checkbox" id="${applyAllId}" style="width:15px;height:15px;cursor:pointer">
+         apply for all downloading songs
+       </label>` : ''}`,
+      `<button class="btn btn-out mu-ripple" onclick="window['${key}']('skip')">skip</button>
+       <button class="btn btn-fill mu-ripple" onclick="window['${key}']('download')">download</button>`
+    );
+  });
+}
+
 function showGeniusCandidatePopup(sid, candidates, batchId) {
   const top = candidates[0];
   if (!top) return;
@@ -28150,7 +28228,7 @@ async function startBatchDl(items) {
     const q = isObj ? (item.query || '') : item;
     const deezer_data = isObj ? (item.deezer_data || null) : null;
     const video_id = isObj ? (item.video_id || '') : '';
-    const payload = {query: q, is_batch: isBatch, batch_id: batchId};
+    const payload = {query: q, is_batch: isBatch, batch_id: batchId, confirm_video: true};
     if (video_id) payload.video_id = video_id;
     if (isObj && item.spotify_url) payload.spotify_url = item.spotify_url;
     if (isObj && item.is_video !== undefined) payload.is_video = item.is_video;
@@ -28656,6 +28734,7 @@ async function pollDl(did, batchId) {
   let _libAdded = false;
   let _dupHandled = false;
   let _geniusPopupShown = false;
+  let _vidConfirmShown = false;
 
   for (let i = 0; i < 300; i++) {
     await new Promise(r => setTimeout(r, 1200));
@@ -28667,7 +28746,8 @@ async function pollDl(did, batchId) {
       delete _ops[did]; _updateGlobalProg();
       return;
     }
-    const _lbl = s.status === 'fetching_metadata' ? 'fetching metadata'
+    const _lbl = s.status === 'awaiting_confirm' ? 'waiting for confirmation'
+               : s.status === 'fetching_metadata' ? 'fetching metadata'
                : s.status === 'enriching' ? 'fetching metadata' : 'downloading';
     if (_dlPanelItems[did]) {
       _dlPanelItems[did].status = s.status;
@@ -28690,7 +28770,12 @@ async function pollDl(did, batchId) {
       rerenderCurrentView();
     }
 
-    if (s.genius_candidates && s.genius_candidates.length && s.song_id && !_geniusPopupShown) {
+    if (s.status === 'awaiting_confirm') i = Math.max(0, i - 1);  // don't burn poll budget while the user decides
+    if (s.status === 'awaiting_confirm' && s.video_candidate && !_vidConfirmShown) {
+      _vidConfirmShown = true;
+      showVideoConfirmPopup(did, s.video_candidate, batchId);
+    }
+    if (s.genius_candidates && s.genius_candidates.length && s.song_id && !_geniusPopupShown && !s.skipped) {
       _geniusPopupShown = true;
       showGeniusCandidatePopup(s.song_id, s.genius_candidates, batchId);
     }
@@ -28708,7 +28793,7 @@ async function pollDl(did, batchId) {
     if (s.status === 'done') {
       if (s.song_id) _activeDownloadWipes.delete(s.song_id);
       await loadData(); rerenderCurrentView();
-      if (_dlPanelItems[did]) { _dlPanelItems[did].status = 'done'; _dlPanelItems[did].progress = 100; }
+      if (_dlPanelItems[did]) { _dlPanelItems[did].status = 'done'; _dlPanelItems[did].progress = 100; if (s.skipped) _dlPanelItems[did].label += ' \u00b7 skipped'; }
       _updateDlPanelBadge();
       delete _ops[did]; _updateGlobalProg();
       return;
@@ -34463,6 +34548,7 @@ function renderSettings() {
             </div>
           `);
         })()}
+        ${row('confirm youtube videos', 'when a track gets auto-resolved from title + artist and the best match is a youtube video (not a song), ask before downloading', toggle('confirm_video_dl', CFG.confirm_video_dl !== false))}
         ${row('storage folder', 'where music and data files are kept (you should probably leave that alone)', `
           <input class="input" value="${esc(CFG.data_dir||'')}" style="width:240px;text-align:right;padding:10px 14px" onchange="saveSetting('data_dir',this.value)">
         `)}
