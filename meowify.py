@@ -1118,6 +1118,28 @@ def init_db():
                 PRIMARY KEY (song_id, role, name)
             );
             CREATE INDEX IF NOT EXISTS idx_song_credits_song ON song_credits(song_id);
+            CREATE TABLE IF NOT EXISTS song_source (
+                song_id      TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+                origin       TEXT,
+                title        TEXT,
+                artist       TEXT,
+                featuring    TEXT,
+                album        TEXT,
+                release_date TEXT,
+                video_type   TEXT,
+                artists_json TEXT,
+                user_edits   TEXT,
+                updated_at   INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS song_genius (
+                song_id    TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+                genius_id  TEXT,
+                confidence REAL,
+                confirmed  INTEGER DEFAULT 0,
+                opts       TEXT,
+                data       TEXT,
+                fetched_at INTEGER
+            );
         """)
 
         # songs_display columns - these were added to the view's SELECT list
@@ -3130,7 +3152,242 @@ def _upsert_song_artists(c, song_id, artist_str, feat_str, ytm_artists=None):
             (song_id, aid, 'featuring', pos)
         )
 
-def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
+# -- layered song metadata ----------------------------------------------------
+# song_source: raw ytm / yt-dlp / soundcloud data + user edits, genius never touches it
+# song_genius: raw trimmed genius song json, only ever replaced on refetch
+# resolve_song(): the single place that merges the layers into the display columns
+# songs.title / artist / featuring_artists / album / release_date (derived, rebuildable)
+_RESOLVE_PRIORITY = {
+    'title':        ('user', 'genius', 'source'),
+    'artist':       ('user', 'genius', 'source'),
+    'featuring':    ('user', 'genius', 'source'),
+    'album':        ('genius', 'source'),
+    'release_date': ('genius', 'source'),
+}
+_GENIUS_APPLY_MIN = 0.70
+_GENIUS_KEEP = ('id', 'title', 'full_title', 'url', 'primary_artist', 'primary_artists',
+                'featured_artists', 'writer_artists', 'producer_artists', 'custom_performances',
+                'album', 'release_date_components', 'media', 'song_art_image_url',
+                'header_image_thumbnail_url', 'language')
+
+def _genius_trusted(g):
+    """second check, runs every time the layers are resolved (the first one is the search
+    threshold before a genius match is stored at all). kept as its own function so the
+    trust rules can get smarter later without touching any stored data"""
+    if g.get('confirmed'):
+        return True
+    cf = g.get('confidence')
+    return cf is None or cf >= _GENIUS_APPLY_MIN
+
+def _info_release_date(info):
+    rd = str(info.get('release_date') or '')
+    if re.fullmatch(r'\d{8}', rd):
+        return f'{rd[:4]}-{rd[4:6]}-{rd[6:]}'
+    ry = info.get('release_year')
+    return str(ry) if ry else None
+
+def _save_song_source(sid, title=None, artist=None, featuring=None, album=None,
+                      release_date=None, origin=None, video_type=None, artists_json=None):
+    """upsert the raw source layer. None keeps the stored value. the first call for a song
+    with no source row snapshots the current columns (old songs: whatever is in there counts as source)"""
+    now = int(time.time())
+    with db() as c:
+        if not c.execute("SELECT 1 FROM song_source WHERE song_id=?", (sid,)).fetchone():
+            r = c.execute("SELECT title,artist,featuring_artists,album,release_date FROM songs WHERE id=?", (sid,)).fetchone()
+            if not r:
+                return
+            c.execute("INSERT INTO song_source (song_id,origin,title,artist,featuring,album,release_date,updated_at)"
+                      " VALUES (?,?,?,?,?,?,?,?)", (sid, 'snapshot', r[0], r[1], r[2], r[3], r[4], now))
+        sets, vals = [], []
+        for col, v in (('title', title), ('artist', artist), ('featuring', featuring), ('album', album),
+                       ('release_date', release_date), ('origin', origin), ('video_type', video_type),
+                       ('artists_json', artists_json)):
+            if v is not None:
+                sets.append(col + '=?'); vals.append(v)
+        sets.append('updated_at=?'); vals += [now, sid]
+        c.execute("UPDATE song_source SET " + ', '.join(sets) + " WHERE song_id=?", vals)
+
+def _set_song_user_edits(sid, updates):
+    """manual edits live in their own json cell on the source row so resolve never loses them"""
+    m = {'title': 'title', 'artist': 'artist', 'featuring_artists': 'featuring'}
+    ed = {m[k]: (v or '') for k, v in updates.items() if k in m}
+    if not ed:
+        return
+    _save_song_source(sid)
+    with db() as c:
+        r = c.execute("SELECT user_edits FROM song_source WHERE song_id=?", (sid,)).fetchone()
+        if not r:
+            return
+        try:
+            cur = json.loads(r[0]) if r[0] else {}
+        except Exception:
+            cur = {}
+        cur.update(ed)
+        c.execute("UPDATE song_source SET user_edits=? WHERE song_id=?", (json.dumps(cur), sid))
+
+def _store_song_genius(sid, song_data, confidence=None, confirmed=False, skip_title=False):
+    keep = {k: song_data[k] for k in _GENIUS_KEEP if k in song_data}
+    with db() as c:
+        c.execute(
+            "INSERT INTO song_genius (song_id,genius_id,confidence,confirmed,opts,data,fetched_at)"
+            " VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(song_id) DO UPDATE SET genius_id=excluded.genius_id, confidence=excluded.confidence,"
+            " confirmed=CASE WHEN song_genius.genius_id=excluded.genius_id"
+            "   THEN MAX(song_genius.confirmed, excluded.confirmed) ELSE excluded.confirmed END,"
+            " opts=excluded.opts, data=excluded.data, fetched_at=excluded.fetched_at",
+            (sid, str(song_data.get('id', '')), confidence, 1 if confirmed else 0,
+             json.dumps({'skip_title': bool(skip_title)}), json.dumps(keep), int(time.time())))
+
+_CREDIT_ROLE_ALIASES = {
+    'Producer':           ('producer', 'producedby', 'prod', 'production'),
+    'Executive Producer': ('executiveproducer', 'execproducer', 'exproducer'),
+    'Writer':             ('writer', 'writtenby', 'songwriter', 'songwriting', 'written'),
+    'Composer':           ('composer', 'composedby', 'composition'),
+    'Lyricist':           ('lyricist', 'lyricsby'),
+    'Mixing Engineer':    ('mixingengineer', 'mixedby', 'mixing', 'mixengineer', 'mix', 'mixer'),
+    'Mastering Engineer': ('masteringengineer', 'masteredby', 'mastering', 'masterengineer', 'masteringby'),
+    'Recording Engineer': ('recordingengineer', 'recordedby', 'recording', 'engineer', 'engineering', 'recordingby'),
+    'Vocals':             ('vocal', 'leadvocal'),
+    'Background Vocals':  ('backgroundvocal', 'backingvocal', 'additionalvocal'),
+    'Label':              ('label', 'recordlabel'),
+    'Publisher':          ('publisher', 'publishedby', 'publishing'),
+    'Distributor':        ('distributor', 'distributedby', 'distribution'),
+}
+_CREDIT_ROLE_LOOKUP = {a: role for role, al in _CREDIT_ROLE_ALIASES.items() for a in al}
+
+def _canon_credit_role(label):
+    """genius labels are free text (producer / Producers / Produced by ...). unknown labels are kept as written"""
+    raw = (label or '').strip()
+    k = re.sub(r'[^a-z]', '', raw.lower())
+    if len(k) > 4 and k.endswith('s') and not k.endswith('ss'):
+        k = k[:-1]
+    return _CREDIT_ROLE_LOOKUP.get(k, raw)
+
+def _genius_view(data, opts):
+    """display candidates out of the raw genius blob. what is allowed per song lives in opts"""
+    out = {}
+    if not (opts or {}).get('skip_title'):
+        if data.get('title'):
+            out['title'] = clean_title(data['title'])
+        pa = ((data.get('primary_artist') or {}).get('name') or '').strip()
+        if pa:
+            out['artist'] = pa
+    feat = ', '.join((a.get('name') or '').strip() for a in (data.get('featured_artists') or [])
+                     if (a.get('name') or '').strip())
+    if feat:
+        out['featuring'] = feat
+    alb = ((data.get('album') or {}).get('name') or '').strip()
+    if alb:
+        out['album'] = alb
+    rdc = data.get('release_date_components') or {}
+    try:
+        y = int(rdc.get('year') or 0); mo = int(rdc.get('month') or 0); d = int(rdc.get('day') or 0)
+    except Exception:
+        y = mo = d = 0
+    if y and mo and d:
+        out['release_date'] = f'{y:04d}-{mo:02d}-{d:02d}'
+    elif y and mo:
+        out['release_date'] = f'{y:04d}-{mo:02d}'
+    elif y:
+        out['release_date'] = f'{y:04d}'
+    return out
+
+def _rebuild_song_credits(sid, data):
+    """song_credits is a derived index of the raw genius blob, rebuilt every resolve"""
+    rows, seen = [], set()
+    def add(role, name, pos):
+        name = (name or '').strip()
+        if not role or not name or (role, name.lower()) in seen:
+            return
+        seen.add((role, name.lower())); rows.append((role, name, pos))
+    for i, a in enumerate(data.get('featured_artists') or []):
+        add('Featuring', a.get('name'), i)
+    for perf in data.get('custom_performances') or []:
+        role = _canon_credit_role(perf.get('label'))
+        for i, a in enumerate(perf.get('artists') or []):
+            add(role, a.get('name'), i)
+    for i, a in enumerate(data.get('producer_artists') or []):
+        add('Producer', a.get('name'), i)
+    for i, a in enumerate(data.get('writer_artists') or []):
+        add('Writer', a.get('name'), i)
+    if not rows:
+        return
+    with db() as c:
+        c.execute("DELETE FROM song_credits WHERE song_id=?", (sid,))
+        for role, name, pos in rows:
+            ar = c.execute("SELECT id FROM artists WHERE _ulower(name)=?", (name.lower(),)).fetchone()
+            c.execute("INSERT OR IGNORE INTO song_credits (song_id, role, name, artist_id, position) VALUES (?,?,?,?,?)",
+                      (sid, role, name, ar[0] if ar else None, pos))
+
+def resolve_song(sid, sync_artists=False):
+    """merge user edits > genius (if trusted) > source into the display columns. safe to call any time,
+    songs without a source row and without a genius blob are left exactly as they are"""
+    try:
+        with db() as c:
+            cur = c.execute("SELECT title,artist,featuring_artists,album,release_date,album_id FROM songs WHERE id=?", (sid,)).fetchone()
+            if not cur:
+                return False
+            src = c.execute("SELECT title,artist,featuring,album,release_date,user_edits FROM song_source WHERE song_id=?", (sid,)).fetchone()
+            gr = c.execute("SELECT data,confidence,confirmed,opts FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+        curv = {'title': cur[0], 'artist': cur[1], 'featuring': cur[2], 'album': cur[3], 'release_date': cur[4]}
+        srcv = ({'title': src[0], 'artist': src[1], 'featuring': src[2], 'album': src[3], 'release_date': src[4]}
+                if src else dict(curv))
+        try:
+            ue = json.loads(src[5]) if src and src[5] else {}
+        except Exception:
+            ue = {}
+        gdata, gv = None, {}
+        if gr:
+            try:
+                gdata = json.loads(gr[0] or '{}')
+                gopts = json.loads(gr[3] or '{}')
+            except Exception:
+                gdata, gopts = None, {}
+            if gdata and _genius_trusted({'confidence': gr[1], 'confirmed': gr[2]}):
+                gv = _genius_view(gdata, gopts)
+            else:
+                gdata = None
+        if not src and not gv:
+            return True
+        def pick(field):
+            for layer in _RESOLVE_PRIORITY[field]:
+                if layer == 'user':
+                    if field in ue:
+                        return ue[field]
+                elif layer == 'genius':
+                    if gv.get(field):
+                        return gv[field]
+                elif srcv.get(field):
+                    return srcv[field]
+            return ''
+        colmap = {'title': 'title', 'artist': 'artist', 'featuring': 'featuring_artists',
+                  'album': 'album', 'release_date': 'release_date'}
+        sets, vals = [], []
+        for f, col in colmap.items():
+            if f == 'album' and cur[5]:
+                continue  # album text follows album_id (trigger + songs_display), not the resolver
+            nv = pick(f)
+            if f in ('title', 'artist') and not nv:
+                continue
+            if (nv or '') != (curv[f] or ''):
+                sets.append(col + '=?'); vals.append(nv)
+        if sets:
+            sets.append('modified_at=?'); vals += [int(time.time()), sid]
+            with db() as c:
+                c.execute("UPDATE songs SET " + ', '.join(sets) + " WHERE id=?", vals)
+        if gdata:
+            _rebuild_song_credits(sid, gdata)
+        if sync_artists:
+            with db() as c:
+                r = c.execute("SELECT artist, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+                if r:
+                    _upsert_song_artists(c, sid, r[0] or '', r[1] or '')
+        return True
+    except Exception as _re:
+        _log_genius.warning('resolve_song err: %s', _re)
+        return False
+
+def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, confidence=None, confirmed=False):
     """Write genius song_data to DB for song sid. Handles album upsert, track linking, cover download, file tags."""
     with db() as c:
         row = c.execute("SELECT title, artist, album FROM songs WHERE id=?", (sid,)).fetchone()
@@ -3140,6 +3397,9 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
     g_title     = song_data.get('title') or existing_title or ''
     g_artist    = (song_data.get('primary_artist') or {}).get('name') or existing_artist or ''
     g_genius_id = str(song_data.get('id', ''))
+    # raw genius layer first, the display columns get rebuilt from it by resolve_song below
+    _store_song_genius(sid, song_data, confidence, confirmed, skip_title)
+    _save_song_source(sid)
     g_album_data = song_data.get('album')
     g_title_clean = clean_title(g_title)
 
@@ -3253,32 +3513,15 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
         if album_id and g_genius_id:
             c.execute("UPDATE album_tracks SET song_id=? WHERE genius_song_id=? AND album_id=?",
                 (sid, g_genius_id, album_id))
-        g_album_name_final = g_album_data.get('name', '') if g_album_data else (existing_album or '')
-        if skip_title:
-            c.execute("""UPDATE songs SET album=COALESCE(NULLIF(?,''),album),
-                         cover_path=COALESCE(?,cover_path), album_id=COALESCE(?,album_id),
-                         genius_id=?, modified_at=?,
-                         featuring_artists=COALESCE(NULLIF(?,''),featuring_artists),
-                         release_date=COALESCE(release_date,?),
-                         source_id=COALESCE(source_id,?),
-                         mv_video_id=COALESCE(?,mv_video_id), mv_url=COALESCE(?,mv_url)
-                         WHERE id=?""",
-                (g_album_name_final or None, cov, album_id, g_genius_id, int(time.time()),
-                 feat, g_release_date, g_media_audio_vid,
-                 g_mv_video_id, g_mv_url, sid))
-        else:
-            c.execute("""UPDATE songs SET title=?, artist=?, album=COALESCE(NULLIF(?,''),album),
-                         cover_path=COALESCE(?,cover_path), album_id=COALESCE(?,album_id),
-                         genius_id=?, featuring_artists=COALESCE(NULLIF(?,''),featuring_artists),
-                         modified_at=?,
-                         release_date=COALESCE(release_date,?),
-                         source_id=COALESCE(source_id,?),
-                         mv_video_id=COALESCE(?,mv_video_id), mv_url=COALESCE(?,mv_url)
-                         WHERE id=?""",
-                (g_title_clean, g_artist, g_album_name_final or None,
-                 cov, album_id, g_genius_id, feat, int(time.time()),
-                 g_release_date, g_media_audio_vid,
-                 g_mv_video_id, g_mv_url, sid))
+        # display columns (title/artist/featuring/album/release_date) are no longer written here,
+        # resolve_song rebuilds them from the raw layers right after this block
+        c.execute("""UPDATE songs SET cover_path=COALESCE(?,cover_path), album_id=COALESCE(?,album_id),
+                     genius_id=?, modified_at=?,
+                     source_id=COALESCE(source_id,?),
+                     mv_video_id=COALESCE(?,mv_video_id), mv_url=COALESCE(?,mv_url)
+                     WHERE id=?""",
+            (cov, album_id, g_genius_id, int(time.time()), g_media_audio_vid,
+             g_mv_video_id, g_mv_url, sid))
         frow = c.execute("SELECT file_path, album FROM songs WHERE id=?", (sid,)).fetchone()
         file_path  = frow[0] if frow else None
         file_album = frow[1] if frow else ''
@@ -3287,6 +3530,7 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
             tnrow = c.execute("SELECT track_num FROM album_tracks WHERE genius_song_id=? AND album_id=?",
                 (g_genius_id, album_id)).fetchone()
             if tnrow: tn = tnrow[0]
+    resolve_song(sid)
     with db() as c:
         _sa = c.execute("SELECT artist, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
     if _sa:
@@ -3327,36 +3571,14 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None):
                             c.execute("UPDATE artists SET aliases=? WHERE id=?", (_json.dumps(aliases), row[0]))
         except Exception as _ae:
             _log_genius.warning('genius alias upsert err: %s', _ae)
-    # credits from custom_performances[] + featuring
-    g_performances = song_data.get('custom_performances') or []
-    g_feat_for_credits = [a for a in (song_data.get('featured_artists') or []) if (a.get('name') or '').strip()]
-    if g_performances or g_feat_for_credits:
-        with db() as c:
-            c.execute("DELETE FROM song_credits WHERE song_id=?", (sid,))
-            for _fi, _fa in enumerate(g_feat_for_credits):
-                _fn = _fa['name'].strip()
-                _ar = c.execute("SELECT id FROM artists WHERE _ulower(name)=?", (_fn.lower(),)).fetchone()
-                c.execute("INSERT INTO song_credits (song_id, role, name, artist_id, position) VALUES (?,?,?,?,?)",
-                    (sid, 'Featuring', _fn, _ar[0] if _ar else None, _fi))
-            for _perf in g_performances:
-                _role = (_perf.get('label') or '').strip()
-                if not _role: continue
-                for _pi, _pa in enumerate(_perf.get('artists') or []):
-                    _pname = (_pa.get('name') or '').strip()
-                    if not _pname: continue
-                    _ar = c.execute("SELECT id FROM artists WHERE _ulower(name)=?", (_pname.lower(),)).fetchone()
-                    c.execute("INSERT INTO song_credits (song_id, role, name, artist_id, position) VALUES (?,?,?,?,?)",
-                        (sid, _role, _pname, _ar[0] if _ar else None, _pi))
+    # song_credits is rebuilt from the raw genius blob inside resolve_song
 
     if file_path:
-        if skip_title:
-            with db() as c:
-                _wr = c.execute("SELECT title, artist FROM songs WHERE id=?", (sid,)).fetchone()
-            if _wr: write_meta(file_path, _wr[0] or '', _wr[1] or '', file_album or '', tn or 0)
-        else:
-            write_meta(file_path, g_title_clean, g_artist, file_album or '', tn or 0)
+        with db() as c:
+            _wr = c.execute("SELECT title, artist, album FROM songs WHERE id=?", (sid,)).fetchone()
+        if _wr: write_meta(file_path, _wr[0] or '', _wr[1] or '', _wr[2] or '', tn or 0)
 
-def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_song_data=None):
+def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_song_data=None, _confidence=None, confirmed=False):
     """Enrich a song in DB with genius metadata. Entry point for auto-enrichment."""
     if not token: return
     with db() as c:
@@ -3367,7 +3589,7 @@ def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_so
     if not title: return
 
     if _cached_song_data:
-        _genius_write(sid, _cached_song_data, token, skip_title=skip_title)
+        _genius_write(sid, _cached_song_data, token, skip_title=skip_title, confidence=_confidence, confirmed=confirmed)
         return
 
     result = _genius_resolve(title, artist, token, genius_song_id=genius_song_id)
@@ -3377,7 +3599,7 @@ def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_so
     if not genius_song_id and result['confidence'] < 0.70:
         _log_genius.info(f'genius: low confidence {result["confidence"]:.2f}, skipping'); return
 
-    _genius_write(sid, result['song_data'], token, skip_title=skip_title)
+    _genius_write(sid, result['song_data'], token, skip_title=skip_title, confidence=result.get('confidence'), confirmed=confirmed)
 
 def _prefetch_genius(title, artist, token):
     """Genius lookup during download. Returns resolve result dict or None."""
@@ -3541,23 +3763,18 @@ def _ytm_enrich(sid, video_id=None, artists_override=None):
     new_artist = ytm_artist or artist
     new_album  = ytm_album_name or row[2] or ''
     new_feat   = _ytm_feat or None
+    _save_song_source(sid, title=new_title, artist=new_artist, album=new_album, featuring=new_feat, origin='ytm')
     with db() as c:
-        c.execute(
-            """UPDATE songs SET title=?, artist=?, album=?,
-               featuring_artists=COALESCE(NULLIF(?,''),featuring_artists),
-               source_id=COALESCE(source_id,?),
-               album_id=COALESCE(?,album_id),
-               modified_at=? WHERE id=?""",
-            (new_title, new_artist, new_album,
-             new_feat or '', resolved_vid, album_id,
-             int(time.time()), sid)
-        )
+        c.execute("UPDATE songs SET source_id=COALESCE(source_id,?), album_id=COALESCE(?,album_id), modified_at=? WHERE id=?",
+                  (resolved_vid, album_id, int(time.time()), sid))
+    resolve_song(sid)
     _log_ytm.info('ytm_enrich: sid=%s title=%r artist=%r feat=%r album=%r', sid, new_title, new_artist, new_feat, new_album)
 
     with db() as c:
-        _upsert_song_artists(c, sid, new_artist, new_feat or '', ytm_artists=_ytm_artist_dicts)
-    if file_path:
-        write_meta(file_path, new_title, new_artist, new_album, 0)
+        _rs = c.execute("SELECT title, artist, album, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+        _upsert_song_artists(c, sid, (_rs[1] if _rs else '') or new_artist, (_rs[3] if _rs else '') or '', ytm_artists=_ytm_artist_dicts)
+    if file_path and _rs:
+        write_meta(file_path, _rs[0] or new_title, _rs[1] or new_artist, _rs[2] or new_album, 0)
 
     # ── album tracklist (requires album_id and resolved_vid) ─────────────────
     if album_id and resolved_vid:
@@ -4169,7 +4386,8 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                         _genius_enrich(sid, tok,
                                        genius_song_id=int(_sd_id),
                                        skip_title=_skip_title,
-                                       _cached_song_data=_pf['song_data'])
+                                       _cached_song_data=_pf['song_data'],
+                                       _confidence=_pf['confidence'])
                     else:
                         _dl(did, genius_candidates=_pf['candidates'], song_id=sid)
                 except Exception as _ge:
@@ -4524,6 +4742,15 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 c.execute("UPDATE songs SET source_id=? WHERE id=?", (_wp_url, sid))
             if spotify_url:
                 c.execute("UPDATE songs SET spotify_url=? WHERE id=?", (spotify_url, sid))
+            _final = c.execute("SELECT title,artist,album,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+        # raw source layer + resolver. genius can no longer overwrite what ytm / yt-dlp gave
+        _save_song_source(sid, title=title, artist=artist, featuring=_yt_featuring, album=album,
+                          release_date=_info_release_date(info),
+                          video_type='video' if is_video else 'song',
+                          artists_json=(json.dumps([{'name': a.get('name'), 'id': a.get('id', '')} for a in _ytm_ovr]) if _ytm_ovr else None),
+                          origin='download')
+        resolve_song(sid)
+        with db() as c:
             _final = c.execute("SELECT title,artist,album,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
         if _final:
             write_meta(str(dest), _final[0], _final[1] or '', _final[2] or '', track_num, _final[3] or '')
@@ -12395,7 +12622,7 @@ def api_genius_apply(sid):
     tok = CFG.get('genius_token','')
     if not tok: return jsonify({'error':'no genius token configured'}), 400
     try:
-        _genius_enrich(sid, tok, genius_song_id=genius_song_id)
+        _genius_enrich(sid, tok, genius_song_id=genius_song_id, confirmed=True)
     except Exception as e:
         return jsonify({'error': str(e)[:200]}), 500
     return jsonify({'ok': True})
@@ -12414,6 +12641,7 @@ def api_song_patch(sid):
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'no valid fields'}), 400
+    _set_song_user_edits(sid, updates)
     with db() as c:
         row = c.execute("SELECT id FROM songs WHERE id=?", (sid,)).fetchone()
         if not row:
