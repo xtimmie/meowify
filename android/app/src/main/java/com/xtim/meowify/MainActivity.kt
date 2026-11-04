@@ -20,6 +20,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.webkit.*
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -36,10 +37,42 @@ class MainActivity : AppCompatActivity() {
         // first launch chaquopy init can take ~30s; subsequent launches ~3s
         private const val MAX_WAIT_MS = 60_000L
         private const val POLL_INTERVAL_MS = 100L
+
+        // the WebView outlives the activity: it hosts the audio engine, so it must
+        // keep running when the activity is destroyed (swiped from recents, etc).
+        // it is created once per process and re-attached to each new activity.
+        @Volatile var sharedWebView: WebView? = null
+        var sharedCtx: android.content.MutableContextWrapper? = null
+        @Volatile var liveActivity: MainActivity? = null
+        @Volatile var isPlayingNow = false
+
+        // service -> webview: media buttons / notification actions / ducking.
+        // static so it keeps working while no activity exists.
+        fun deliverMediaEvent(action: String, seekMs: Long = 0L) {
+            val js = when (action) {
+                "duck"      -> "if(typeof _androidDuck==='function')_androidDuck();"
+                "unduck"    -> "if(typeof _androidUnduck==='function')_androidUnduck();"
+                "seek"      -> "if(typeof _androidSeek==='function')_androidSeek(${seekMs / 1000.0});"
+                "play"      -> "if(typeof _androidPlay==='function')_androidPlay();"
+                "pause"     -> "if(typeof _androidPause==='function')_androidPause();"
+                "playpause" -> "if(typeof togglePlay==='function')togglePlay();"
+                "next"      -> "if(typeof _androidNext==='function')_androidNext();"
+                "prev"      -> "if(typeof _androidPrev==='function')_androidPrev();"
+                "shuffle"   -> "if(typeof _androidShuffle==='function')_androidShuffle();"
+                "repeat"    -> "if(typeof _androidRepeat==='function')_androidRepeat();"
+                else        -> return
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                // the retained webview may be paused while no activity is attached
+                if (action == "play" || action == "playpause") sharedWebView?.onResume()
+                sharedWebView?.evaluateJavascript(js, null)
+            }
+        }
     }
 
     private lateinit var binding: ActivityMainBinding
     private var webView: WebView? = null
+    private var reusedWebView = false
     private var pollingThread: Thread? = null
 
     private var serviceBound = false
@@ -117,6 +150,7 @@ class MainActivity : AppCompatActivity() {
         bindServerService()
         registerMediaEventReceiver()
         setupWebView()
+        setupBackHandling()
         waitForServerAndLoad()
         handleDropboxCallback(intent)
     }
@@ -170,22 +204,31 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        webView?.onPause()
+        if (!isPlayingNow) webView?.onPause()
     }
 
     override fun onDestroy() {
         try { unregisterReceiver(mediaEventReceiver) } catch (e: Exception) { /* not registered */ }
         unbindServerService()
-        webView?.destroy()
+        detachSharedWebView()
         super.onDestroy()
     }
 
-    // back button navigates webview history; media keys forwarded to player
+    // back: ask the page first (overlays, nav stack, tab root), if it declines send the app to the background
+    private fun setupBackHandling() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val wv = webView
+                if (wv == null) { moveTaskToBack(true); return }
+                wv.evaluateJavascript("(function(){try{return !!(window.meowifyBack&&window.meowifyBack())}catch(e){return false}})()") { r ->
+                    if (r != "true") moveTaskToBack(true)
+                }
+            }
+        })
+    }
+
+    // media keys forwarded to player
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView?.canGoBack() == true) {
-            webView?.goBack()
-            return true
-        }
         when (keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY        -> { dispatchMediaAction("play");  return true }
             KeyEvent.KEYCODE_MEDIA_PAUSE       -> { dispatchMediaAction("pause"); return true }
@@ -248,8 +291,47 @@ class MainActivity : AppCompatActivity() {
 
     // ── webview ────────────────────────────────────────────────────────────────
 
+    // creates the process-wide WebView on first use, otherwise re-attaches the
+    // existing one (page + audio engine untouched) to this activity
+    private fun obtainSharedWebView(): WebView {
+        var wv = sharedWebView
+        reusedWebView = wv != null
+        if (wv == null) {
+            val ctx = android.content.MutableContextWrapper(this)
+            wv = WebView(ctx)
+            sharedCtx = ctx
+            sharedWebView = wv
+        } else {
+            sharedCtx?.baseContext = this
+            (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+        }
+        binding.webviewHost.addView(
+            wv,
+            android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        liveActivity = this
+        return wv
+    }
+
+    // activity is going away: keep the WebView (and its audio) alive, just let go of it
+    private fun detachSharedWebView() {
+        val wv = webView ?: return
+        (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+        wv.webChromeClient = null
+        wv.webViewClient = WebViewClient()
+        sharedCtx?.baseContext = applicationContext
+        if (!isPlayingNow) wv.onPause()
+        filePickerCallback?.onReceiveValue(null)
+        filePickerCallback = null
+        if (liveActivity === this) liveActivity = null
+        webView = null
+    }
+
     private fun setupWebView() {
-        val wv = binding.webview
+        val wv = obtainSharedWebView()
         webView = wv
 
         wv.settings.apply {
@@ -272,7 +354,14 @@ class MainActivity : AppCompatActivity() {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, false)
         }
 
-        wv.addJavascriptInterface(MeowifyBridge(), "AndroidBridge")
+        // only once: the bridge holds no activity reference, so the instance the page
+        // already has stays valid across activity recreation
+        if (!reusedWebView) wv.addJavascriptInterface(MeowifyBridge(applicationContext), "AndroidBridge")
+
+        // keep the renderer at IMPORTANT even when the webview isn't visible,
+        // so it follows the foreground service's priority instead of being
+        // waived to cached while the screen is off
+        wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
 
         wv.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(
@@ -324,6 +413,13 @@ class MainActivity : AppCompatActivity() {
     // ── server polling ─────────────────────────────────────────────────────────
 
     private fun waitForServerAndLoad() {
+        // retained webview already has the page loaded (audio may be playing): just show it
+        val liveUrl = webView?.url
+        if (reusedWebView && liveUrl != null && liveUrl.startsWith("http://127.0.0.1")) {
+            showLoading(false)
+            binding.webviewHost.visibility = View.VISIBLE
+            return
+        }
         showLoading(true)
 
         pollingThread = Thread {
@@ -352,7 +448,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "server failed to start — check notification", Toast.LENGTH_LONG).show()
                 } else {
                     showLoading(false)
-                    binding.webview.visibility = View.VISIBLE
+                    binding.webviewHost.visibility = View.VISIBLE
                     val url = "http://127.0.0.1:$finalPort"
                     Log.i(TAG, "server ready, loading $url")
                     webView?.loadUrl(url)
@@ -369,7 +465,7 @@ class MainActivity : AppCompatActivity() {
         binding.loadingView.visibility = if (show) View.VISIBLE else View.GONE
         if (show) {
             binding.errorView.visibility = View.GONE
-            binding.webview.visibility = View.GONE
+            binding.webviewHost.visibility = View.GONE
         }
     }
 
@@ -448,24 +544,26 @@ class MainActivity : AppCompatActivity() {
 
     // ── JS → Kotlin bridge ─────────────────────────────────────────────────────
 
-    inner class MeowifyBridge {
+    // no reference to the activity: lives as long as the retained WebView does
+    class MeowifyBridge(private val app: Context) {
 
         @JavascriptInterface
         fun isAndroid(): String = "true"
 
         @JavascriptInterface
-        fun getFilesDir(): String = filesDir.absolutePath
+        fun getFilesDir(): String = app.filesDir.absolutePath
 
         @JavascriptInterface
         fun shareFile(path: String) {
-            runOnUiThread {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val file = File(path)
                 if (!file.exists()) {
                     Log.w(TAG, "shareFile: file not found: $path")
-                    return@runOnUiThread
+                    return@post
                 }
+                val ctx: Context = liveActivity ?: app
                 val uri = androidx.core.content.FileProvider.getUriForFile(
-                    this@MainActivity, "${packageName}.provider", file
+                    ctx, "${app.packageName}.provider", file
                 )
                 val intent = Intent.createChooser(
                     Intent(Intent.ACTION_SEND).apply {
@@ -474,13 +572,16 @@ class MainActivity : AppCompatActivity() {
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }, "share via"
                 )
-                try { startActivity(intent) }
+                if (ctx !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try { ctx.startActivity(intent) }
                 catch (e: Exception) { Log.e(TAG, "shareFile failed", e) }
             }
         }
 
         @JavascriptInterface
-        fun reload() = runOnUiThread { webView?.reload() }
+        fun reload() {
+            android.os.Handler(android.os.Looper.getMainLooper()).post { sharedWebView?.reload() }
+        }
 
         // called from meowify JS whenever playback state changes so the
         // android media session / lock screen / notification controls stay accurate
@@ -496,26 +597,23 @@ class MainActivity : AppCompatActivity() {
             shuffle: Boolean,
             repeat: String
         ) {
-            val messenger = serviceMessenger ?: run {
-                Log.w(TAG, "onPlaybackState: not bound to ServerService yet, dropping")
+            isPlayingNow = playing
+            val svc = ServerService.instance ?: run {
+                Log.w(TAG, "onPlaybackState: ServerService not up yet, dropping")
                 return
             }
-            val data = Bundle().apply {
-                putBoolean(ServerService.KEY_PLAYING, playing)
-                putString(ServerService.KEY_TITLE, title)
-                putString(ServerService.KEY_ARTIST, artist)
-                putString(ServerService.KEY_ALBUM, album)
-                putString(ServerService.KEY_COVER_PATH, coverPath)
-                putDouble(ServerService.KEY_DURATION_SEC, durationSec)
-                putDouble(ServerService.KEY_POSITION_SEC, positionSec)
-                putBoolean(ServerService.KEY_SHUFFLE, shuffle)
-                putString(ServerService.KEY_REPEAT, repeat)
-            }
-            val msg = Message.obtain(null, ServerService.MSG_PLAYBACK_STATE).apply { this.data = data }
-            try {
-                messenger.send(msg)
-            } catch (e: RemoteException) {
-                Log.e(TAG, "onPlaybackState: send to ServerService failed", e)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                svc.updatePlaybackState(
+                    playing = playing,
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    coverPath = coverPath,
+                    durationSec = durationSec,
+                    positionSec = positionSec,
+                    shuffle = shuffle,
+                    repeat = repeat
+                )
             }
         }
     }

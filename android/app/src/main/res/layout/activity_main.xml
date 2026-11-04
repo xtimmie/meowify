@@ -7,8 +7,8 @@
     android:background="#0d0d0d">
 
     <!-- main webview — hidden until server is up -->
-    <WebView
-        android:id="@+id/webview"
+    <FrameLayout
+        android:id="@+id/webviewHost"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:visibility="gone"

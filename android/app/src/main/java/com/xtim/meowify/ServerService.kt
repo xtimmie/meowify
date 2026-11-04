@@ -58,6 +58,19 @@ class ServerService : LifecycleService() {
 
         @Volatile var serverPort: Int = 0
 
+        // MainActivity (and its retained WebView) now live in the same process
+        // as this service, so the JS bridge can call us directly
+        @Volatile var instance: ServerService? = null
+
+        // bump when newer python needs a kotlin/bridge change; ota refuses until the apk has it
+        const val BRIDGE_LEVEL = 1
+
+        /** called from python (chaquopy `java.jclass`) after an ota update */
+        @JvmStatic
+        fun restartApp() {
+            instance?.restartProcess()
+        }
+
         fun getPort(context: Context): Int {
             if (serverPort != 0) return serverPort
             // .port is written by android_patch.py into ddir(), which resolves to
@@ -106,13 +119,32 @@ class ServerService : LifecycleService() {
     }
     private val messenger = Messenger(incomingHandler)
 
-    private fun sendMediaEvent(action: String, seekMs: Long? = null) {
-        val intent = Intent(ACTION_MEDIA_EVENT).apply {
-            setPackage(packageName)
-            putExtra(EXTRA_MEDIA_ACTION, action)
-            seekMs?.let { putExtra(EXTRA_SEEK_MS, it) }
+    // relaunch via an alarm, then die. START_STICKY also revives the service if the
+    // relaunch is blocked by background-start limits, the user can reopen from the notification
+    fun restartProcess() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                }
+                if (launch != null) {
+                    val pi = PendingIntent.getActivity(
+                        this, 4242, launch,
+                        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    getSystemService(AlarmManager::class.java)
+                        .set(AlarmManager.RTC, System.currentTimeMillis() + 500, pi)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "restart: could not schedule relaunch", e)
+            }
+            Process.killProcess(Process.myPid())
         }
-        sendBroadcast(intent)
+    }
+
+    private fun sendMediaEvent(action: String, seekMs: Long? = null) {
+        // same process as the retained WebView now, deliver straight into it
+        MainActivity.deliverMediaEvent(action, seekMs ?: 0L)
     }
 
     private var serverThread: Thread? = null
@@ -147,6 +179,7 @@ class ServerService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         acquireWakeLock()
         setupMediaSession()
     }
@@ -162,6 +195,7 @@ class ServerService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_STOP -> {
+                sendMediaEvent("pause")
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -172,7 +206,18 @@ class ServerService : LifecycleService() {
             CUSTOM_ACTION_SHUFFLE -> sendMediaEvent("shuffle")
             CUSTOM_ACTION_REPEAT  -> sendMediaEvent("repeat")
             else -> {
-                startForeground(NOTIF_ID, buildNotification("starting..."))
+                val startNotif = buildNotification("starting...")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        NOTIF_ID, startNotif,
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    )
+                } else {
+                    startForeground(NOTIF_ID, startNotif)
+                }
+                // relaunching the ui while music plays must not reset the media notification
+                if (serverStartAttempted) updateNotificationFromState()
                 // serverThread.isAlive alone isn't a trustworthy guard: Werkzeug's
                 // dev server blocks on a socket accept loop that Thread.interrupt()
                 // cannot break out of, so a thread can be "alive" indefinitely after
@@ -195,6 +240,7 @@ class ServerService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         serverThread?.interrupt()
         abandonAudioFocus()
         mediaSession?.release()
@@ -500,6 +546,8 @@ class ServerService : LifecycleService() {
                 android.system.Os.setenv("MEOWIFY_FFMPEG",     ffmpeg, true)
                 android.system.Os.setenv("MEOWIFY_PORT",       port.toString(), true)
                 android.system.Os.setenv("MEOWIFY_ANDROID",    "1", true)
+                android.system.Os.setenv("MEOWIFY_OTA_DIR",    otaDir().absolutePath, true)
+                android.system.Os.setenv("MEOWIFY_BRIDGE",     BRIDGE_LEVEL.toString(), true)
                 android.system.Os.setenv("PATH",               "$ffDir:$oldPath", true)
 
                 val py = Python.getInstance()
@@ -510,18 +558,28 @@ class ServerService : LifecycleService() {
                 environ.put("MEOWIFY_FFMPEG",     ffmpeg)
                 environ.put("MEOWIFY_PORT",       port.toString())
                 environ.put("MEOWIFY_ANDROID",    "1")
+                environ.put("MEOWIFY_OTA_DIR",    otaDir().absolutePath)
+                environ.put("MEOWIFY_BRIDGE",     BRIDGE_LEVEL.toString())
                 environ.put("PATH",               "$ffDir:$oldPath")
 
                 // prepend codeDir (not dataDir) to sys.path so android_patch.py and
                 // meowify.py — extracted to filesDir/meowify — are actually importable.
                 // chaquopy also adds assets/ to sys.path automatically for files in assets/
-                py.getModule("sys").get("path")!!.callAttr("insert", 0, codeDir)
+                val sysPath = py.getModule("sys").get("path")!!
+                sysPath.callAttr("insert", 0, codeDir)
+                // ota overlay goes in front of the bundled copies, but only when it is complete
+                val ota = otaDir()
+                if (File(ota, "meowify.py").isFile && File(ota, "android_patch.py").isFile) {
+                    sysPath.callAttr("insert", 0, ota.absolutePath)
+                }
+                val otaSite = File(ota, "site")
+                if (otaSite.isDirectory) sysPath.callAttr("insert", 0, otaSite.absolutePath)
 
                 Log.i(TAG, "env set, importing android_patch from $codeDir")
 
                 // run the server via android_patch — blocks until killed
                 val patch = py.getModule("android_patch")
-                patch.callAttr("main_android", port, dataDir)
+                patch.callAttr("main_android", port, dataDir, ffmpeg)
 
             } catch (e: InterruptedException) {
                 Log.i(TAG, "server thread interrupted")
@@ -537,20 +595,21 @@ class ServerService : LifecycleService() {
     // ── environment setup ──────────────────────────────────────────────────────
 
     private fun setupEnvironment() {
+        prepareOta()
+
         // extract ffmpeg binary — re-extracts whenever the installed APK's
         // lastUpdateTime changes, so a bundled ffmpeg update always lands
         // regardless of whether anyone remembered to bump versionCode
         val ff = ffmpegPath()
-        val ffStamp = File(ff.parentFile, ".ffmpeg_stamp")
-        if (!ff.exists() || ff.length() < 1_000_000L || ffStamp.readText2() != currentApkStamp()) {
-            ff.parentFile?.mkdirs()
-            assets.open("ffmpeg").use { input ->
-                FileOutputStream(ff).use { output -> input.copyTo(output) }
-            }
-            ff.setExecutable(true, false)
-            ffStamp.writeText(currentApkStamp())
-            Log.i(TAG, "ffmpeg extracted to ${ff.absolutePath}")
-        }
+        val ffLib = File(applicationInfo.nativeLibraryDir, "libffmpeg.so")
+        ff.parentFile?.mkdirs()
+        if (ff.exists() || java.nio.file.Files.isSymbolicLink(ff.toPath())) ff.delete()
+        android.system.Os.symlink(ffLib.absolutePath, ff.absolutePath)
+        Log.i(TAG, "ffmpeg -> ${ffLib.absolutePath} exists=${ffLib.exists()} canExec=${ffLib.canExecute()}")
+        val fp = File(ff.parentFile, "ffprobe")
+        val fpLib = File(applicationInfo.nativeLibraryDir, "libffprobe.so")
+        if (fp.exists() || java.nio.file.Files.isSymbolicLink(fp.toPath())) fp.delete()
+        android.system.Os.symlink(fpLib.absolutePath, fp.absolutePath)
 
         // extract motionui from assets on first run / apk update
         val muDir = File(filesDir, "meowify/motionui")
@@ -570,7 +629,10 @@ class ServerService : LifecycleService() {
         }
 
         // write motionui dir path marker for python
-        File(filesDir, "meowify/.motionui_dir").writeText(muDir.absolutePath)
+        // an ota motionui (complete) wins over the bundled copy
+        val otaMu = File(otaDir(), "motionui")
+        val useOtaMu = listOf("motionui.js", "components.css", "theme.css").all { File(otaMu, it).isFile }
+        File(filesDir, "meowify/.motionui_dir").writeText((if (useOtaMu) otaMu else muDir).absolutePath)
 
         // ensure music/covers dirs exist under the external data dir
         val extBase = getExternalFilesDir(null) ?: filesDir
@@ -613,6 +675,42 @@ class ServerService : LifecycleService() {
         extractRecursive(assetPath, destDir)
         stamp.writeText(currentVersion)
         Log.i(TAG, "extracted $assetPath to $destDir")
+    }
+
+    // ── ota overlay ────────────────────────────────────────────────────────────
+    // python's updater stages new meowify.py / android_patch.py / motionui / pure-python
+    // packages in filesDir/meowify/ota. rules:
+    //  - ota is only valid for the apk install it was created under (.stamp); a new apk wipes it
+    //  - .booting: "pending" (just applied) -> "trying" (this boot) -> deleted by python once the
+    //    server has been healthy for a few seconds. still there at the next start = the boot
+    //    failed, so the ota is dropped and the bundled copies are used again
+    private fun otaDir() = File(filesDir, "meowify/ota")
+
+    private fun prepareOta() {
+        val ota = otaDir()
+        if (!ota.exists()) return
+        try {
+            val stampFile = File(ota, ".stamp")
+            val cur = currentApkStamp()
+            if (stampFile.exists() && stampFile.readText().trim() != cur) {
+                Log.i(TAG, "ota: apk changed since the ota was applied, dropping it")
+                ota.deleteRecursively()
+                return
+            }
+            if (!stampFile.exists()) stampFile.writeText(cur)
+            val boot = File(ota, ".booting")
+            if (boot.exists()) {
+                if (boot.readText().trim() == "pending") {
+                    boot.writeText("trying")
+                } else {
+                    Log.w(TAG, "ota: previous boot was never confirmed, rolling back")
+                    ota.deleteRecursively()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ota: prepare failed, dropping ota", e)
+            ota.deleteRecursively()
+        }
     }
 
     private fun ffmpegPath(): File = File(filesDir, "bin/ffmpeg")

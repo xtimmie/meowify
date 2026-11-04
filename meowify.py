@@ -70,7 +70,7 @@ _miniaudio = None
 
 # ── platform helpers ───────────────────────────────────────────────────────────
 IS_ANDROID = hasattr(sys, 'getandroidapilevel') or 'ANDROID_ROOT' in os.environ
-APP_VERSION = '0.1.0.2'
+APP_VERSION = '0.2.0'
 _APP_DIR = Path(__file__).resolve().parent
 _IN_VENV = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
 if not IS_ANDROID:
