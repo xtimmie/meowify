@@ -3447,7 +3447,7 @@ def _ytm_write_album_tracks(yt, album_id, sid, video_id, title, artist, browse_i
         return None, None
 
 
-def _ytm_enrich(sid, video_id=None):
+def _ytm_enrich(sid, video_id=None, artists_override=None):
     """Enrich a song with YTMusic metadata (no-token path).
     Resolves video_id → watch playlist → album browse_id → full tracklist."""
     try:
@@ -3515,6 +3515,9 @@ def _ytm_enrich(sid, video_id=None):
         _log_ytm.debug('ytm_enrich: watch playlist failed: %s', _e)
 
     # ── split primary artist vs featuring ─────────────────────────────────────
+    if artists_override:
+        _ytm_artist_dicts = list(artists_override)
+        ytm_artist = _ytm_artist_dicts[0]['name']
     _ytm_feat = None
     if len(_ytm_artist_dicts) >= 2:
         ytm_artist = _ytm_artist_dicts[0]['name']
@@ -4279,6 +4282,25 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 _feat_raw = re.sub(r'\s+&\s+|\s+and\s+', ', ', _am[1].strip(), flags=re.IGNORECASE)
                 _yt_featuring = ', '.join(p.strip() for p in _feat_raw.split(',') if p.strip()) or None
 
+        # ytm search-result display names beat yt-dlp's credit list, which can include
+        # distributor credits (legal names, writers) next to the real performers
+        _vid_dl = info.get('id') or ''
+        _ytm_ovr = None
+        with _dl_lock:
+            _ovr_cand = [a for a in ((_dls.get(did) or {}).get('_ytm_artists') or []) if a.get('name')]
+        if _ovr_cand and video_id_r and video_id_r == _vid_dl:
+            _ytm_ovr = _ovr_cand
+        elif _vid_dl and not is_url and q:
+            try:
+                _m = [t for t in _search_ytm(q)[0] if t.get('video_id') == _vid_dl]
+                if _m:
+                    _ytm_ovr = [a for a in (_m[0].get('_ytm_artists') or []) if a.get('name')] or None
+            except Exception as _oe:
+                _log_ytm.warning('ytm artist override search err: %s', _oe)
+        if _ytm_ovr:
+            artist = _ytm_ovr[0]['name'].strip()
+            _yt_featuring = ', '.join(a['name'].strip() for a in _ytm_ovr[1:]) or None
+
         dest = mdir()/f"{sid}{ext}"
         shutil.move(str(src_file), str(dest))
 
@@ -4548,7 +4570,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 _ytm_ran = _gc.execute("SELECT genius_id FROM songs WHERE id=?", (sid,)).fetchone()
             if not (_ytm_ran and _ytm_ran[0]):
                 try:
-                    _ytm_enrich(sid, video_id=info.get('id') or None)
+                    _ytm_enrich(sid, video_id=info.get('id') or None, artists_override=_ytm_ovr)
                 except Exception as _me:
                     _log_ytm.warning('ytm_enrich err: %s', _me)
         _dl(did, status='done', progress=100, song_id=sid)
