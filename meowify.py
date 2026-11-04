@@ -4290,9 +4290,14 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             _ovr_cand = [a for a in ((_dls.get(did) or {}).get('_ytm_artists') or []) if a.get('name')]
         if _ovr_cand and video_id_r and video_id_r == _vid_dl:
             _ytm_ovr = _ovr_cand
-        elif _vid_dl and not is_url and q:
+        elif re.fullmatch(r'[A-Za-z0-9_-]{11}', _vid_dl) and 'youtube' in (info.get('extractor') or info.get('ie_key') or '').lower() and (q or info.get('track') or info.get('title')):
             try:
-                _m = [t for t in _search_ytm(q)[0] if t.get('video_id') == _vid_dl]
+                if is_url:
+                    _a0 = ((info.get('artists') or [])[:1] or [(info.get('artist') or '').split(', ')[0]])[0]
+                    _oq = ' '.join(x for x in (_a0, info.get('track') or info.get('title') or '') if x).strip()
+                else:
+                    _oq = q
+                _m = [t for t in _search_ytm(_oq)[0] if t.get('video_id') == _vid_dl] if _oq else []
                 if _m:
                     _ytm_ovr = [a for a in (_m[0].get('_ytm_artists') or []) if a.get('name')] or None
             except Exception as _oe:
