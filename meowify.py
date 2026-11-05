@@ -14838,12 +14838,10 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #blyrics-sync.active .clock-minute { transform: rotate(120deg); }
 #blyrics-sync.active .clock-hour   { transform: rotate(-5deg); }
 #blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .6s cubic-bezier(.5,1.25,.4,1); }
-#blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(.2); }
-#blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(.34); transition-delay: .07s; }
+#blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(0); }
+#blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(0); }
 #blyrics-ann.active .ann-l1 { transform: scaleX(1); }
 #blyrics-ann.active .ann-l2 { transform: scaleX(1); }
-#blyrics-ann .ann-bub { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; }
-#blyrics-ann.active .ann-bub { transform: rotate(-4deg); }
 
 /* ── transport icon animations ─────────────────────────────────────── */
 
