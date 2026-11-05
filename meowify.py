@@ -14620,6 +14620,9 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
 .gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:color-mix(in oklch,var(--color-on-surface-variant) 60%,transparent);margin-bottom:6px;letter-spacing:.02em}
 .gl-s{color:var(--ac)}
+.gl-sec.gl-raw{margin-top:1.1em;padding-top:0;border-top:none}
+.gl-sec.gl-raw:first-child{margin-top:2px}
+.gl-raw .gl-h{font:inherit;font-variation-settings:inherit;color:inherit;letter-spacing:normal;margin-bottom:0}
 .gl-n{color:var(--ac)}
 .gl-n{font-weight:inherit}
 .gl-l{min-height:1.8em}
@@ -23802,6 +23805,7 @@ function _lyrSanitize(html) {
 
 const _LYR_HUES = [28, 88, 150, 200, 262, 330];
 function _lyrColOn() { return CFG.lyrics_artist_colors !== false; }
+function _lyrPrettyOn() { return CFG.lyrics_pretty !== false; }
 function _lyrHue(h) { return 'oklch(0.8 0.17 ' + h + ')'; }
 function _lyrStyleKey(s) { return (s.i ? 'i' : '') + (s.b ? 'b' : ''); }
 
@@ -23868,7 +23872,8 @@ function _lyrLineKeyOld(ln) {
 function _lyrGeniusHtml(g) {
   const ann = g.ann || {};
   const on = _lyrAnnOn();
-  const col = _lyrColOn();
+  const pretty = _lyrPrettyOn();
+  const col = pretty && _lyrColOn();
   const am = _lyrArtistMap(g);
   const wrapSeg = (t, s) => {
     let h = esc(t);
@@ -23921,6 +23926,7 @@ function _lyrGeniusHtml(g) {
       const hh = on && sc.ha && ann[sc.ha] ? '<a class="gl-a" data-aid="' + esc(sc.ha) + '">' + esc(sc.h) + '</a>' : esc(sc.h);
       head = '<div class="gl-h">' + hh + '</div>';
     }
+    if (!pretty && head) head = head.replace('<div class="gl-h">', '<div class="gl-h">[').replace(/<\/div>$/, ']</div>');
     const lines = lines0.map(ln => {
       if (!ln.length) return '<div class="gl-gap"></div>';
       const body = ln.map(s => {
@@ -23930,7 +23936,7 @@ function _lyrGeniusHtml(g) {
       }).join('');
       return '<div class="gl-l">' + body + '</div>';
     }).join('');
-    return '<div class="gl-sec">' + head + lines + '</div>';
+    return '<div class="gl-sec' + (pretty ? '' : ' gl-raw') + '">' + head + lines + '</div>';
   }).join('');
   return '<div class="gl-wrap" onclick="lyrAnnClick(event)">' + secs + '</div>';
 }
@@ -24021,6 +24027,13 @@ function lyrToggleAnn() {
   if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
 }
 
+function lyrTogglePretty() {
+  const on = !_lyrPrettyOn();
+  CFG.lyrics_pretty = on;
+  saveSetting('lyrics_pretty', on).catch(() => {});
+  if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
+}
+
 function lyrToggleCol() {
   const on = !_lyrColOn();
   CFG.lyrics_artist_colors = on;
@@ -24041,7 +24054,8 @@ function lyrContext(e) {
     items.push({ sep: true });
   }
   if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
-  if (av.genius) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
+  if (av.genius) items.push({ label: 'pretty display', check: _lyrPrettyOn(), fn: () => lyrTogglePretty() });
+  if (av.genius && _lyrPrettyOn()) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
   items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
   showCtx(e, items);
 }
@@ -36026,6 +36040,7 @@ function renderSettings() {
           `);
         })()}
         ${row('genius annotations', 'show annotated lines in the genius lyrics view', toggle('lyrics_annotations', CFG.lyrics_annotations !== false))}
+        ${row('pretty lyrics display', 'split genius lyrics into subtle sections with dimmed labels and artist colors, off shows it like on genius', toggle('lyrics_pretty', CFG.lyrics_pretty !== false))}
         ${row('artist colors', 'color code lines per artist in mixed verses of the genius lyrics view', toggle('lyrics_artist_colors', CFG.lyrics_artist_colors !== false))}
         ${row('lyrics auto refresh', 'refetch genius lyrics and credits in the background when a song is played or queued next', toggle('lyrics_auto_refresh', CFG.lyrics_auto_refresh !== false))}
         ${row('refresh every', 'days between refreshes', `
