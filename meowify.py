@@ -2535,6 +2535,8 @@ def _genius_scrape_lyrics(song):
             if len(result) > 40:
                 return result, None
 
+        if re.search(r'lyricsPlaceholderReason\\*":\\*"instrumental|This song is an instrumental', html):
+            return None, 'instrumental'
         return None, 'parse_failed'
 
     RETRIES = 3
@@ -2547,6 +2549,8 @@ def _genius_scrape_lyrics(song):
                     last_error = 'not_found'
                     break  # 404, try next candidate
                 lyrics, parse_err = _parse_html(html)
+                if parse_err == 'instrumental':
+                    return None, 'instrumental'
                 if parse_err == 'bot_detected':
                     last_error = 'rate_limited'
                     _log_genius.info(f'genius lyrics: bot/rate-limit page (attempt {attempt+1})')
@@ -2607,7 +2611,10 @@ def _song_instrumental(sid):
     """genius says the song is an instrumental (only trusted matches count)"""
     try:
         with db() as c:
+            l = c.execute("SELECT source, lrc, plain FROM lyrics WHERE song_id=?", (sid,)).fetchone()
             r = c.execute("SELECT data, confidence, confirmed FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+        if l and (l[0] or '').lower() == 'instrumental' and not (l[1] or l[2]):
+            return True  # the genius page said so when the lyrics were looked up
         return bool(r and r[0] and _genius_trusted({'confidence': r[1], 'confirmed': r[2]}) and json.loads(r[0]).get('instrumental') is True)
     except Exception:
         return False
@@ -2669,6 +2676,8 @@ def _lyrics_fetch_and_cache(song):
                 if genius_plain:
                     plain = genius_plain
                     source = 'genius'
+                elif _genius_fail_reason == 'instrumental':
+                    source = 'instrumental'
             except Exception as _ge:
                 _genius_fail_reason = str(_ge)[:80]
                 _log_genius.warning('genius lyrics scrape err: %s', _ge)
@@ -2681,7 +2690,9 @@ def _lyrics_fetch_and_cache(song):
                 (sid, lrc, plain, now, source, _source_duration)
             )
         _cache_entry = {'lrc': lrc, 'plain': plain, 'source': source, 'fetched_at': now}
-        if not lrc and not plain and _genius_fail_reason:
+        if source == 'instrumental':
+            _cache_entry['instrumental'] = True
+        elif not lrc and not plain and _genius_fail_reason:
             _cache_entry['genius_fail'] = _genius_fail_reason
         with _lyrics_lock:
             _lyrics_cache_put(sid, _cache_entry)
