@@ -14638,7 +14638,8 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-annpop-body p{margin:0 0 .7em}
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
-.lyr-srcbtn{width:auto!important;padding:0 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label)}
+#blyrics-src .sw-g { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; }
+#blyrics-src.active .sw-g { transform: rotate(180deg); }
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
 .lyr-bar>i{position:absolute;top:0;bottom:0;width:35%;background:var(--color-primary);border-radius:2px;animation:lyrbar 1.1s ease-in-out infinite}
@@ -24002,7 +24003,7 @@ function _lyrToolbar(showSwitch, src, hasAnn) {
   const ab = document.getElementById('blyrics-ann');
   if (sb) {
     sb.style.display = showSwitch ? '' : 'none';
-    sb.textContent = src;
+    sb.classList.toggle('active', src === 'genius');
     sb.title = 'source: ' + src + ' - click for ' + (src === 'genius' ? 'lrclib' : 'genius');
   }
   if (ab) {
@@ -24076,8 +24077,9 @@ function _lyrWire() {
   const syncBtn = document.getElementById('blyrics-sync');
   if (box && syncBtn) {
     const src = document.createElement('button');
-    src.className = 'cbtn mu-ripple lyr-srcbtn';
+    src.className = 'cbtn mu-ripple';
     src.id = 'blyrics-src';
+    src.innerHTML = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><defs><mask id="sw-mask"><rect width="20" height="20" fill="white"/><g class="sw-g"><rect x="3" y="5.5" width="11" height="2.2" rx="1.1" fill="black"/><rect x="3" y="12.3" width="7" height="2.2" rx="1.1" fill="black"/></g></mask></defs><circle cx="10" cy="10" r="10" fill="currentColor" mask="url(#sw-mask)"/></svg>';
     src.style.display = 'none';
     src.onclick = () => { const d = S.lyricsData; if (!S.cur || !d) return; lyrSetSrc(_lyrPickSrc(S.cur, d) === 'genius' ? 'lrclib' : 'genius'); };
     const ann = document.createElement('button');
