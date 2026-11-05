@@ -2608,14 +2608,11 @@ def _lrclib_fetch(artist, title, duration, is_video=False):
     return result
 
 def _song_instrumental(sid):
-    """genius says the song is an instrumental (only trusted matches count)"""
+    """the lyrics lookup found the genius page marking this song as an instrumental"""
     try:
         with db() as c:
             l = c.execute("SELECT source, lrc, plain FROM lyrics WHERE song_id=?", (sid,)).fetchone()
-            r = c.execute("SELECT data, confidence, confirmed FROM song_genius WHERE song_id=?", (sid,)).fetchone()
-        if l and (l[0] or '').lower() == 'instrumental' and not (l[1] or l[2]):
-            return True  # the genius page said so when the lyrics were looked up
-        return bool(r and r[0] and _genius_trusted({'confidence': r[1], 'confirmed': r[2]}) and json.loads(r[0]).get('instrumental') is True)
+        return bool(l and (l[0] or '').lower() == 'instrumental' and not (l[1] or l[2]))
     except Exception:
         return False
 
@@ -3204,7 +3201,7 @@ _GENIUS_AUTHORITATIVE = {'featuring'}
 _GENIUS_KEEP = ('id', 'title', 'full_title', 'url', 'primary_artist', 'primary_artists',
                 'featured_artists', 'writer_artists', 'producer_artists', 'custom_performances',
                 'album', 'release_date_components', 'media', 'song_art_image_url',
-                'header_image_thumbnail_url', 'language', 'instrumental', 'lyrics_state')
+                'header_image_thumbnail_url', 'language')
 
 def _genius_trusted(g):
     """second check, runs every time the layers are resolved (the first one is the search
@@ -6192,7 +6189,6 @@ def api_song_extra(sid):
         yt = next((m.get('url') for m in (d.get('media') or [])
                    if isinstance(m, dict) and m.get('provider') == 'youtube' and m.get('url')), None)
         out['genius'] = {'id': g[0], 'url': d.get('url'), 'language': d.get('language'), 'youtube': yt,
-                         'instrumental': d.get('instrumental'), 'lyrics_state': d.get('lyrics_state'),
                          'confidence': g[1], 'confirmed': bool(g[2])}
     return jsonify(out)
 
@@ -24380,8 +24376,6 @@ async function showSongDetails(sid){
         if(g.url) rows.push(row('genius',link(g.url,'open on genius')));
         rows.push(row('genius match',g.confirmed?'confirmed':(g.confidence!=null?Math.round(g.confidence*100)+'% match':'matched')));
         if(g.language) rows.push(row('language',esc(g.language)));
-        if(g.instrumental) rows.push(row('lyrics','instrumental'));
-        else if(g.lyrics_state) rows.push(row('lyrics',esc(String(g.lyrics_state).replace('_',' '))));
         if(g.youtube && g.youtube!==mv) rows.push(row('youtube (genius)',link(g.youtube,'open')));
       }
     }
