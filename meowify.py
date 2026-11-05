@@ -193,7 +193,7 @@ _HOME   = Path(os.environ['MEOWIFY_DATA_DIR']) if 'MEOWIFY_DATA_DIR' in os.envir
 _SCFG   = _HOME / "settings.json"
 _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": "0", "crossfade": 0, "genius_token": "", "auto_genius": True, "volume": 0.8, "volume_boost": False, "volume_norm": False, "target_lufs": -14, "theme_hue": 145, "theme_sat": 50, "theme_bri": 1.0, "ddg_genius": True, "prev_restarts": True, "dl_speed_single": "fast", "dl_speed_batch": "balanced", "spotify_local_dir": "", "auto_align_lyrics": False, "ui_design": "material", "dropbox_refresh_token": "", "dropbox_sync_enabled": False, "dropbox_last_sync": 0, "device_id": "", "device_name": "", "sync_library": True, "sync_settings": True, "font_override": "", "enhance_audio": False, "immersive_audio": False, "music_video": False, "music_video_autoplay": False, "transition_albums": False, "gapless_transition_only": False, "shuffle_transition_only": False, "cover_art_bleed": False, "cover_art_hue_sync": False, "audio_scrub": False, "eq": [], "win_use_webview": True}
 
-_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True})
+_DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True, "list_show_producers": False, "list_prod_prefix": False, "list_feat_prefix": False, "search_credits_prod": False, "search_credits_writers": False, "search_credits_other": False})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -581,13 +581,15 @@ SELECT id, sync_id, title,
        _disp_artist(songs.featuring_artists) AS featuring_artists,
        mv_video_id, mv_offset, queue_skip,
        songs.artist AS artist_raw,
-       songs.featuring_artists AS featuring_raw
+       songs.featuring_artists AS featuring_raw,
+       songs.release_date AS release_date,
+       (SELECT group_concat(role || char(31) || name, char(30)) FROM (SELECT role, name FROM song_credits WHERE song_id = songs.id ORDER BY position)) AS credits
 FROM songs
 """
 
 def _ensure_songs_display_view(c):
     row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
-    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or ''):
+    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or ''):
         return
     c.execute("DROP VIEW IF EXISTS songs_display")
     c.execute(_SONGS_DISPLAY_SQL)
@@ -6112,6 +6114,33 @@ def api_get_song(sid):
     if not row: return jsonify({'error':'not found'}), 404
     return jsonify(dict(row))
 
+@app.route('/api/songs/<sid>/extra', methods=['GET'])
+def api_song_extra(sid):
+    """details popup extras that dont live in songs_display: genius link/match, music video url, file info"""
+    out = {'genius': None, 'mv_url': None, 'file': None}
+    with db() as c:
+        r = c.execute("SELECT mv_video_id, mv_url, file_path FROM songs WHERE id=?", (sid,)).fetchone()
+        g = c.execute("SELECT genius_id, confidence, confirmed, data FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+    if not r:
+        return jsonify({'error': 'not found'}), 404
+    out['mv_url'] = r[1] or (f'https://www.youtube.com/watch?v={r[0]}' if r[0] else None)
+    fp = r[2]
+    if fp and os.path.isfile(fp):
+        try:
+            out['file'] = {'ext': os.path.splitext(fp)[1].lstrip('.').lower(), 'size': os.path.getsize(fp)}
+        except OSError:
+            pass
+    if g:
+        try:
+            d = json.loads(g[3]) if g[3] else {}
+        except Exception:
+            d = {}
+        yt = next((m.get('url') for m in (d.get('media') or [])
+                   if isinstance(m, dict) and m.get('provider') == 'youtube' and m.get('url')), None)
+        out['genius'] = {'id': g[0], 'url': d.get('url'), 'language': d.get('language'), 'youtube': yt,
+                         'confidence': g[1], 'confirmed': bool(g[2])}
+    return jsonify(out)
+
 @app.route('/api/songs/<sid>', methods=['DELETE'])
 def api_del_song(sid):
     with db() as c:
@@ -8830,6 +8859,8 @@ _DBX_SHARED_PREFS = frozenset([
     'settings_nav', 'sidebar_layout', 'sidebar_hidden',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
     'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums', 'genius_override',
+    'list_show_producers', 'list_prod_prefix', 'list_feat_prefix',
+    'search_credits_prod', 'search_credits_writers', 'search_credits_other',
 ])
 
 def _dbx_push_prefs(dbx):
@@ -21215,7 +21246,10 @@ const _SRCH_FIELDS = Object.assign(Object.create(null), {
   album: 'album', al: 'album',
   source: 'source', src: 'source',
   plays: 'plays', p: 'plays',
-  dur: 'dur', len: 'dur', length: 'dur', duration: 'dur'
+  dur: 'dur', len: 'dur', length: 'dur', duration: 'dur',
+  prod: 'prod', producer: 'prod', produced: 'prod',
+  writer: 'writer', written: 'writer',
+  credit: 'credit', credits: 'credit', cr: 'credit'
 });
 function _srchNum(v) {
   const m = /^(\d+):(\d{2})$/.exec(v);
@@ -21275,12 +21309,17 @@ function _aliasHay(a, f) {
   return out;
 }
 function _songHay(s) {
-  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source].map(x => x || '').join('|') + '|' + (S._aliasVer || 0);
+  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source, s.credits, CFG.search_credits_prod, CFG.search_credits_writers, CFG.search_credits_other].map(x => x || '').join('|') + '|' + (S._aliasVer || 0);
   const c = _srchHayCache.get(s);
   if (c && c.sig === sig) return c.h;
   const n = _srchNorm;
   const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '') + _aliasHay(s.artist, s.featuring_artists)), feat: n(s.featuring_artists), album: n(s.album), source: n(s.source) };
-  h.all = (h.title + ' ' + h.artist + ' ' + h.album).trim();
+  const _cr = _songCredits(s), _W = ['Writer', 'Composer', 'Lyricist'], _P = ['Producer', 'Executive Producer'];
+  const _cj = f => n(_cr.filter(f).map(c => c.name).join(' '));
+  h.prod = _cj(c => _P.includes(c.role));
+  h.writer = _cj(c => _W.includes(c.role));
+  h.credit = _cj(c => c.role !== 'Featuring');
+  h.all = (h.title + ' ' + h.artist + ' ' + h.album + (CFG.search_credits_prod === true ? ' ' + h.prod : '') + (CFG.search_credits_writers === true ? ' ' + h.writer : '') + (CFG.search_credits_other === true ? ' ' + _cj(c => c.role !== 'Featuring' && !_W.includes(c.role) && !_P.includes(c.role)) : '')).trim();
   _srchHayCache.set(s, { sig, h });
   return h;
 }
@@ -22178,15 +22217,19 @@ function renderNowPlaying(_preArg) {
     ['source', song._empty ? '-' : srcLabel, null, null],
     ['plays', song._empty ? '-' : String(song.play_count || 0), null, null],
     (!song._empty && feat) ? ['featuring', feat, null, null] : null,
+    (!song._empty && song.release_date) ? ['released', song.release_date, null, null] : null,
     (!song._empty && song.loudness_lufs != null) ? ['loudness', song.loudness_lufs.toFixed(1) + ' LUFS', null, null] : null,
   ].filter(Boolean);
 
-  const metaHtml = metaRows.map(([l, v, albumName, albumId]) => {
+  if (!song._empty) for (const [role, names] of _songCreditsGrouped(song)) { if (role === 'Featuring') continue; metaRows.push([role.toLowerCase(), null, null, null, names.map(n => artistNameHtml(n)).join(', ')]); }
+  const metaHtml = metaRows.map(([l, v, albumName, albumId, rawHtml]) => {
     let valHtml;
     if (albumName != null) {
       valHtml = (albumId && !isMobile())
         ? `<span class="np-meta-value" style="cursor:pointer" onclick="${isMobile() ? 'toggleNowPlaying();' : ''}setView('album',null,'${albumId}')" onmouseenter="this.style.color='var(--color-primary)';this.style.textDecoration='underline'" onmouseleave="this.style.color='';this.style.textDecoration=''\">${esc(albumName)}</span>`
         : `<span class="np-meta-value">${esc(albumName)}</span>`;
+    } else if (rawHtml != null) {
+      valHtml = `<span class="np-meta-value">${rawHtml}</span>`;
     } else {
       valHtml = `<span class="np-meta-value">${esc(v || '')}</span>`;
     }
@@ -24131,29 +24174,51 @@ function _lyricsResizeMouseUp() {
   if (ls && !ls.classList.contains('hidden')) saveSetting('lyrics_sidebar_width', ls.offsetWidth).catch(() => {});
 }
 
-function showSongDetails(sid){
+async function showSongDetails(sid){
   const song=S.library.find(s=>s.id===sid);
   if(!song) return;
-  const feat=song.featuring_artists?` feat. ${song.featuring_artists}`:'';
-  const srcLabel=(song.source||'local').replace('_',' ');
-  const rows=[
-    ['title', song.title||'untitled'],
-    ['artist', (song.artist||'')+feat],
-    ['album', song.album||'-'],
-    ['duration', song.duration?fmt(song.duration):'-'],
-    ['source', srcLabel],
-    ['plays', song.play_count||0],
-    ['added', song.added_at?new Date(song.added_at*1000).toLocaleDateString():'-'],
-    ['last played', song.last_played?new Date(song.last_played*1000).toLocaleDateString():'-'],
-    ['loudness', song.loudness_lufs!=null?song.loudness_lufs.toFixed(1)+' LUFS':'-'],
-  ];
+  const lblS='color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body);flex-shrink:0';
+  const valS='font:var(--type-body-small);font-variation-settings:var(--fv-body);text-align:right;max-width:65%;overflow-wrap:anywhere';
+  const row=(l,h)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--color-outline-variant)"><span style="${lblS}">${l}</span><span style="${valS}">${h}</span></div>`;
+  const link=(u,t)=>`<a href="${esc(u)}" target="_blank" rel="noopener" style="color:var(--color-primary)">${esc(t||u)}</a>`;
+  const fmtD=t=>t?new Date(t*1000).toLocaleDateString():'-';
+  const names=arr=>arr.map(n=>artistNameHtml(n)).join(', ');
   const cov=song.cover_path?`<img src="/cover/${song.id}" alt="" style="width:80px;height:80px;border-radius:var(--radius-md);object-fit:cover;flex-shrink:0">`:'<div style="width:80px;height:80px;border-radius:var(--radius-md);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:32px;flex-shrink:0">♪</div>';
-  const albumBtn=song.album_id?`<button class="btn btn-tonal mu-ripple" style="margin-top:12px;width:100%" onclick="closeModal();setView('album',null,'${song.album_id}')">open album</button>`:'';
-  const detailRows=rows.map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--color-outline-variant)"><span style="color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body)">${l}</span><span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);text-align:right;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(v))}</span></div>`).join('');
-  showModal('song details',
-    `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">${cov}<div style="overflow:hidden;min-width:0"><div style="font:var(--type-body-medium);font-variation-settings:var(--fv-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(song.title||'untitled')}</div><div style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);margin-top:2px">${esc(song.artist||'')}</div></div></div><div>${detailRows}</div>${albumBtn}`,
-    `<button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
+  const build=(x)=>{
+    const rows=[
+      row('title',esc(song.title||'untitled')),
+      row('artist',names((song.artist||'').split(', ').filter(Boolean))||'-'),
+    ];
+    if(song.featuring_artists) rows.push(row('featuring',names(song.featuring_artists.split(', ').filter(Boolean))));
+    for(const [role,ns] of _songCreditsGrouped(song)){ if(role==='Featuring') continue; rows.push(row(esc(role.toLowerCase()),names(ns))); }
+    rows.push(row('album',esc(song.album||'-')));
+    if(song.release_date) rows.push(row('released',esc(song.release_date)));
+    rows.push(row('duration',song.duration?fmt(song.duration):'-'));
+    rows.push(row('source',esc((song.source||'local').replace('_',' '))));
+    rows.push(row('plays',String(song.play_count||0)));
+    rows.push(row('added',fmtD(song.added_at)));
+    rows.push(row('last played',fmtD(song.last_played)));
+    rows.push(row('loudness',song.loudness_lufs!=null?song.loudness_lufs.toFixed(1)+' LUFS':'-'));
+    if(x){
+      if(x.file) rows.push(row('file',esc(x.file.ext.toUpperCase()+' · '+(x.file.size/1048576).toFixed(1)+' MB')));
+      const mv=x.mv_url||(song.mv_video_id?'https://www.youtube.com/watch?v='+song.mv_video_id:'');
+      if(mv) rows.push(row('music video',link(mv,'open on youtube')));
+      const g=x.genius;
+      if(g){
+        if(g.url) rows.push(row('genius',link(g.url,'open on genius')));
+        rows.push(row('genius match',g.confirmed?'confirmed':(g.confidence!=null?Math.round(g.confidence*100)+'% match':'matched')));
+        if(g.language) rows.push(row('language',esc(g.language)));
+        if(g.youtube && g.youtube!==mv) rows.push(row('youtube (genius)',link(g.youtube,'open')));
+      }
+    }
+    return `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">${cov}<div style="overflow:hidden;min-width:0"><div style="font:var(--type-body-medium);font-variation-settings:var(--fv-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(song.title||'untitled')}</div><div style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);margin-top:2px">${esc(song.artist||'')}</div></div></div><div>${rows.join('')}</div>${song.album_id?`<button class="btn btn-tonal mu-ripple" style="margin-top:12px;width:100%" onclick="closeModal();setView('album',null,'${song.album_id}')">open album</button>`:''}`;
+  };
+  showModal('song details',build(null),
+    `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title||'')}','${escJ(song.artist||'')}')">stats</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
   );
+  const x=await api('GET',`/api/songs/${sid}/extra`).catch(()=>null);
+  const mb=document.getElementById('mbody');
+  if(mb && x && !x.error) mb.innerHTML=build(x);
 }
 
 const _ARTIST_PFP_STYLE = 'width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0';
@@ -25101,7 +25166,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   if(isMobile()){
     const isSel=!isSpecial&&S.selected.has(s.id);
     const idx=vlistIdx!==undefined?vlistIdx:(_viewSongIdx.get(s.id)??S.viewSongs.indexOf(s));
-    const _mobArtistHtml=artistNamesHtml(s.artist||'',s.featuring_artists||'');
+    const _mobArtistHtml=songArtistLineHtml(s);
     const _inAlbumView=opts.view==='album';
     const _mobAlbumPart=(!_inAlbumView&&s.album)?`<span style="color:var(--color-on-surface-variant)">${esc(s.album)}</span>`:'';
     const subtitle=([_mobArtistHtml,_mobAlbumPart].filter(Boolean).join(' · '));
@@ -25138,7 +25203,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
 
   cell.thumb=`<div class="sthumb">${cov}</div>`;
   const _ghostTitleWrap = isGhost ? 'opacity:0.45;' : '';
-  cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):artistNamesHtml(s.artist||'',s.featuring_artists||'')}${(!isSpecial&&_listCompact&&!isMobile()&&opts.view!=='album'&&s.album)?' · '+esc(s.album):''}</div></div></div>`;
+  cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):songArtistLineHtml(s)}${(!isSpecial&&_listCompact&&!isMobile()&&opts.view!=='album'&&s.album)?' · '+esc(s.album):''}</div></div></div>`;
   const _inAlbumView = opts.view === 'album';
   const _albLink = s.album_id && s.album && !_inAlbumView && !isMobile();
   cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}"${s.album?'':' style="opacity:.4"'} onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${s.album_id}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(s.album||'-')}</div>`;
@@ -25254,6 +25319,40 @@ function artistNameHtml(name, style='') {
   return `<span class="artist-link" style="cursor:pointer;${style}" onclick="event.stopPropagation();navigateToArtist('${escJ(name)}',false,this)"
     onmouseenter="this.style.color='var(--color-primary)';this.style.textDecoration='underline'"
     onmouseleave="this.style.color='';this.style.textDecoration='';">${esc(name)}</span>`;
+}
+
+const _CRED_ORDER = ['Featuring', 'Producer', 'Executive Producer', 'Writer', 'Composer', 'Lyricist', 'Mixing Engineer', 'Mastering Engineer', 'Recording Engineer', 'Vocals', 'Background Vocals', 'Label', 'Publisher', 'Distributor'];
+const _credCache = new Map();
+function _songCredits(s) {
+  const raw = s && s.credits;
+  if (!raw) return [];
+  let r = _credCache.get(raw);
+  if (r) return r;
+  r = raw.split('\x1e').map(x => { const i = x.indexOf('\x1f'); return i < 0 ? null : { role: x.slice(0, i), name: x.slice(i + 1) }; }).filter(Boolean);
+  if (_credCache.size > 5000) _credCache.clear();
+  _credCache.set(raw, r);
+  return r;
+}
+function _songCreditsGrouped(s) {
+  const m = new Map();
+  for (const c of _songCredits(s)) { if (!m.has(c.role)) m.set(c.role, []); m.get(c.role).push(c.name); }
+  const rank = r => { const i = _CRED_ORDER.indexOf(r); return i < 0 ? 999 : i; };
+  return [...m.entries()].sort((x, y) => rank(x[0]) - rank(y[0]));
+}
+function _songProducers(s) {
+  return _songCredits(s).filter(c => c.role === 'Producer').map(c => c.name);
+}
+function songArtistLineHtml(s, style = '') {
+  const ftPre = CFG.list_feat_prefix === true, prPre = CFG.list_prod_prefix === true;
+  const prim = (s.artist || '').split(', ').filter(Boolean);
+  const feats = (s.featuring_artists || '').split(', ').filter(Boolean);
+  let prods = CFG.list_show_producers === true ? _songProducers(s) : [];
+  if (!prPre) prods = prods.filter(n => !prim.includes(n) && !feats.includes(n));
+  const names = arr => arr.map(x => artistNameHtml(x, style)).join(', ');
+  let out = names(prim);
+  if (feats.length) out += (out ? (ftPre ? ' ' : ', ') : '') + (ftPre ? 'ft. ' : '') + names(feats);
+  if (prods.length) out += (out ? ', ' : '') + (prPre ? 'prod. ' : '') + names(prods);
+  return out;
 }
 
 function artistNamesHtml(artistStr, featStr, style='') {
@@ -34774,6 +34873,12 @@ function renderSettings() {
         ${row('use genius metadata', 'show names, feats, album and release date from genius when a match exists, genius also splits producers out of the feats. off = show what youtube music or the file gave. nothing stored is changed, flip it any time', toggle('genius_override', CFG.genius_override !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
         ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
+        ${row('"prod." label', 'write producers as "prod. name" instead of just adding them to the commas', toggle('list_prod_prefix', CFG.list_prod_prefix === true, 'rerenderCurrentView()'))}
+        ${row('"ft." label', 'write feats as "artist ft. name, name" instead of plain commas', toggle('list_feat_prefix', CFG.list_feat_prefix === true, 'rerenderCurrentView()'))}
+        ${row('search in producers', 'searching a name also finds songs it produced (prod:name always works)', toggle('search_credits_prod', CFG.search_credits_prod === true, 'rerenderCurrentView()'))}
+        ${row('search in writers', 'also finds songs it wrote, composed or did lyrics for (credit:name always works)', toggle('search_credits_writers', CFG.search_credits_writers === true, 'rerenderCurrentView()'))}
+        ${row('search in other credits', 'also finds songs by mixing, mastering, vocals, label and the other freetyped credits', toggle('search_credits_other', CFG.search_credits_other === true, 'rerenderCurrentView()'))}
         ${row('sync hue to cover', 'make interface colors match the song cover art', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.cover_art_hue_sync ? 'checked' : ''} onchange="_onHueSyncToggle(this.checked)" onclick="event.stopPropagation()">
