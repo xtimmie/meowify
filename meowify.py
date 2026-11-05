@@ -14638,8 +14638,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-annpop-body p{margin:0 0 .7em}
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
-#blyrics-src .sw-g { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; }
-#blyrics-src.active .sw-g { transform: rotate(180deg); }
+.lyr-srcbtn{width:auto!important;padding:0 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label)}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
 .lyr-bar>i{position:absolute;top:0;bottom:0;width:35%;background:var(--color-primary);border-radius:2px;animation:lyrbar 1.1s ease-in-out infinite}
@@ -14838,6 +14837,13 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #blyrics-sync .clock-hour   { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; transform: rotate(240deg) }
 #blyrics-sync.active .clock-minute { transform: rotate(120deg); }
 #blyrics-sync.active .clock-hour   { transform: rotate(-5deg); }
+#blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .6s cubic-bezier(.5,1.25,.4,1); }
+#blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(.2); }
+#blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(.34); transition-delay: .07s; }
+#blyrics-ann.active .ann-l1 { transform: scaleX(1); }
+#blyrics-ann.active .ann-l2 { transform: scaleX(1); }
+#blyrics-ann .ann-bub { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; }
+#blyrics-ann.active .ann-bub { transform: rotate(-4deg); }
 
 /* ── transport icon animations ─────────────────────────────────────── */
 
@@ -24003,7 +24009,7 @@ function _lyrToolbar(showSwitch, src, hasAnn) {
   const ab = document.getElementById('blyrics-ann');
   if (sb) {
     sb.style.display = showSwitch ? '' : 'none';
-    sb.classList.toggle('active', src === 'genius');
+    sb.textContent = src;
     sb.title = 'source: ' + src + ' - click for ' + (src === 'genius' ? 'lrclib' : 'genius');
   }
   if (ab) {
@@ -24077,16 +24083,15 @@ function _lyrWire() {
   const syncBtn = document.getElementById('blyrics-sync');
   if (box && syncBtn) {
     const src = document.createElement('button');
-    src.className = 'cbtn mu-ripple';
+    src.className = 'cbtn mu-ripple lyr-srcbtn';
     src.id = 'blyrics-src';
-    src.innerHTML = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><defs><mask id="sw-mask"><rect width="20" height="20" fill="white"/><g class="sw-g"><rect x="3" y="5.5" width="11" height="2.2" rx="1.1" fill="black"/><rect x="3" y="12.3" width="7" height="2.2" rx="1.1" fill="black"/></g></mask></defs><circle cx="10" cy="10" r="10" fill="currentColor" mask="url(#sw-mask)"/></svg>';
     src.style.display = 'none';
     src.onclick = () => { const d = S.lyricsData; if (!S.cur || !d) return; lyrSetSrc(_lyrPickSrc(S.cur, d) === 'genius' ? 'lrclib' : 'genius'); };
     const ann = document.createElement('button');
     ann.className = 'cbtn mu-ripple';
     ann.id = 'blyrics-ann';
     ann.style.display = 'none';
-    ann.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg>';
+    ann.innerHTML = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><defs><mask id="ann-mask"><rect width="20" height="20" fill="white"/><rect class="ann-l1" x="5" y="5" width="10" height="2" rx="1" fill="black"/><rect class="ann-l2" x="5" y="9" width="6" height="2" rx="1" fill="black"/></mask></defs><g class="ann-bub"><path d="M5 2h10a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4H9.6L5.5 18.4V15H5a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" mask="url(#ann-mask)"/></g></svg>';
     ann.onclick = lyrToggleAnn;
     box.insertBefore(src, syncBtn);
     box.insertBefore(ann, syncBtn);
