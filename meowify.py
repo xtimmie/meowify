@@ -9372,7 +9372,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
         results['errors'].append(f'manifest push: {e}')
 
     _dbx_idle.update(cursor=_idle_cursor, stamp=_idle_stamp, t=_time.time(),
-                     clean=bool(_idle_cursor) and push_db and pull_db and pull_songs
+                     clean=bool(_idle_cursor) and push_db and pull_db and (pull_songs or _net_saver_now())
                            and not results['errors'])
     _status('done')
     return results
@@ -10249,6 +10249,64 @@ def _dbx_apply_pref_reset(key, ts):
 
 _dbx_status_msg = ''
 
+# ── network profiles: separate sync behaviour for wifi vs mobile data (android only) ──
+# full = library, songs, covers | saver = library db + settings only | off = no auto sync
+_NET_MODES = ('full', 'saver', 'off')
+_net_cache = {'t': 0.0, 'kind': 'wifi'}
+_net_seen = [None]
+
+def _net_kind():
+    """'wifi' (unmetered), 'cell' (cellular or any metered network, hotspots included), 'none' (offline).
+    desktop is always 'wifi'. if the probe fails (e.g. apk without ACCESS_NETWORK_STATE) it says 'wifi' so nothing gets blocked"""
+    if not IS_ANDROID:
+        return 'wifi'
+    now = _time.time()
+    if now - _net_cache['t'] < 3:
+        return _net_cache['kind']
+    kind = 'wifi'
+    try:
+        from java import jclass, cast
+        ctx = jclass('com.chaquo.python.Python').getPlatform().getApplication()
+        cm = cast(jclass('android.net.ConnectivityManager'), ctx.getSystemService('connectivity'))
+        net = cm.getActiveNetwork()
+        if net is None:
+            kind = 'none'
+        else:
+            caps = cm.getNetworkCapabilities(net)
+            if caps is not None:
+                nc = jclass('android.net.NetworkCapabilities')
+                if caps.hasTransport(nc.TRANSPORT_CELLULAR) or not caps.hasCapability(nc.NET_CAPABILITY_NOT_METERED):
+                    kind = 'cell'
+    except Exception:
+        kind = 'wifi'
+    _net_cache.update(t=now, kind=kind)
+    return kind
+
+def _net_profile():
+    kind = _net_kind()
+    if kind == 'none':
+        mode = 'off'
+    elif kind == 'cell':
+        mode = CFG.get('net_cell_mode', 'saver')
+    else:
+        mode = CFG.get('net_wifi_mode', 'full')
+    if mode not in _NET_MODES:
+        mode = 'full'
+    return {'kind': kind, 'mode': mode, 'songs': mode == 'full', 'auto': mode != 'off'}
+
+def _net_saver_now():
+    return _net_profile()['mode'] == 'saver'
+
+def _net_poll_changed(p):
+    """true once when the network class or its mode flips. saver skips songs, so without this the idle check
+    would keep calling the library 'idle' after switching back to wifi and the song backlog would never move"""
+    sig = (p['kind'], p['mode'])
+    prev, _net_seen[0] = _net_seen[0], sig
+    if prev is None or prev == sig:
+        return False
+    _dbx_idle['clean'] = False
+    return True
+
 _dbx_poll_state = {'wait': 20}
 _dbx_wake = threading.Event()
 _dbx_watch_ref = [None]
@@ -10258,6 +10316,9 @@ def _dbx_watch():
         try:
             if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
                 _dbx_stop.wait(10)
+                continue
+            if not _net_profile()['auto']:
+                _dbx_stop.wait(15)
                 continue
             if _dbx_lock.locked():
                 _dbx_stop.wait(2)
@@ -10283,6 +10344,10 @@ def _dbx_bg_poll():
         _dbx_poll_state['wait'] = 20 if _dbx_idle['clean'] else 30
         if not CFG.get('dropbox_sync_enabled') or not CFG.get('dropbox_refresh_token'):
             continue
+        _np = _net_profile()
+        _net_poll_changed(_np)
+        if not _np['auto']:
+            continue  # network profile: no auto sync here (mobile data set to off, or offline)
         # (the recent-sync gate now lives below and only applies to purely local activity)
         if not _dbx_lock.acquire(blocking=False):
             continue  # manual sync in progress, skip this cycle
@@ -10301,7 +10366,7 @@ def _dbx_bg_poll():
             _r = dbx_sync_now(push_db=sync_lib,
                          pull_db=sync_lib,
                          push_songs=False,  # relay mode: pushes follow peer manifests (_dbx_needs_push), push_songs no longer bypasses
-                         pull_songs=sync_lib,
+                         pull_songs=sync_lib and _np['songs'],
                          sync_settings=CFG.get('sync_settings', True),
                          status_cb=lambda m: _set_dbx_status(m))
             if isinstance(_r, dict) and _r.get('backlog') and _r.get('relay_moved'):
@@ -10621,6 +10686,8 @@ def api_dbx_sync():
     push_songs    = data.get('push_songs', False)
     sync_settings = CFG.get('sync_settings', True)
     sync_library  = CFG.get('sync_library', True)
+    _np = _net_profile()  # manual sync follows the profile too, songs only move when it is set to everything
+    push_songs = push_songs and _np['songs']
 
     def _run():
         global _dbx_sync_running, _dbx_sync_result, _dbx_status_msg
@@ -10631,7 +10698,7 @@ def api_dbx_sync():
             return  # bg poll running, bail
         try:
             r = dbx_sync_now(push_db=sync_library, pull_db=sync_library,
-                             push_songs=push_songs, pull_songs=sync_library,
+                             push_songs=push_songs, pull_songs=sync_library and _np['songs'],
                              sync_settings=sync_settings,
                              status_cb=lambda m: _set_dbx_status(m))
             _dbx_sync_result = r
@@ -10674,6 +10741,7 @@ def api_dbx_status():
                         'song_count': _dbx_local_playable_count()},
         'peers':       peers,
         'progress':    progress,
+        'net':         _net_profile(),
     })
 
 @app.route('/api/deps', methods=['GET'])
@@ -14837,8 +14905,8 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #blyrics-sync .clock-hour   { transition: transform .6s cubic-bezier(.5,1.25,.4,1); transform-origin: 10px 10px; transform: rotate(240deg) }
 #blyrics-sync.active .clock-minute { transform: rotate(120deg); }
 #blyrics-sync.active .clock-hour   { transform: rotate(-5deg); }
-#blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .3s cubic-bezier(.3,2,.4,1); }
-#blyrics-ann.active .ann-l1, #blyrics-ann.active .ann-l2 { transition: transform .3s cubic-bezier(.3,1,.4,1); }
+#blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .3s cubic-bezier(0,1,0,1); }
+#blyrics-ann.active .ann-l1, #blyrics-ann.active .ann-l2 { transition: transform .3s cubic-bezier(.3,1.5,.4,1); }
 #blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(0); }
 #blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(0); }
 #blyrics-ann.active .ann-l1 { transform: scaleX(1); }
@@ -26178,6 +26246,7 @@ async function refreshDbxStatus() {
     window._dbxLastResult = s.last_result || null;
     window._dbxPeers      = s.peers || [];
     window._dbxThisDevice = s.this_device || null;
+    window._netInfo       = s.net || null;
     window._dbxProgress   = s.progress || {};
     CFG.dropbox_sync_enabled = s.enabled;
     // auto-sync just finished - pull download panel rows for any files it pulled
@@ -36463,6 +36532,15 @@ function renderSettings() {
             ${row('sync library', 'sync play history, songs and covers', toggle('sync_library', CFG.sync_library!==false))}\
             ${row('sync settings', 'sync theme, format and other preferences', toggle('sync_settings', CFG.sync_settings!==false))}\
             ${row('live sync', 'during a manual sync, wait for the other device to move songs together', toggle('dbx_live_sync', CFG.dbx_live_sync===true))}\
+            ${(()=>{
+              if (!_IS_ANDROID_UA) return '';
+              const n = window._netInfo || {};
+              const mk = (k, def) => `<div class='select-wrap' style='width:140px'><select class='input' style='width:140px' data-k='${k}' onchange='saveSetting(this.dataset.k,this.value)'>${[['full','everything'],['saver','data saver'],['off','off']].map(o => `<option value='${o[0]}'${(CFG[k]||def)===o[0]?' selected':''}>${o[1]}</option>`).join('')}</select><svg class='select-arrow' viewBox='0 0 24 24' width='16' height='16' fill='none' stroke='currentColor' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg></div>`;
+              const kindTxt = ({wifi:'wifi / unmetered', cell:'mobile data / metered', none:'offline'})[n.kind] || 'unknown';
+              return row('on wifi', 'auto sync on unmetered networks. everything: library, songs, covers. data saver: library and settings only. off: no auto sync', mk('net_wifi_mode','full'))
+                   + row('on mobile data', 'same options for mobile data and any metered network like hotspots. manual sync follows it too, songs only move on everything', mk('net_cell_mode','saver'))
+                   + (n.kind ? row('current network', '', `<span style='font:var(--type-label-small);color:var(--color-on-surface-variant)'>${kindTxt}</span>`) : '');
+            })()}\
             ${(()=>{
               const peers = window._dbxPeers || [];
               const me    = window._dbxThisDevice;
