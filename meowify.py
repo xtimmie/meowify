@@ -3215,7 +3215,11 @@ def _save_song_source(sid, title=None, artist=None, featuring=None, album=None,
 def _set_song_user_edits(sid, updates):
     """manual edits live in their own json cell on the source row so resolve never loses them"""
     m = {'title': 'title', 'artist': 'artist', 'featuring_artists': 'featuring'}
-    ed = {m[k]: (v or '') for k, v in updates.items() if k in m}
+    with db() as c:
+        _cr = c.execute("SELECT title,artist,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+    _curm = {'title': _cr[0], 'artist': _cr[1], 'featuring_artists': _cr[2]} if _cr else {}
+    # only pin fields that actually changed, the edit form always sends all three
+    ed = {m[k]: (v or '') for k, v in updates.items() if k in m and (v or '') != (_curm.get(k) or '')}
     if not ed:
         return
     _save_song_source(sid)
@@ -3315,14 +3319,17 @@ def _rebuild_song_credits(sid, data):
         add('Producer', a.get('name'), i)
     for i, a in enumerate(data.get('writer_artists') or []):
         add('Writer', a.get('name'), i)
-    if not rows:
-        return
+    # always clears first: a refetch with fewer credits, a changed match or an untrusted match must not leave old rows behind
     with db() as c:
         c.execute("DELETE FROM song_credits WHERE song_id=?", (sid,))
+        if not rows:
+            return
+        amap = {}
+        for _aid, _an in c.execute("SELECT id, name FROM artists").fetchall():
+            amap.setdefault((_an or '').lower(), _aid)
         for role, name, pos in rows:
-            ar = c.execute("SELECT id FROM artists WHERE _ulower(name)=?", (name.lower(),)).fetchone()
             c.execute("INSERT OR IGNORE INTO song_credits (song_id, role, name, artist_id, position) VALUES (?,?,?,?,?)",
-                      (sid, role, name, ar[0] if ar else None, pos))
+                      (sid, role, name, amap.get(name.lower()), pos))
 
 _resolve_lock = threading.RLock()
 
@@ -3371,6 +3378,8 @@ def _resolve_song_impl(sid, sync_artists=False):
                 gv = _genius_view(gdata, gopts) if _use_g else {}
             else:
                 gdata = None
+        if gr and not gdata:
+            _rebuild_song_credits(sid, {})  # genius row exists but isnt trusted (or unreadable): no credits shown
         if not src and not gv and not gdata:
             return True
         def pick(field):
@@ -3401,7 +3410,7 @@ def _resolve_song_impl(sid, sync_artists=False):
                 c.execute("UPDATE songs SET " + ', '.join(sets) + " WHERE id=?", vals)
         if gdata:
             _rebuild_song_credits(sid, gdata)
-        if sync_artists:
+        if sync_artists and sets:
             with db() as c:
                 r = c.execute("SELECT artist, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
                 if r:
@@ -3424,6 +3433,12 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
     # raw genius layer first, the display columns get rebuilt from it by resolve_song below
     _store_song_genius(sid, song_data, confidence, confirmed, skip_title)
     _save_song_source(sid)
+    with db() as c:
+        _gt = c.execute("SELECT confidence, confirmed FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+    if _gt and not _genius_trusted({'confidence': _gt[0], 'confirmed': _gt[1]}):
+        # low confidence and not confirmed: the raw layer is kept for later, but album / cover / mv / file tags stay untouched
+        resolve_song(sid)
+        return
     g_album_data = song_data.get('album')
     g_title_clean = clean_title(g_title)
 
@@ -3557,17 +3572,18 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
     resolve_song(sid)
     with db() as c:
         _sa = c.execute("SELECT artist, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+        _sr = c.execute("SELECT artist, featuring FROM song_source WHERE song_id=?", (sid,)).fetchone()
     if _sa:
-        with db() as c:
-            _upsert_song_artists(c, sid, _sa[0] or '', _sa[1] or '')
         # add genius artist names as aliases on the existing artist rows
         # (the song keeps yt names as canonical, genius names go to aliases)
         try:
             import json as _json
             g_primary_name = (song_data.get('primary_artist') or {}).get('name', '').strip()
             g_feat_names = [(a.get('name') or '').strip() for a in (song_data.get('featured_artists') or []) if a.get('name')]
-            yt_primary_names = _split_artists(_sa[0] or '')
-            yt_feat_names = _split_artists(_sa[1] or '')
+            # the youtube side of the pairing is the raw source layer, the display columns already hold the genius names
+            _ytv = _sr or _sa
+            yt_primary_names = _split_artists(_ytv[0] or '')
+            yt_feat_names = _split_artists(_ytv[1] or '')
             pairs = []
             if g_primary_name and yt_primary_names:
                 pairs.append((g_primary_name, yt_primary_names[0]))
@@ -3595,6 +3611,9 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
                             c.execute("UPDATE artists SET aliases=? WHERE id=?", (_json.dumps(aliases), row[0]))
         except Exception as _ae:
             _log_genius.warning('genius alias upsert err: %s', _ae)
+        # upsert after the aliases so a genius spelling resolves to the existing artist instead of making a duplicate
+        with db() as c:
+            _upsert_song_artists(c, sid, _sa[0] or '', _sa[1] or '')
     # song_credits is rebuilt from the raw genius blob inside resolve_song
 
     if file_path:
