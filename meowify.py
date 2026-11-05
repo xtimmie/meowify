@@ -14618,10 +14618,10 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-wrap{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);line-height:1.8}
 .gl-sec{margin-top:20px;padding-top:12px;border-top:1px solid color-mix(in oklch,var(--color-on-surface) 6%,transparent)}
 .gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
-.gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);opacity:.6;margin-bottom:6px;letter-spacing:.02em}
-.gl-c{color:color-mix(in oklch,var(--color-on-surface-variant) 52%,var(--ac))}
-.gl-n{color:color-mix(in oklch,var(--color-on-surface-variant) 35%,var(--ac))}
-.gl-n::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ac);margin-right:5px;vertical-align:1px}
+.gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:color-mix(in oklch,var(--color-on-surface-variant) 60%,transparent);margin-bottom:6px;letter-spacing:.02em}
+.gl-c{color:color-mix(in oklch,var(--color-on-surface-variant) 28%,var(--ac))}
+.gl-n{color:var(--ac)}
+.gl-n{font-weight:inherit}
 .gl-l{min-height:1.8em}
 .gl-gap{height:.8em}
 .gl-a{cursor:pointer;border-radius:3px;background:color-mix(in oklch,var(--color-primary) 9%,transparent);transition:background var(--dur-2);-webkit-box-decoration-break:clone;box-decoration-break:clone}
@@ -23802,7 +23802,7 @@ function _lyrSanitize(html) {
 
 const _LYR_HUES = [28, 88, 150, 200, 262, 330];
 function _lyrColOn() { return CFG.lyrics_artist_colors !== false; }
-function _lyrHue(h) { return 'oklch(0.82 0.11 ' + h + ')'; }
+function _lyrHue(h) { return 'oklch(0.8 0.17 ' + h + ')'; }
 function _lyrStyleKey(s) { return (s.i ? 'i' : '') + (s.b ? 'b' : ''); }
 
 function _lyrMajKey(counts) {
@@ -23888,7 +23888,7 @@ function _lyrGeniusHtml(g) {
       const single = Object.keys(byKey).filter(k => byKey[k].length === 1);
       const used = new Set(lines0.filter(l => l.length).map(_lyrLineKey));
       const hit = single.filter(k => used.has(k));
-      if (single.length >= 2 && hit.length >= 2) {
+      if (single.length >= 2 && (hit.length >= 2 || (hit.length === 1 && hit[0] !== ''))) {
         nameCol = {};
         keyCol = {};
         single.forEach(k => {
