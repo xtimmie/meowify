@@ -2603,6 +2603,15 @@ def _lrclib_fetch(artist, title, duration, is_video=False):
         result = _try({'artist_name': artist or '', 'track_name': title or ''})
     return result
 
+def _song_instrumental(sid):
+    """genius says the song is an instrumental (only trusted matches count)"""
+    try:
+        with db() as c:
+            r = c.execute("SELECT data, confidence, confirmed FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+        return bool(r and r[0] and _genius_trusted({'confidence': r[1], 'confirmed': r[2]}) and json.loads(r[0]).get('instrumental') is True)
+    except Exception:
+        return False
+
 def _lyrics_fetch_and_cache(song):
     sid = song['id']
     with _lyrics_lock:
@@ -12729,20 +12738,23 @@ def api_genius_search_route(sid):
 
 @app.route('/api/songs/<sid>/lyrics', methods=['GET'])
 def api_get_lyrics(sid):
+    _ins = _song_instrumental(sid)
     with _lyrics_lock:
         cached = _lyrics_cache.get(sid)
     if cached:
-        return jsonify(cached)
+        return jsonify({**cached, 'instrumental': True} if _ins and not (cached.get('lrc') or cached.get('plain')) else cached)
     with db() as c:
         row = c.execute("SELECT lrc, plain, source, fetched_at, source_duration FROM lyrics WHERE song_id=?", (sid,)).fetchone()
         if row:
             data = {'lrc': row[0], 'plain': row[1], 'source': row[2], 'fetched_at': row[3], 'source_duration': row[4]}
             with _lyrics_lock:
                 _lyrics_cache_put(sid, data)
-            return jsonify(data)
+            return jsonify({**data, 'instrumental': True} if _ins and not (row[0] or row[1]) else data)
         song = c.execute("SELECT id, title, artist, duration, source, genius_id FROM songs WHERE id=?", (sid,)).fetchone()
     if not song:
         return jsonify({'error': 'not found'}), 404
+    if _ins:
+        return jsonify({'lrc': None, 'plain': None, 'source': None, 'instrumental': True})  # no lrclib / genius lookups for instrumentals
     song_dict = dict(song)
     _lyrics_fetch_and_cache(song_dict)
     with _lyrics_lock:
@@ -23224,7 +23236,7 @@ async function renderLyricsForSong(song, forceSynced) {
   const _fetchLyrics = async () => {
     const cached = await fetch('/api/songs/' + _lyrSid + '/lyrics').then(r => r.json()).catch(() => null);
     // if backend is still processing (no result yet but song unchanged), poll up to 3 more times
-    if ((!cached || (cached.lrc == null && cached.plain == null && !cached.genius_fail)) &&
+    if ((!cached || (cached.lrc == null && cached.plain == null && !cached.genius_fail && !cached.instrumental)) &&
         _lyrAttempts < 3 && S.cur?.id === _lyrSid) {
       _lyrAttempts++;
       await new Promise(r => setTimeout(r, 2500));
@@ -23234,6 +23246,14 @@ async function renderLyricsForSong(song, forceSynced) {
   };
   data = await _fetchLyrics();
   if (S.cur?.id !== sid) return; // song changed while fetching - discard stale result
+  if (data && data.instrumental && data.lrc == null && data.plain == null) {
+    S.lyricsData = data;
+    body.innerHTML = `<div style="padding:20px 0;text-align:center">
+      <div style="color:var(--color-on-surface-variant);font:var(--type-body-medium);font-variation-settings:var(--fv-body);margin-bottom:4px">this song is an instrumental</div>
+      <div style="color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.7">genius marks it as having no lyrics</div>
+    </div>`;
+    return;
+  }
   if (!data || (data.lrc == null && data.plain == null)) {
     const failReason = data?.genius_fail;
     let failMsg = 'no lyrics found';
@@ -23433,7 +23453,7 @@ function _npLrcSectionHtml(song) {
   }
   if (S.lyricsData) {
     _npLrcMode = 'none';
-    return box('<div class="np-lrc-none">no lyrics found</div>');
+    return box('<div class="np-lrc-none">' + (S.lyricsData.instrumental ? 'instrumental' : 'no lyrics found') + '</div>');
   }
   _npLrcMode = 'loading';
   return box('<div class="np-lrc-none" id="np-lrc-loading">searching...</div>');
