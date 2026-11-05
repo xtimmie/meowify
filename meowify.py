@@ -23851,6 +23851,11 @@ function _lyrArtistMap(g) {
 }
 
 function _lyrLineKey(ln) {
+  const s = ln.find(x => x.t.trim() && !/^\s*\(.*\)\s*$/.test(x.t)) || ln[0];
+  return _lyrStyleKey(s);
+}
+
+function _lyrLineKeyOld(ln) {
   const cnt = {}, all = {};
   ln.forEach(s => {
     const k = _lyrStyleKey(s), w = s.t.trim().length;
