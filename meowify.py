@@ -531,6 +531,17 @@ _SINGLE_BR_RE = re.compile(r'\s*[\(\[]\s*(?:feat|ft|featuring|with|prod|explicit
 _SINGLE_TAIL_RE = re.compile(r'\s*[-\u2013\u2014]\s*single\s*$', re.I)
 _SINGLE_FEAT_RE = re.compile(r'\s+(?:feat|ft|featuring)\.?\s+.*$', re.I)
 
+def _disp_rows(rows, *keys):
+    """main artist name for rows that dont come through songs_display (albums, album_tracks, stats). the stored value stays in <key>_raw"""
+    if not CFG.get('artist_use_main_name', True):
+        return rows
+    for d in rows:
+        for k in keys:
+            if d.get(k):
+                d.setdefault(k + '_raw', d[k])
+                d[k] = _disp_artist(d[k + '_raw'])
+    return rows
+
 def _single_title_norm(s):
     t = s or ''
     for _ in range(2):
@@ -583,13 +594,13 @@ SELECT id, sync_id, title,
        songs.artist AS artist_raw,
        songs.featuring_artists AS featuring_raw,
        songs.release_date AS release_date,
-       (SELECT group_concat(role || char(31) || name, char(30)) FROM (SELECT role, name FROM song_credits WHERE song_id = songs.id ORDER BY position)) AS credits
+       (SELECT group_concat(role || char(31) || _disp_artist(name), char(30)) FROM (SELECT role, name FROM song_credits WHERE song_id = songs.id ORDER BY position)) AS credits
 FROM songs
 """
 
 def _ensure_songs_display_view(c):
     row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
-    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or ''):
+    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or '') and '_disp_artist(name)' in (row[0] or ''):
         return
     c.execute("DROP VIEW IF EXISTS songs_display")
     c.execute(_SONGS_DISPLAY_SQL)
@@ -3173,7 +3184,7 @@ _GENIUS_AUTHORITATIVE = {'featuring'}
 _GENIUS_KEEP = ('id', 'title', 'full_title', 'url', 'primary_artist', 'primary_artists',
                 'featured_artists', 'writer_artists', 'producer_artists', 'custom_performances',
                 'album', 'release_date_components', 'media', 'song_art_image_url',
-                'header_image_thumbnail_url', 'language')
+                'header_image_thumbnail_url', 'language', 'instrumental', 'lyrics_state')
 
 def _genius_trusted(g):
     """second check, runs every time the layers are resolved (the first one is the search
@@ -5945,18 +5956,22 @@ def api_stats():
             continue
         for a in _split_artists(artist):
             if a:
-                _add_artist(a, a, play_count, duration, last_played, cover_path, sid)
+                _dn = _disp_artist(a) if CFG.get('artist_use_main_name', True) else a
+                _add_artist(_dn, _dn, play_count, duration, last_played, cover_path, sid)
 
     for gs in ghost_plays:
         if not gs['artist'] or not gs['play_count']:
             continue
         for a in _split_artists(gs['artist']):
             if a:
-                _add_artist(a, a, gs['play_count'], None, gs['last_played'])
+                _dn = _disp_artist(a) if CFG.get('artist_use_main_name', True) else a
+                _add_artist(_dn, _dn, gs['play_count'], None, gs['last_played'])
 
     top_artists_plays = sorted(artist_stats.values(), key=lambda x: -x['play_count'])[:30]
     top_artists_time  = sorted(artist_stats.values(), key=lambda x: -x['listen_seconds'])[:30]
 
+    for _l in (top_played_merged, recently_played_merged, ghost_plays):
+        _disp_rows(_l, 'artist')
     result = {
         'top_played': top_played_merged[:50],
         'recently_played': recently_played_merged[:50],
@@ -6157,6 +6172,7 @@ def api_song_extra(sid):
         yt = next((m.get('url') for m in (d.get('media') or [])
                    if isinstance(m, dict) and m.get('provider') == 'youtube' and m.get('url')), None)
         out['genius'] = {'id': g[0], 'url': d.get('url'), 'language': d.get('language'), 'youtube': yt,
+                         'instrumental': d.get('instrumental'), 'lyrics_state': d.get('lyrics_state'),
                          'confidence': g[1], 'confirmed': bool(g[2])}
     return jsonify(out)
 
@@ -6471,7 +6487,7 @@ def api_albums():
         rows = c.execute("""SELECT a.* FROM albums a
             WHERE (SELECT COUNT(*) FROM songs s WHERE s.album_id=a.id) >= 2
             ORDER BY a.created_at DESC""").fetchall()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(_disp_rows([dict(r) for r in rows], 'artist'))
 
 @app.route('/api/artists')
 def api_artists():
@@ -6544,7 +6560,7 @@ def api_artist_albums(aid):
             WHERE sa.artist_id IN (SELECT value FROM json_each(?))
             ORDER BY a.year DESC, a.created_at DESC
         """, (json.dumps(_artist_link_ids(c, aid)),)).fetchall()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(_disp_rows([dict(r) for r in rows], 'artist'))
 
 @app.route('/api/artists/<aid>/page')
 def api_artist_page(aid):
@@ -6570,7 +6586,7 @@ def api_artist_page(aid):
             if not ids:
                 return []
             q = ','.join('?' * len(ids))
-            out = [dict(r) for r in c.execute(f"SELECT * FROM albums WHERE id IN ({q})", ids).fetchall()]
+            out = _disp_rows([dict(r) for r in c.execute(f"SELECT * FROM albums WHERE id IN ({q})", ids).fetchall()], 'artist')
             out.sort(key=lambda a: (a.get('year') or '', a.get('created_at') or 0), reverse=True)
             return out
 
@@ -12189,7 +12205,7 @@ def api_album_detail(aid):
     with db() as c:
         row = c.execute("SELECT * FROM albums WHERE id=?", (aid,)).fetchone()
     if not row: return jsonify({'error':'not found'}), 404
-    return jsonify(dict(row))
+    return jsonify(_disp_rows([dict(row)], 'artist')[0])
 
 @app.route('/api/songs/<sid>/unlink-album', methods=['POST'])
 def api_song_unlink_album(sid):
@@ -12350,7 +12366,7 @@ def api_album_all_tracks(aid):
             CASE WHEN at.song_id IS NOT NULL THEN 1 ELSE 0 END as owned
             FROM album_tracks at WHERE at.album_id=?
             ORDER BY at.track_num, at.title""", (aid,)).fetchall()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(_disp_rows([dict(r) for r in rows], 'artist'))
 
 @app.route('/api/album_tracks/<tid>')
 def api_get_album_track(tid):
@@ -12361,6 +12377,7 @@ def api_get_album_track(tid):
     _at = (d.get('artist') or '').strip()
     _tt = (d.get('title') or '').strip()
     d['search_query'] = f'{_at} - {_tt}' if _at and _tt else (_at or _tt)
+    _disp_rows([d], 'artist')
     # video_id column now exists - normalize missing to empty string for frontend check
     if not d.get('video_id'):
         d['video_id'] = ''
@@ -24317,6 +24334,8 @@ async function showSongDetails(sid){
         if(g.url) rows.push(row('genius',link(g.url,'open on genius')));
         rows.push(row('genius match',g.confirmed?'confirmed':(g.confidence!=null?Math.round(g.confidence*100)+'% match':'matched')));
         if(g.language) rows.push(row('language',esc(g.language)));
+        if(g.instrumental) rows.push(row('lyrics','instrumental'));
+        else if(g.lyrics_state) rows.push(row('lyrics',esc(String(g.lyrics_state).replace('_',' '))));
         if(g.youtube && g.youtube!==mv) rows.push(row('youtube (genius)',link(g.youtube,'open')));
       }
     }
@@ -25438,6 +25457,7 @@ function _songCredits(s) {
   let r = _credCache.get(raw);
   if (r) return r;
   r = raw.split('\x1e').map(x => { const i = x.indexOf('\x1f'); return i < 0 ? null : { role: x.slice(0, i), name: x.slice(i + 1) }; }).filter(Boolean);
+  r = r.filter((c, i) => r.findIndex(x => x.role === c.role && x.name === c.name) === i); // two aliases of one artist collapse to the same main name
   if (_credCache.size > 5000) _credCache.clear();
   _credCache.set(raw, r);
   return r;
