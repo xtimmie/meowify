@@ -1051,6 +1051,15 @@ def init_db():
         lcols = [r[1] for r in c.execute("PRAGMA table_info(lyrics)").fetchall()]
         if 'source_duration' not in lcols:
             c.execute("ALTER TABLE lyrics ADD COLUMN source_duration REAL")
+        c.execute("""CREATE TABLE IF NOT EXISTS lyrics_genius (
+            song_id TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+            status TEXT,
+            data TEXT,
+            fail TEXT,
+            fetched_at INTEGER,
+            tries INTEGER DEFAULT 0,
+            next_try INTEGER
+        )""")
         if version < 5:
             # v4 → v5: add new columns to songs + albums, create artists tables
             cols = [r[1] for r in c.execute("PRAGMA table_info(songs)").fetchall()]
@@ -2385,7 +2394,7 @@ def _genius_slugify(s):
     s = re.sub(r'[\s_-]+', '-', s)
     return s.strip('-')
 
-def _genius_scrape_lyrics(song):
+def _genius_scrape_lyrics(song, out=None):
     """scrape lyrics from genius.com for private local use. returns plain text or None."""
     import urllib.request, urllib.parse, random, html as _html
     artist = song.get('artist') or ''
@@ -2468,6 +2477,13 @@ def _genius_scrape_lyrics(song):
         if len(html) < 3000 and any(x in html.lower() for x in ('captcha', 'robot', 'cf-browser', 'just a moment', 'enable javascript')):
             return None, 'bot_detected'
 
+        if out is not None:
+            try:
+                _gl_stash(html, out)
+            except Exception as _se:
+                _log_genius.debug(f'genius state parse err: {_se}')
+            if out.get('placeholder') == 'instrumental':
+                return None, 'instrumental'
         # 1. __NEXT_DATA__ json - most reliable, structured
         nd = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
         if nd:
@@ -2581,6 +2597,255 @@ def _genius_scrape_lyrics(song):
                     time.sleep(random.uniform(2.0 + attempt * 2.0, 5.0 + attempt * 3.0))
     return None, last_error
 
+_GL_JS_SIMPLE = {'n': '\n', 't': '\t', 'r': '\r', 'b': '\b', 'f': '\f', 'v': '\v', '0': '\0'}
+_GL_HEAD_RE = re.compile(r'\[[^\[\]]{1,120}\]')
+
+def _gl_js_unescape(s):
+    def _r(m):
+        g = m.group(1)
+        c = g[0]
+        if c == 'u' and len(g) > 1:
+            return chr(int(g[2:-1], 16)) if g.startswith('u{') else chr(int(g[1:5], 16))
+        if c == 'x' and len(g) > 1:
+            return chr(int(g[1:3], 16))
+        if len(g) == 1 and c in _GL_JS_SIMPLE:
+            return _GL_JS_SIMPLE[c]
+        if c == '\n':
+            return ''
+        return g
+    s = re.sub(r'\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)', _r, s, flags=re.S)
+    try:
+        s = s.encode('utf-16', 'surrogatepass').decode('utf-16')
+    except Exception:
+        pass
+    return s
+
+def _gl_parse_state(html):
+    m = re.search(r"__PRELOADED_STATE__\s*=\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)", html, re.S)
+    if not m:
+        return None
+    return json.loads(_gl_js_unescape(m.group(1)), strict=False)
+
+def _gl_stash(html, out):
+    out.pop('tree', None)
+    out.pop('placeholder', None)
+    sm = re.search(r'/songs/(\d+)', html)
+    if sm:
+        out['gsid'] = sm.group(1)
+    st = _gl_parse_state(html)
+    if not st:
+        return
+    ld = ((st.get('songPage') or {}).get('lyricsData')) or {}
+    out['placeholder'] = ld.get('lyricsPlaceholderReason')
+    body = ld.get('body')
+    if isinstance(body, dict) and body.get('children'):
+        out['tree'] = body
+
+def _gl_tree_to_lines(root):
+    lines = [[]]
+    def add(t, fl):
+        if not t:
+            return
+        seg = {'t': t}
+        for k in ('i', 'b', 'a'):
+            if fl.get(k):
+                seg[k] = fl[k]
+        cur = lines[-1]
+        if cur and {k: v for k, v in cur[-1].items() if k != 't'} == {k: v for k, v in seg.items() if k != 't'}:
+            cur[-1]['t'] += t
+        else:
+            cur.append(seg)
+    def walk(n, fl):
+        if isinstance(n, str):
+            add(n.replace('\n', ' '), fl)
+            return
+        if not isinstance(n, dict):
+            return
+        tag = n.get('tag')
+        if tag == 'inread-ad':
+            return
+        if tag == 'br':
+            lines.append([])
+            return
+        if tag in ('i', 'em'):
+            fl = {**fl, 'i': 1}
+        elif tag in ('b', 'strong'):
+            fl = {**fl, 'b': 1}
+        elif tag == 'a':
+            aid = str((n.get('data') or {}).get('id') or '')
+            if aid:
+                fl = {**fl, 'a': aid}
+        for ch in n.get('children') or []:
+            walk(ch, fl)
+    walk(root, {})
+    return lines
+
+def _gl_sections(lines):
+    secs = []
+    cur = {'h': None, 'ha': None, 'lines': []}
+    def flush():
+        ls = cur['lines']
+        while ls and not ls[0]:
+            ls.pop(0)
+        while ls and not ls[-1]:
+            ls.pop()
+        if cur['h'] is not None or ls:
+            sec = {'h': cur['h'], 'lines': ls}
+            if cur['ha']:
+                sec['ha'] = cur['ha']
+            secs.append(sec)
+    for ln in lines:
+        txt = ''.join(s['t'] for s in ln).strip()
+        if not txt:
+            ln = []
+        if txt and _GL_HEAD_RE.fullmatch(txt):
+            flush()
+            cur = {'h': txt[1:-1].strip(), 'ha': next((s['a'] for s in ln if s.get('a')), None), 'lines': []}
+            continue
+        if not ln and (not cur['lines'] or not cur['lines'][-1]):
+            continue
+        cur['lines'].append(ln)
+    flush()
+    return secs
+
+def _gl_plain(secs):
+    out = []
+    for sc in secs:
+        if sc.get('h') is not None:
+            out.append('[' + sc['h'] + ']')
+        for ln in sc['lines']:
+            out.append(''.join(s['t'] for s in ln))
+        out.append('')
+    return '\n'.join(out).strip()
+
+def _gl_fetch_annotations(gsid, token):
+    import html as _gh
+    out = {}
+    for page in range(1, 21):
+        r = _genius_get(f'/referents?song_id={gsid}&text_format=plain,html&per_page=50&page={page}', token)
+        if 'referents' not in r:
+            return out if page > 1 else None
+        refs = r.get('referents') or []
+        for x in refs:
+            anns = x.get('annotations') or []
+            if not anns:
+                continue
+            a = anns[0]
+            b = a.get('body') or {}
+            h = (b.get('html') or '').strip()
+            if not h:
+                p = (b.get('plain') or '').strip()
+                if not p:
+                    continue
+                h = '<p>' + _gh.escape(p) + '</p>'
+            u = ((a.get('authors') or [{}])[0] or {}).get('user') or {}
+            out[str(x.get('id'))] = {'h': h, 'v': a.get('votes_total') or 0, 'ver': 1 if a.get('verified') else 0,
+                                     'cl': x.get('classification') or '', 'by': u.get('login') or '', 'iq': u.get('iq')}
+        if len(refs) < 50:
+            break
+    return out
+
+def _gl_fetch_layer(song):
+    out = {}
+    plain, fail = None, None
+    try:
+        r = _genius_scrape_lyrics(song, out)
+        plain, fail = r if isinstance(r, tuple) else (r, None)
+    except Exception as e:
+        fail = str(e)[:80]
+        _log_genius.warning('genius layer scrape err: %s', e)
+    if fail == 'instrumental' and not plain:
+        return {'status': 'instrumental'}
+    if out.get('tree'):
+        lines = _gl_tree_to_lines(out['tree'])
+    elif plain:
+        lines = [[{'t': t}] if t.strip() else [] for t in plain.split('\n')]
+    else:
+        return {'status': 'none', 'fail': fail or 'not_found'}
+    secs = _gl_sections(lines)
+    if not secs:
+        return {'status': 'none', 'fail': fail or 'parse_failed'}
+    gsid = out.get('gsid') or song.get('genius_id')
+    ann = None
+    token = CFG.get('genius_token', '')
+    has_anchor = any(sc.get('ha') or any(s.get('a') for ln in sc['lines'] for s in ln) for sc in secs)
+    if token and gsid and has_anchor:
+        ann = _gl_fetch_annotations(gsid, token)
+    if not plain:
+        plain = _gl_plain(secs)
+    return {'status': 'ok', 'sections': secs, 'ann': ann, 'plain': plain, 'gsid': str(gsid) if gsid else None}
+
+def _lyrics_retry_steps():
+    out = []
+    for p in re.split(r'[,\s]+', str(CFG.get('lyrics_retry_steps', '1,3,7,14') or '')):
+        try:
+            v = float(p)
+        except ValueError:
+            continue
+        if v > 0:
+            out.append(v)
+    return out or [1.0, 3.0, 7.0, 14.0]
+
+def _gl_save(sid, res):
+    now = int(time.time())
+    st = res['status']
+    with db() as c:
+        prev = c.execute("SELECT status, data, tries FROM lyrics_genius WHERE song_id=?", (sid,)).fetchone()
+        if st == 'ok':
+            ann = res.get('ann')
+            if ann is None and prev and prev[0] == 'ok' and prev[1]:
+                try:
+                    pd = json.loads(prev[1])
+                    if str(pd.get('gsid') or '') == str(res.get('gsid') or ''):
+                        ann = pd.get('ann')
+                except Exception:
+                    pass
+            data = json.dumps({'sections': res['sections'], 'ann': ann or {}, 'gsid': res.get('gsid')}, ensure_ascii=False, separators=(',', ':'))
+            row = ('ok', data, None, now, 0, None)
+        elif st == 'instrumental':
+            row = ('instrumental', None, None, now, 0, None)
+        else:
+            fail = res.get('fail') or 'not_found'
+            limited = fail == 'rate_limited'
+            if prev and prev[0] == 'ok':
+                c.execute("UPDATE lyrics_genius SET next_try=? WHERE song_id=?", (now + (3600 if limited else 12 * 3600), sid))
+                return
+            tries = (prev[2] or 0) if prev else 0
+            if not limited:
+                tries += 1
+            steps = _lyrics_retry_steps()
+            wait = 3600 if limited else steps[min(max(tries, 1) - 1, len(steps) - 1)] * 86400
+            row = ('none', None, fail, now, tries, int(now + wait))
+        c.execute("INSERT INTO lyrics_genius (song_id,status,data,fail,fetched_at,tries,next_try) VALUES (?,?,?,?,?,?,?)"
+                  " ON CONFLICT(song_id) DO UPDATE SET status=excluded.status, data=excluded.data, fail=excluded.fail,"
+                  " fetched_at=excluded.fetched_at, tries=excluded.tries, next_try=excluded.next_try", (sid,) + row)
+
+def _lyrics_genius_pass(song):
+    res = _gl_fetch_layer(song)
+    try:
+        _gl_save(song['id'], res)
+    except Exception as e:
+        _log_lyrics.warning('genius layer save err: %s', e)
+    return res
+
+def _genius_refresh_meta(sid):
+    token = CFG.get('genius_token', '')
+    if not token or not CFG.get('auto_genius', True):
+        return
+    with db() as c:
+        gr = c.execute("SELECT genius_id, confidence, confirmed, opts FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+    if not gr or not gr[0]:
+        return
+    sd = _genius_get(f'/songs/{gr[0]}', token).get('song')
+    if not sd:
+        return
+    try:
+        skip = bool(json.loads(gr[3] or '{}').get('skip_title'))
+    except Exception:
+        skip = False
+    _store_song_genius(sid, sd, gr[1], bool(gr[2]), skip)
+    resolve_song(sid, sync_artists=False)
+
 def _lrclib_fetch(artist, title, duration, is_video=False):
     import urllib.request, urllib.parse
     def _try(params):
@@ -2616,7 +2881,188 @@ def _song_instrumental(sid):
     except Exception:
         return False
 
-def _lyrics_fetch_and_cache(song):
+_lyrics_bg_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='meowify-lyrics')
+_lyrics_bg_set = set()
+
+def _cfg_on(key):
+    return CFG.get(key, True) not in (False, 0, '0', 'false')
+
+def _lyrics_due(sid):
+    now = int(time.time())
+    with db() as c:
+        m = c.execute("SELECT lrc, plain, source, fetched_at FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+        g = c.execute("SELECT status, fetched_at, next_try FROM lyrics_genius WHERE song_id=?", (sid,)).fetchone()
+    if not m and not g:
+        return None
+    has_main = bool(m and (m[0] or m[1]))
+    src = ((m[2] if m else '') or '').lower()
+    gst = g[0] if g else None
+    if not has_main and (src == 'instrumental' or gst == 'instrumental'):
+        return None
+    if g is None:
+        if has_main:
+            return 'refresh' if _cfg_on('lyrics_auto_refresh') else None
+        last = (m[3] if m else 0) or 0
+        return 'retry' if _cfg_on('lyrics_auto_retry') and now - last >= _lyrics_retry_steps()[0] * 86400 else None
+    if gst == 'ok':
+        if not _cfg_on('lyrics_auto_refresh') or (g[2] or 0) > now:
+            return None
+        try:
+            days = max(0.1, float(CFG.get('lyrics_refresh_days', 3)))
+        except (TypeError, ValueError):
+            days = 3.0
+        return 'refresh' if now - (g[1] or 0) >= days * 86400 else None
+    if gst == 'none' and _cfg_on('lyrics_auto_retry') and now >= (g[2] or 0):
+        return 'retry'
+    return None
+
+def _lyrics_bg_submit(sid, mode):
+    with _lyrics_lock:
+        if sid in _lyrics_bg_set:
+            return False
+        _lyrics_bg_set.add(sid)
+    _lyrics_bg_pool.submit(_lyrics_bg_job, sid, mode)
+    return True
+
+def _lyrics_genius_job(song, mode):
+    sid = song['id']
+    res = _lyrics_genius_pass(song)
+    if res['status'] == 'ok' and res.get('plain'):
+        with db() as c:
+            m = c.execute("SELECT source FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+            if m and (m[0] or '').lower() == 'genius':
+                c.execute("UPDATE lyrics SET plain=?, fetched_at=? WHERE song_id=?", (res['plain'], int(time.time()), sid))
+    with _lyrics_lock:
+        _lyrics_cache.pop(sid, None)
+    if mode == 'refresh':
+        _genius_refresh_meta(sid)
+
+def _lyrics_bg_job(sid, mode):
+    try:
+        with db() as c:
+            s = c.execute("SELECT id, title, artist, duration, source, genius_id FROM songs WHERE id=?", (sid,)).fetchone()
+        if not s:
+            return
+        song = dict(s)
+        if mode == 'force':
+            _lyrics_fetch_and_cache(song, force=True)
+            return
+        with db() as c:
+            m = c.execute("SELECT lrc, plain FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+        if mode == 'retry' and not (m and (m[0] or m[1])):
+            _lyrics_fetch_and_cache(song, force=True)
+        else:
+            _lyrics_genius_job(song, mode)
+    except Exception as e:
+        _log_lyrics.warning('lyrics bg job err (%s): %s', mode, e)
+    finally:
+        with _lyrics_lock:
+            _lyrics_bg_set.discard(sid)
+
+def _lyrics_write_main(sid, lrc, plain, source, src_dur):
+    now = int(time.time())
+    with db() as c:
+        c.execute("INSERT OR REPLACE INTO lyrics (song_id, lrc, plain, fetched_at, source, source_duration) VALUES (?,?,?,?,?,?)",
+                  (sid, lrc, plain, now, source, src_dur))
+    with _lyrics_lock:
+        _lyrics_cache_put(sid, {'lrc': lrc, 'plain': plain, 'source': source, 'fetched_at': now, 'source_duration': src_dur})
+    with _cfg_lock:
+        _align_enabled = CFG.get('auto_align_lyrics', False)
+    if _align_enabled and (plain or (lrc and src_dur)):
+        _align_pool.submit(_align_song, sid)
+
+def _lyrics_payload(sid):
+    with _lyrics_lock:
+        cached = _lyrics_cache.get(sid)
+    if cached is None:
+        with db() as c:
+            row = c.execute("SELECT lrc, plain, source, fetched_at, source_duration FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+        if row:
+            cached = {'lrc': row[0], 'plain': row[1], 'source': row[2], 'fetched_at': row[3], 'source_duration': row[4]}
+            with _lyrics_lock:
+                _lyrics_cache_put(sid, cached)
+    with db() as c:
+        g = c.execute("SELECT status, data, fail, fetched_at, next_try FROM lyrics_genius WHERE song_id=?", (sid,)).fetchone()
+    if cached is None and g is None:
+        return None
+    base = {k: (cached or {}).get(k) for k in ('lrc', 'plain', 'source', 'fetched_at', 'source_duration')}
+    gen = None
+    if g and g[0] == 'ok' and g[1]:
+        try:
+            d = json.loads(g[1])
+            gen = {'sections': d.get('sections') or [], 'ann': d.get('ann') or {}, 'fetched_at': g[3]}
+        except Exception:
+            gen = None
+    has = bool(base['lrc'] or base['plain'] or gen)
+    ins = (not has) and ((base['source'] or '').lower() == 'instrumental' or bool(g and g[0] == 'instrumental'))
+    base['genius'] = gen
+    base['state'] = 'instrumental' if ins else ('ok' if has else 'none')
+    if ins:
+        base['instrumental'] = True
+    if g and g[0] == 'none':
+        base['genius_fail'] = g[2]
+    base['next_try'] = g[4] if g else None
+    with _lyrics_lock:
+        base['busy'] = sid in _lyrics_bg_set or sid in _lyrics_prefetch_set
+    return base
+
+def _lyrics_fetch_and_cache(song, force=False):
+    sid = song['id']
+    with _lyrics_lock:
+        if sid in _lyrics_prefetch_set:
+            return
+        _lyrics_prefetch_set.add(sid)
+    try:
+        with db() as c:
+            row = c.execute("SELECT lrc, plain, source, fetched_at, source_duration FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+            g = c.execute("SELECT 1 FROM lyrics_genius WHERE song_id=?", (sid,)).fetchone()
+        old_lrc = row[0] if row else None
+        old_plain = row[1] if row else None
+        old_src = ((row[2] if row else '') or '').lower()
+        had_lrclib = bool(old_lrc or (old_plain and old_src == 'lrclib'))
+        lrc, plain, dur, source = (old_lrc, old_plain, (row[4] if row else None), 'lrclib') if had_lrclib else (None, None, None, 'lrclib')
+        if force or not had_lrclib:
+            is_video = (song.get('source') or '').lower() == 'youtube_video'
+            n_lrc = n_plain = None
+            result = _lrclib_fetch(song.get('artist') or '', song.get('title') or '', song.get('duration'), is_video)
+            if result:
+                n_lrc = result.get('syncedLyrics') or None
+                n_plain = result.get('plainLyrics') or None
+            if result and not n_lrc and not n_plain:
+                result = None
+            if not result and song.get('duration'):
+                result = _lrclib_fetch(song.get('artist') or '', song.get('title') or '', None, False)
+                if result:
+                    n_lrc = result.get('syncedLyrics') or None
+                    n_plain = result.get('plainLyrics') or None
+                if result and not n_lrc and not n_plain:
+                    result = None
+            if result:
+                lrc, plain, dur, source = n_lrc, n_plain, result.get('duration'), 'lrclib'
+                had_lrclib = True
+        if had_lrclib:
+            _lyrics_write_main(sid, lrc, plain, source, dur)
+            if force:
+                _lyrics_genius_job(song, 'refresh')
+            elif not g:
+                _lyrics_bg_submit(sid, 'genius')
+        else:
+            res = _lyrics_genius_pass(song)
+            if res['status'] == 'ok':
+                _lyrics_write_main(sid, None, res.get('plain'), 'genius', None)
+            elif res['status'] == 'instrumental':
+                _lyrics_write_main(sid, None, None, 'instrumental', None)
+            else:
+                _lyrics_write_main(sid, None, None, 'lrclib', None)
+            with _lyrics_lock:
+                _lyrics_cache.pop(sid, None)
+    except Exception as e:
+        _log_lyrics.warning('lyrics fetch err: %s', e)
+    finally:
+        with _lyrics_lock:
+            _lyrics_prefetch_set.discard(sid)
+
+def _lyrics_fetch_and_cache_legacy(song):
     sid = song['id']
     with _lyrics_lock:
         if sid in _lyrics_prefetch_set:
@@ -12745,6 +13191,33 @@ def api_genius_search_route(sid):
 
 @app.route('/api/songs/<sid>/lyrics', methods=['GET'])
 def api_get_lyrics(sid):
+    p = _lyrics_payload(sid)
+    if p is None:
+        with db() as c:
+            song = c.execute("SELECT id, title, artist, duration, source, genius_id FROM songs WHERE id=?", (sid,)).fetchone()
+        if not song:
+            return jsonify({'error': 'not found'}), 404
+        _lyrics_fetch_and_cache(dict(song))
+        p = _lyrics_payload(sid)
+        if p is None:
+            return jsonify({'lrc': None, 'plain': None, 'source': None, 'genius': None, 'state': 'pending', 'busy': True})
+        return jsonify(p)
+    if not p.get('busy'):
+        mode = _lyrics_due(sid)
+        if mode and _lyrics_bg_submit(sid, mode):
+            p['busy'] = True
+    return jsonify(p)
+
+@app.route('/api/songs/<sid>/lyrics/refresh', methods=['POST'])
+def api_refresh_lyrics(sid):
+    with db() as c:
+        ok = c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone()
+    if not ok:
+        return jsonify({'error': 'not found'}), 404
+    _lyrics_bg_submit(sid, 'force')
+    return jsonify({'ok': True})
+
+def _api_get_lyrics_legacy(sid):
     _ins = _song_instrumental(sid)
     with _lyrics_lock:
         cached = _lyrics_cache.get(sid)
@@ -12772,6 +13245,7 @@ def api_get_lyrics(sid):
 def api_clear_lyrics(sid):
     with db() as c:
         c.execute("DELETE FROM lyrics WHERE song_id=?", (sid,))
+        c.execute("DELETE FROM lyrics_genius WHERE song_id=?", (sid,))
         song_row = c.execute("SELECT sync_id FROM songs WHERE id=?", (sid,)).fetchone()
         if song_row and song_row[0]:
             _record_sync_action('lyrics_delete', song_row[0], conn=c)
@@ -14126,6 +14600,28 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   transition:background var(--dur-2);
 }
 @media (hover: hover) {.lyrics-resync button:hover{background:var(--color-surface-container-high)}}
+.gl-wrap{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);line-height:1.8}
+.gl-sec{margin-top:20px;padding-top:12px;border-top:1px solid color-mix(in oklch,var(--color-on-surface) 6%,transparent)}
+.gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
+.gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);opacity:.6;margin-bottom:6px;letter-spacing:.02em}
+.gl-l{min-height:1.8em}
+.gl-gap{height:.8em}
+.gl-a{cursor:pointer;border-radius:3px;background:color-mix(in oklch,var(--color-primary) 9%,transparent);transition:background var(--dur-2);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+@media (hover: hover) {.gl-a:hover{background:color-mix(in oklch,var(--color-primary) 20%,transparent)}}
+.gl-a.open{background:color-mix(in oklch,var(--color-primary) 28%,transparent);color:var(--color-on-surface)}
+.gl-a.gl-pend{background:none;border-radius:0;border-bottom:1px dotted color-mix(in oklch,var(--color-primary) 55%,transparent)}
+.gl-annpop{position:absolute;left:8px;right:8px;bottom:calc(var(--bar-h,0px) + 8px);max-height:58%;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid var(--color-outline-variant);border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:20;overflow:hidden}
+.gl-annpop.on{display:flex}
+.gl-annpop-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 0 14px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)}
+.gl-annpop-body{padding:4px 14px 10px;overflow-y:auto;font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);line-height:1.6}
+.gl-annpop-body p{margin:0 0 .7em}
+.gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
+.gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
+.lyr-srcbtn{width:auto!important;padding:0 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label)}
+.lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
+.lyr-bar.on{opacity:1}
+.lyr-bar>i{position:absolute;top:0;bottom:0;width:35%;background:var(--color-primary);border-radius:2px;animation:lyrbar 1.1s ease-in-out infinite}
+@keyframes lyrbar{0%{left:-35%}100%{left:100%}}
 /* song list */
 .song-list{display:flex;flex-direction:column;gap:2px}
 .song-table>.song-list,#queue-inner .song-list{gap:0}
@@ -23211,10 +23707,7 @@ function parseLrc(lrc) {
 }
 
 async function retryGeniusLyrics(sid) {
-  // clear cached empty result so fetch runs again
-  await api('DELETE', '/api/songs/' + sid + '/lyrics');
-  const song = S.library.find(s => s.id === sid) || S.cur;
-  if (song) renderLyricsForSong(song);
+  await lyricsReload(sid);
 }
 
 function openGeniusLyrics(sid) {
@@ -23234,7 +23727,354 @@ function _geniusBtn(sid) {
   </button>`;
 }
 
+const _lyrMem = new Map();
+let _lyrTok = 0;
+let _lyrShownSid = null;
+let _lyrScrollAt = 0;
+let _lyrOpenAid = null;
+const _lyrSleep = ms => new Promise(r => setTimeout(r, ms));
+
+function _lyrAnnOn() { return CFG.lyrics_annotations !== false; }
+function _lyrSig(d) { return d ? [d.state, d.fetched_at, d.genius && d.genius.fetched_at, d.lrc ? 1 : 0, d.plain ? 1 : 0].join('|') : ''; }
+function _lyrBar(on) { const b = document.getElementById('lyr-bar'); if (b) b.classList.toggle('on', !!on); }
+function _lyrScrollMark() { if (typeof _lrcScrollSuppress !== 'undefined' && _lrcScrollSuppress > 0) return; _lyrScrollAt = Date.now(); }
+function _lyrGet(sid) { return fetch('/api/songs/' + sid + '/lyrics').then(r => r.json()).catch(() => null); }
+
+function _lyrAvail(d) {
+  const gen = !!(d.genius && d.genius.sections && d.genius.sections.length);
+  const lrcOk = !!d.lrc || (!!d.plain && d.source === 'lrclib');
+  return { lrclib: lrcOk, genius: gen };
+}
+
+function _lyrPickSrc(song, d) {
+  const av = _lyrAvail(d);
+  if (S.lyrSrcSid === song.id && S.lyrSrcUser && av[S.lyrSrcUser]) return S.lyrSrcUser;
+  const songDur = song.duration || 0, srcDur = d.source_duration || 0;
+  const mism = d.lrc && songDur > 0 && srcDur > 0 && Math.abs(songDur - srcDur) > 5;
+  if (d.lrc && !mism) return 'lrclib';
+  if (av.genius) return 'genius';
+  return 'lrclib';
+}
+
+function _lyrSanitize(html) {
+  const doc = new DOMParser().parseFromString('<div>' + (html || '') + '</div>', 'text/html');
+  const ok = new Set(['P', 'BR', 'EM', 'I', 'STRONG', 'B', 'U', 'S', 'A', 'UL', 'OL', 'LI', 'BLOCKQUOTE']);
+  const walk = n => {
+    let out = '';
+    n.childNodes.forEach(c => {
+      if (c.nodeType === 3) { out += esc(c.nodeValue); return; }
+      if (c.nodeType !== 1) return;
+      const t = c.tagName;
+      if (t === 'SCRIPT' || t === 'STYLE' || t === 'IFRAME' || t === 'IMG' || t === 'VIDEO' || t === 'AUDIO') return;
+      const inner = walk(c);
+      if (!ok.has(t)) { out += inner; return; }
+      if (t === 'BR') { out += '<br>'; return; }
+      if (t === 'A') {
+        const h = c.getAttribute('href') || '';
+        out += /^https?:\/\//i.test(h) ? '<a href="' + esc(h) + '" target="_blank" rel="noopener noreferrer">' + inner + '</a>' : inner;
+        return;
+      }
+      const tg = t.toLowerCase();
+      out += '<' + tg + '>' + inner + '</' + tg + '>';
+    });
+    return out;
+  };
+  return walk(doc.body.firstChild);
+}
+
+function _lyrGeniusHtml(g) {
+  const ann = g.ann || {};
+  const on = _lyrAnnOn();
+  const seg = s => {
+    let h = esc(s.t);
+    if (s.i) h = '<i>' + h + '</i>';
+    if (s.b) h = '<b>' + h + '</b>';
+    const a = on && s.a ? ann[s.a] : null;
+    if (a) h = '<a class="gl-a' + (a.cl === 'unreviewed' ? ' gl-pend' : '') + '" data-aid="' + esc(s.a) + '">' + h + '</a>';
+    return h;
+  };
+  const secs = (g.sections || []).map(sc => {
+    let head = '';
+    if (sc.h) {
+      const hh = on && sc.ha && ann[sc.ha] ? '<a class="gl-a" data-aid="' + esc(sc.ha) + '">' + esc(sc.h) + '</a>' : esc(sc.h);
+      head = '<div class="gl-h">' + hh + '</div>';
+    }
+    const lines = (sc.lines || []).map(ln => ln.length ? '<div class="gl-l">' + ln.map(seg).join('') + '</div>' : '<div class="gl-gap"></div>').join('');
+    return '<div class="gl-sec">' + head + lines + '</div>';
+  }).join('');
+  return '<div class="gl-wrap" onclick="lyrAnnClick(event)">' + secs + '</div>';
+}
+
+function lyrAnnClick(e) {
+  const a = e.target.closest && e.target.closest('.gl-a');
+  if (!a) { lyrAnnClose(); return; }
+  lyrAnnOpen(a.dataset.aid);
+}
+
+function lyrAnnOpen(aid) {
+  const g = S.lyricsData && S.lyricsData.genius;
+  const a = g && g.ann && g.ann[aid];
+  const host = document.getElementById('lyrics-sidebar');
+  if (!a || !host) return;
+  let pop = document.getElementById('gl-annpop');
+  if (!pop) { pop = document.createElement('div'); pop.id = 'gl-annpop'; pop.className = 'gl-annpop'; host.appendChild(pop); }
+  const meta = [];
+  if (a.ver) meta.push('verified'); else if (a.cl === 'unreviewed') meta.push('unreviewed');
+  if (a.by) meta.push(esc(a.by));
+  if (a.v) meta.push((a.v > 0 ? '+' : '') + a.v);
+  pop.innerHTML = '<div class="gl-annpop-hdr"><span>annotation</span><button class="cbtn mu-ripple" onclick="lyrAnnClose()" title="close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="display:block"><line x1="4" y1="4" x2="20" y2="20"/><line x1="20" y1="4" x2="4" y2="20"/></svg></button></div>'
+    + '<div class="gl-annpop-body">' + _lyrSanitize(a.h) + '</div>'
+    + '<div class="gl-annpop-meta"><span>' + meta.join(' | ') + '</span><a href="https://genius.com/' + esc(aid) + '" target="_blank" rel="noopener">open on genius</a></div>';
+  pop.classList.add('on');
+  _lyrOpenAid = aid;
+  document.querySelectorAll('#lyrics-body .gl-a.open').forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('#lyrics-body .gl-a[data-aid="' + aid + '"]').forEach(el => el.classList.add('open'));
+}
+
+function lyrAnnClose() {
+  _lyrOpenAid = null;
+  const pop = document.getElementById('gl-annpop');
+  if (pop) pop.classList.remove('on');
+  document.querySelectorAll('#lyrics-body .gl-a.open').forEach(el => el.classList.remove('open'));
+}
+
+function _lyrToolbar(showSwitch, src, hasAnn) {
+  const sb = document.getElementById('blyrics-src');
+  const ab = document.getElementById('blyrics-ann');
+  if (sb) {
+    sb.style.display = showSwitch ? '' : 'none';
+    sb.textContent = src;
+    sb.title = 'source: ' + src + ' - click for ' + (src === 'genius' ? 'lrclib' : 'genius');
+  }
+  if (ab) {
+    ab.style.display = src === 'genius' && hasAnn ? '' : 'none';
+    ab.classList.toggle('active', _lyrAnnOn());
+    ab.title = _lyrAnnOn() ? 'annotations on - click to hide' : 'annotations off - click to show';
+  }
+}
+
+function lyrSetSrc(src) {
+  if (!S.cur || !S.lyricsData) return;
+  S.lyrSrcUser = src;
+  S.lyrSrcSid = S.cur.id;
+  _lyrDraw(S.cur, S.lyricsData);
+}
+
+function lyrToggleAnn() {
+  const on = !_lyrAnnOn();
+  CFG.lyrics_annotations = on;
+  saveSetting('lyrics_annotations', on).catch(() => {});
+  if (!on) lyrAnnClose();
+  if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
+}
+
+function lyrContext(e) {
+  const d = S.lyricsData, song = S.cur;
+  if (!d || !song || d.state !== 'ok') return;
+  e.preventDefault();
+  const av = _lyrAvail(d), src = _lyrPickSrc(song, d);
+  const items = [];
+  if (av.lrclib && av.genius) {
+    items.push({ _header: true, label: 'source' });
+    items.push({ label: 'lrclib', radio: src === 'lrclib', group: 'lsrc', fn: () => lyrSetSrc('lrclib') });
+    items.push({ label: 'genius', radio: src === 'genius', group: 'lsrc', fn: () => lyrSetSrc('genius') });
+    items.push({ sep: true });
+  }
+  if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
+  items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
+  showCtx(e, items);
+}
+
+async function lyricsReload(sid) {
+  if (!S.cur || S.cur.id !== sid) return;
+  _lyrBar(true);
+  await api('POST', '/api/songs/' + sid + '/lyrics/refresh').catch(() => {});
+  if (S.cur && S.cur.id === sid) renderLyricsForSong(S.cur);
+}
+
+function _lyrWire() {
+  const sb = document.getElementById('lyrics-sidebar');
+  if (!sb || sb.dataset.lyrWired) return;
+  sb.dataset.lyrWired = '1';
+  const hdr = sb.querySelector('.lyrics-hdr');
+  const box = hdr ? hdr.querySelector(':scope > div') : null;
+  const syncBtn = document.getElementById('blyrics-sync');
+  if (box && syncBtn) {
+    const src = document.createElement('button');
+    src.className = 'cbtn mu-ripple lyr-srcbtn';
+    src.id = 'blyrics-src';
+    src.style.display = 'none';
+    src.onclick = () => { const d = S.lyricsData; if (!S.cur || !d) return; lyrSetSrc(_lyrPickSrc(S.cur, d) === 'genius' ? 'lrclib' : 'genius'); };
+    const ann = document.createElement('button');
+    ann.className = 'cbtn mu-ripple';
+    ann.id = 'blyrics-ann';
+    ann.style.display = 'none';
+    ann.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg>';
+    ann.onclick = lyrToggleAnn;
+    box.insertBefore(src, syncBtn);
+    box.insertBefore(ann, syncBtn);
+  }
+  if (hdr) {
+    const bar = document.createElement('div');
+    bar.id = 'lyr-bar';
+    bar.className = 'lyr-bar';
+    bar.innerHTML = '<i></i>';
+    hdr.appendChild(bar);
+    hdr.addEventListener('contextmenu', lyrContext);
+  }
+  const rl = document.getElementById('blyrics-reload');
+  if (rl) rl.onclick = () => { if (S.cur) lyricsReload(S.cur.id); };
+  const body = document.getElementById('lyrics-body');
+  if (body) {
+    body.addEventListener('contextmenu', lyrContext);
+    body.addEventListener('scroll', _lyrScrollMark, { passive: true });
+  }
+}
+
+function _lyrDraw(song, data, forceSynced) {
+  const sid = song.id;
+  const body = document.getElementById('lyrics-body');
+  const hdr = document.getElementById('lyrics-hdr-title');
+  if (!body) return;
+  const same = _lyrShownSid === sid;
+  const top = same ? body.scrollTop : 0;
+  const keep = () => {
+    if (!top) return;
+    body.style.scrollBehavior = 'auto';
+    body.scrollTop = top;
+    requestAnimationFrame(() => { body.style.scrollBehavior = ''; });
+  };
+  _lyrShownSid = sid;
+  S.lyricsData = data;
+  _lyrMem.set(sid, data);
+  if (_lyrMem.size > 24) _lyrMem.delete(_lyrMem.keys().next().value);
+  if (hdr) hdr.textContent = song.title || 'lyrics';
+  const st = data.state || ((data.lrc || data.plain) ? 'ok' : 'none');
+
+  if (st === 'instrumental') {
+    _lrcLines = [];
+    _lyrToolbar(false, 'lrclib', false);
+    _updateLyricsSyncBtn(false, false, false);
+    lyrAnnClose();
+    body.innerHTML = `<div style="padding:20px 0;text-align:center">
+      <div style="color:var(--color-on-surface-variant);font:var(--type-body-medium);font-variation-settings:var(--fv-body);margin-bottom:4px">this song is an instrumental</div>
+      <div style="color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.7">genius marks it as having no lyrics</div>
+    </div>`;
+    return;
+  }
+
+  if (st !== 'ok') {
+    _lrcLines = [];
+    _lyrToolbar(false, 'lrclib', false);
+    _updateLyricsSyncBtn(false, false, false);
+    lyrAnnClose();
+    const failReason = data.genius_fail;
+    const failMsg = failReason === 'rate_limited' ? 'genius rate limited, will try again later' : 'no lyrics found';
+    const nt = data.next_try && CFG.lyrics_auto_retry !== false ? Math.max(0, data.next_try - Date.now() / 1000) : 0;
+    const when = !nt ? '' : nt < 36 * 3600 ? 'in about ' + Math.max(1, Math.round(nt / 3600)) + 'h' : 'in about ' + Math.round(nt / 86400) + ' days';
+    body.innerHTML = `<div style="padding:20px 0;text-align:center">
+      <div style="color:var(--color-on-surface-variant);font:var(--type-body-medium);font-variation-settings:var(--fv-body);margin-bottom:4px">${esc(failMsg)}</div>
+      ${when ? `<div style="color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.7">checking again ${when}</div>` : ''}
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:10px">
+        <button class="btn btn-out mu-ripple" onclick="retryGeniusLyrics('${sid}')" style="display:inline-flex;align-items:center;gap:6px">${MEOW_ICONS.reload} retry</button>
+        ${_geniusBtn(sid)}
+      </div>
+    </div>`;
+    return;
+  }
+
+  const av = _lyrAvail(data);
+  const src = _lyrPickSrc(song, data);
+  const hasAnn = !!(data.genius && data.genius.ann && Object.keys(data.genius.ann).length);
+  _lyrToolbar(av.lrclib && av.genius, src, hasAnn);
+  if (S.nowPlayingOpen) tickNowPlaying();
+
+  if (src === 'genius' && data.genius) {
+    _lrcLines = [];
+    _updateLyricsSyncBtn(false, false, false);
+    body.innerHTML = _lyrGeniusHtml(data.genius) + _geniusBtn(sid);
+    if (same && _lyrOpenAid && data.genius.ann && data.genius.ann[_lyrOpenAid]) lyrAnnOpen(_lyrOpenAid); else lyrAnnClose();
+    keep();
+  } else {
+    lyrAnnClose();
+    const songDur = song.duration || 0;
+    const srcDur = data.source_duration || 0;
+    const durMismatch = data.lrc && songDur > 0 && srcDur > 0 && Math.abs(songDur - srcDur) > 5;
+    const hasSynced = !!data.lrc;
+    const hasUnsynced = !!data.plain;
+    const noDurInfo = !srcDur || !songDur;
+    const autoWantsSynced = hasSynced && (noDurInfo || !durMismatch);
+    const useSynced = hasSynced && (forceSynced !== undefined ? forceSynced : autoWantsSynced);
+    _updateLyricsSyncBtn(hasSynced, useSynced, durMismatch);
+    if (useSynced) {
+      _lrcLines = parseLrc(data.lrc);
+      renderLrcLines(sid);
+    } else if (hasUnsynced) {
+      _lrcLines = [];
+      body.innerHTML = `<div class="plain-lyrics">${esc(data.plain || '')}</div>${_geniusBtn(sid)}`;
+      keep();
+    } else {
+      _lrcLines = parseLrc(data.lrc);
+      renderLrcLines(sid);
+    }
+  }
+  _npLrcLastIdx = -2;
+  _npLrcLastWordIdx = -1;
+  if (S.nowPlayingOpen) renderNowPlaying();
+}
+
+async function _lyrApply(song, data, forceSynced, live) {
+  const prev = _lyrMem.get(song.id);
+  if (!data) {
+    if (prev) return;
+    data = { state: 'none' };
+  }
+  const soft = !!prev && _lyrShownSid === song.id;
+  if (soft && _lyrSig(prev) === _lyrSig(data)) { _lyrMem.set(song.id, data); S.lyricsData = data; return; }
+  if (soft) {
+    for (let i = 0; i < 6 && live() && (Date.now() - _lyrScrollAt < 3000 || document.querySelector('#gl-annpop.on')); i++) await _lyrSleep(1000);
+  }
+  if (live()) _lyrDraw(song, data, forceSynced);
+}
+
 async function renderLyricsForSong(song, forceSynced) {
+  if (!song) return;
+  const sid = song.id;
+  const tok = ++_lyrTok;
+  const live = () => tok === _lyrTok && S.cur && S.cur.id === sid;
+  _lyrWire();
+  _lrcLines = [];
+  _lrcActiveIdx = -1;
+  S.lyricsAutoSync = true;
+  const hdr = document.getElementById('lyrics-hdr-title');
+  const body = document.getElementById('lyrics-body');
+  if (!body) return;
+  if (hdr) hdr.textContent = song.title || 'lyrics';
+  const mem = _lyrMem.get(sid);
+  if (mem) {
+    _lyrDraw(song, mem, forceSynced);
+  } else {
+    body.innerHTML = `<div style="padding:6px 0 12px;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)">searching...</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+      ${Array(8).fill(0).map((_, i) => `<div style="height:14px;border-radius:4px;background:var(--color-surface-container-high);width:${55 + Math.random() * 40}%;opacity:0.5"></div>`).join('')}
+    </div>`;
+  }
+  _lyrBar(true);
+  let data = await _lyrGet(sid);
+  let n = 0;
+  while (live() && data && (data.busy || data.state === 'pending') && n < 14) {
+    if (data.state !== 'pending') await _lyrApply(song, data, forceSynced, live);
+    await _lyrSleep(2500);
+    if (!live()) return;
+    data = await _lyrGet(sid);
+    n++;
+  }
+  if (!live()) return;
+  await _lyrApply(song, data, forceSynced, live);
+  _lyrBar(false);
+}
+
+async function _renderLyricsForSongLegacy(song, forceSynced) {
   if (!song) return;
   const sid = song.id;
   _lrcLines = [];
@@ -35024,6 +35864,17 @@ function renderSettings() {
             </label>
           `);
         })()}
+        ${row('genius annotations', 'show annotated lines in the genius lyrics view', toggle('lyrics_annotations', CFG.lyrics_annotations !== false))}
+        ${row('lyrics auto refresh', 'refetch genius lyrics and credits in the background when a song is played or queued next', toggle('lyrics_auto_refresh', CFG.lyrics_auto_refresh !== false))}
+        ${row('refresh every', 'days between refreshes', `
+          <input class="input" type="number" min="1" step="1" value="${CFG.lyrics_refresh_days ?? 3}" style="width:90px;text-align:right;padding:8px 6px"
+            onchange="saveSetting('lyrics_refresh_days',Math.max(1,parseInt(this.value)||3))">
+        `)}
+        ${row('retry missing lyrics', 'songs with no lyrics found are searched again in the background', toggle('lyrics_auto_retry', CFG.lyrics_auto_retry !== false))}
+        ${row('retry schedule', 'days between attempts, the last value repeats', `
+          <input class="input" type="text" value="${esc(CFG.lyrics_retry_steps ?? '1,3,7,14')}" style="width:130px;text-align:right;padding:8px 6px"
+            onchange="saveSetting('lyrics_retry_steps',this.value.trim()||'1,3,7,14')">
+        `)}
         ${row('immersive audio', 'adds harmonic exciter and glue compressor on top of source', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.immersive_audio?'checked':''} onchange="toggleImmersive()" onclick="event.stopPropagation()">
