@@ -16757,6 +16757,7 @@ function _initMobRowInteraction(){
     if(_dragSelecting){ _dragSelecting=false; refreshSelectionUI(); return; }
     if(_holdFired){ _dragSelecting=false; return; }
     if(_moved){ return; }
+    if(e.target.closest && e.target.closest('.reordering')) return; // row was lifted for reorder, release isnt a tap
     if(!sid){ return; } // ghost rows have no data-id - their onclick handles them
     // plain click/tap
     if(S.selectMode){ _toggleSel(sid); return; }
