@@ -14619,7 +14619,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-sec{margin-top:20px;padding-top:12px;border-top:1px solid color-mix(in oklch,var(--color-on-surface) 6%,transparent)}
 .gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
 .gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:color-mix(in oklch,var(--color-on-surface-variant) 60%,transparent);margin-bottom:6px;letter-spacing:.02em}
-.gl-c{color:color-mix(in oklch,var(--color-on-surface-variant) 28%,var(--ac))}
+.gl-s{color:var(--ac)}
 .gl-n{color:var(--ac)}
 .gl-n{font-weight:inherit}
 .gl-l{min-height:1.8em}
@@ -23886,7 +23886,7 @@ function _lyrGeniusHtml(g) {
       const byKey = {};
       info.names.forEach((n, ni) => { (byKey[n.key] = byKey[n.key] || []).push(ni); });
       const single = Object.keys(byKey).filter(k => byKey[k].length === 1);
-      const used = new Set(lines0.filter(l => l.length).map(_lyrLineKey));
+      const used = new Set(lines0.flat().filter(s => s.t.trim()).map(_lyrStyleKey));
       const hit = single.filter(k => used.has(k));
       if (single.length >= 2 && (hit.length >= 2 || (hit.length === 1 && hit[0] !== ''))) {
         nameCol = {};
@@ -23923,9 +23923,12 @@ function _lyrGeniusHtml(g) {
     }
     const lines = lines0.map(ln => {
       if (!ln.length) return '<div class="gl-gap"></div>';
-      const hue = keyCol ? keyCol[_lyrLineKey(ln)] : undefined;
-      const body = ln.map(s => wrapSeg(s.t, s)).join('');
-      return hue !== undefined ? '<div class="gl-l gl-c" style="--ac:' + _lyrHue(hue) + '">' + body + '</div>' : '<div class="gl-l">' + body + '</div>';
+      const body = ln.map(s => {
+        const h = wrapSeg(s.t, s);
+        const hue = keyCol && s.t.trim() ? keyCol[_lyrStyleKey(s)] : undefined;
+        return hue !== undefined ? '<span class="gl-s" style="--ac:' + _lyrHue(hue) + '">' + h + '</span>' : h;
+      }).join('');
+      return '<div class="gl-l">' + body + '</div>';
     }).join('');
     return '<div class="gl-sec">' + head + lines + '</div>';
   }).join('');
