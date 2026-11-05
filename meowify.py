@@ -15371,6 +15371,16 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
   max-width: 100%;
 }
 .salbum.link{cursor:pointer}
+/* songlist: a cut off cell grows to its full text on hover (class is set by js only when text is really cut) */
+@media (hover:hover) and (pointer:fine){
+  .song-table .song-row .sinfo:has(.is-trunc){overflow:visible}
+  .song-table .song-row .is-trunc{
+    overflow:visible;text-overflow:clip;width:max-content;max-width:none;min-width:100%;
+    position:relative;z-index:6;border-radius:var(--radius-sm);
+    background:color-mix(in oklch,var(--color-surface-container-high) 96%,transparent);
+    box-shadow:0 0 0 4px color-mix(in oklch,var(--color-surface-container-high) 96%,transparent);
+  }
+}
 /* album detail header */
 .album-header{display:flex;gap:20px;align-items:flex-end;padding:0 0 24px}
 .album-cover-big{
@@ -25431,6 +25441,19 @@ function _initListHeaderPin() {
     _listHeaderObserver.observe(sentinel);
   }
 }
+
+// songlist hover reveal: mark a cell as .is-trunc only while the pointer is on it AND its text is really cut off
+const _TRUNC_SEL = '.song-table .song-row :is(.stitle,.sartist,.salbum,.ssrc,.sdate)';
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest && e.target.closest(_TRUNC_SEL);
+  if (!el || el.classList.contains('is-trunc')) return;
+  if (el.scrollWidth > el.clientWidth + 1) el.classList.add('is-trunc');
+});
+document.addEventListener('mouseout', e => {
+  const el = e.target.closest && e.target.closest('.is-trunc');
+  if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+  el.classList.remove('is-trunc');
+});
 
 function _killNearbyRipples(el) {
   // cancel ripple waves on the nearest song-row/mu-ripple ancestor
