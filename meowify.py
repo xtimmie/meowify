@@ -6576,8 +6576,29 @@ def api_artist_page(aid):
 
         albums = _albums(songs)
         appears_albums = _albums(appears, skip={a['id'] for a in albums})
+        # worked on: any non featuring credit (producer, writer, mixing...) on a song where the artist is neither main nor featured
+        _lids = _artist_link_ids(c, aid)
+        _lnames = [(r[0] or '').lower() for r in c.execute("SELECT name FROM artists WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(_lids),)).fetchall()]
+        _have = {d['id'] for d in songs} | {d['id'] for d in appears}
+        _wroles = {}
+        for _sid, _role in c.execute("""SELECT song_id, role FROM song_credits
+            WHERE role != 'Featuring' AND (artist_id IN (SELECT value FROM json_each(?)) OR _ulower(name) IN (SELECT value FROM json_each(?)))""",
+                (json.dumps(_lids), json.dumps(_lnames))).fetchall():
+            if _sid not in _have:
+                _wroles.setdefault(_sid, [])
+                if _role not in _wroles[_sid]:
+                    _wroles[_sid].append(_role)
+        worked = []
+        if _wroles:
+            for r in c.execute("SELECT * FROM songs_display WHERE source != 'downloading' AND id IN (SELECT value FROM json_each(?)) ORDER BY added_at DESC",
+                               (json.dumps(list(_wroles)),)).fetchall():
+                d = dict(r)
+                d['_worked_roles'] = _wroles.get(d['id'], [])
+                worked.append(d)
+        worked_albums = _albums(worked, skip={a['id'] for a in albums} | {a['id'] for a in appears_albums})
     return jsonify({'artist': dict(artist), 'songs': songs, 'albums': albums,
-                    'appears_songs': appears, 'appears_albums': appears_albums})
+                    'appears_songs': appears, 'appears_albums': appears_albums,
+                    'worked_songs': worked, 'worked_albums': worked_albums})
 
 def _art_alias_clean(raw):
     import unicodedata as _ud
@@ -14161,6 +14182,8 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #queue-inner{touch-action:pan-y;overflow-x:hidden}
 #queue-inner .song-list,#queue-inner>div>div{overflow:clip}
 #queue-inner img{-webkit-user-drag:none}
+.srch-credit{color:var(--color-primary);font-weight:600}
+.srch-credit .artist-link{color:inherit}
 #queue-inner .song-row:hover .snum-num{opacity:1}
 #queue-inner .song-row:hover .snum-play{opacity:0}
 #queue-inner .song-row.playing:not(.paused):hover .snum-num{opacity:0}
@@ -21336,6 +21359,7 @@ function _songHay(s) {
   const _cr = _songCredits(s), _W = ['Writer', 'Composer', 'Lyricist'], _P = ['Producer', 'Executive Producer'];
   const _cj = f => n(_cr.filter(f).map(c => c.name).join(' '));
   h.prod = _cj(c => _P.includes(c.role));
+  h.prim = n((s.artist || '') + _aliasHay(s.artist, ''));
   h.writer = _cj(c => _W.includes(c.role));
   h.credit = _cj(c => c.role !== 'Featuring');
   h.all = (h.title + ' ' + h.artist + ' ' + h.album + (CFG.search_credits_prod === true ? ' ' + h.prod : '') + (CFG.search_credits_writers === true ? ' ' + h.writer : '') + (CFG.search_credits_other === true ? ' ' + _cj(c => c.role !== 'Featuring' && !_W.includes(c.role) && !_P.includes(c.role)) : '')).trim();
@@ -21353,6 +21377,62 @@ function _songMatches(s, q) {
     if (ok === t.neg) return false;
   }
   return true;
+}
+// search ranking: main artist, then featured, then producer, then writers and every other credit, then title/album only matches
+const _SR_P = ['Producer', 'Executive Producer'], _SR_W = ['Writer', 'Composer', 'Lyricist'];
+function _searchUnits(q) {
+  const terms = _parseSearch(q).filter(t => !t.neg && !t.cmp && t.v);
+  const plain = terms.filter(t => !t.f);
+  const units = [];
+  if (plain.length) units.push({ f: null, v: plain.map(t => t.v).join(' '), parts: plain });
+  for (const t of terms) if (t.f === 'artist' || t.f === 'feat' || t.f === 'prod' || t.f === 'writer' || t.f === 'credit') units.push({ f: t.f, v: t.v });
+  return units;
+}
+function _unitLevel(h, cr, u) {
+  const v = u.v, f = u.f;
+  if (!f || f === 'artist') { if (h.prim.includes(v)) return { lv: 0, ex: [] }; }
+  if (!f || f === 'artist' || f === 'feat') { if (h.feat.includes(v)) return { lv: 1, ex: [] }; }
+  if (f === 'artist' || f === 'feat') return { lv: 4, ex: [] };
+  let lv = 4;
+  const ex = [];
+  for (const c of cr) {
+    if (c.role === 'Featuring') continue;
+    const g = _SR_P.includes(c.role) ? 'P' : _SR_W.includes(c.role) ? 'W' : 'O';
+    const ok = f === 'credit' || (f === 'prod' && g === 'P') || (f === 'writer' && g === 'W')
+      || (!f && ((g === 'P' && CFG.search_credits_prod === true) || (g === 'W' && CFG.search_credits_writers === true) || (g === 'O' && CFG.search_credits_other === true)));
+    if (!ok || !_srchNorm(c.name).includes(v)) continue;
+    lv = Math.min(lv, g === 'P' ? 2 : 3);
+    ex.push(c);
+  }
+  return { lv, ex };
+}
+function _searchInfo(s, q) {
+  const units = _searchUnits(q);
+  if (!units.length) return { lv: 4, ex: [] };
+  const h = _songHay(s), cr = _songCredits(s);
+  let lv = 0, ex = [];
+  for (const u of units) {
+    let r = _unitLevel(h, cr, u);
+    if (r.lv === 4 && u.parts && u.parts.length > 1) {
+      let mx = 0, exs = [];
+      for (const p of u.parts) { const x = _unitLevel(h, cr, { f: null, v: p.v }); mx = Math.max(mx, x.lv); exs = exs.concat(x.ex); }
+      r = { lv: mx, ex: exs };
+    }
+    lv = Math.max(lv, r.lv);
+    ex = ex.concat(r.ex);
+  }
+  if (lv < 2 || lv > 3) return { lv, ex: [] };
+  const seen = new Set();
+  ex = ex.filter(c => { const k = c.role + '|' + c.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  ex.sort((a, b) => (_SR_P.includes(a.role) ? 0 : 1) - (_SR_P.includes(b.role) ? 0 : 1));
+  return { lv, ex };
+}
+// stable: inside one rank the order the list already had (the chosen sort) stays
+function _searchRankSort(songs, q) {
+  if (!q || !_searchUnits(q).length) return songs;
+  const keyed = songs.map((s, i) => [_searchInfo(s, q).lv, i, s]);
+  keyed.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return keyed.map(k => k[2]);
 }
 let _searchDebounceT = null;
 function onGlobalSearch(val) {
@@ -21464,6 +21544,7 @@ function renderLibrary(){
     if(typeof av==='string')return S.libSortDir==='asc'?_libCollator.compare(av,bv):_libCollator.compare(bv,av);
     return S.libSortDir==='asc'?av-bv:bv-av;
   });
+  if(S.libSearch.trim()) songs=_searchRankSort(songs,S.libSearch.trim().toLowerCase());
   if(!S.library.length){
     if(S._vlist){S._vlist.destroy();S._vlist=null;}
     _lc.innerHTML=`<div class="empty"><div class="ei">♪</div><p>your library is empty</p><button class="btn btn-fill mu-ripple" onclick="setView('add')">add music</button></div>`;
@@ -22112,7 +22193,7 @@ function renderNowPlaying(_preArg) {
     + '</div>'
   ) : '';
   const _mvBtnHtml = ''; // no longer used; controls are in _mvCtrlHtml
-  const covHtml = `<div class="np-cover-wrap"><div class="np-cover-col" oncontextmenu="event.preventDefault();event.stopPropagation();songCtx(event,'${song.id}','')">
+  const covHtml = `<div class="np-cover-wrap"><div class="np-cover-col" oncontextmenu="event.preventDefault();event.stopPropagation();if(S.cur)songCtx(event,S.cur.id,'')">
     <div class="np-cover-inner" id="np-cover-inner" style="position:relative"${_npCovSrc ? ` onclick="openCoverLightbox('${_npCovSrc}')"` : ''}>${covInner}${_mvOverlayHtml}${_mvCtrlHtml}</div>
     <div class="np-info" id="np-info-block">
       <div class="np-title">${esc(song.title || 'untitled')}</div>
@@ -23511,6 +23592,15 @@ function tickLyrics(currentTime) {
 // ── queue virtual list ────────────────────────────────────────────────────────
 let _qvlist = null;
 let _qLastSel = null; // last tapped queue row, anchor for shift range select (separate from the songlist one)
+
+// right click on a queue row opens the normal song menu, with play / remove acting on the queue
+document.addEventListener('contextmenu', e => {
+  const row = e.target.closest && e.target.closest('#queue-inner .song-row[data-id]');
+  if (!row || row.classList.contains('drag-spacer')) return;
+  const qi = (S.shuffle && S.shuffleMode === 'chaos') ? S.qi : parseInt(row.dataset.qi);
+  if (!(qi >= 0)) return;
+  songCtx(e, row.dataset.id, '', { qi });
+}, true);
 
 function _queueRowClick(row, e) {
   const id = row.dataset.id;
@@ -25369,6 +25459,12 @@ function songArtistLineHtml(s, style = '') {
   if (!prPre) prods = prods.filter(n => !prim.includes(n) && !feats.includes(n));
   const names = arr => arr.map(x => artistNameHtml(x, style)).join(', ');
   let out = names(prim);
+  const _sq = (S.globalSearch || '').trim();
+  if (_sq && (S.view === 'library' || S.view === 'artist')) {
+    // found only through a credit the list doesnt show: put "role: name" right after the main artist
+    const _sx = _searchInfo(s, _sq).ex.filter(c => !(c.role === 'Producer' && CFG.list_show_producers === true) && !prim.includes(c.name) && !feats.includes(c.name));
+    if (_sx.length) out += (out ? ', ' : '') + _sx.map(c => '<span class="srch-credit">' + esc(c.role.toLowerCase()) + ': ' + artistNameHtml(c.name, style) + '</span>').join(', ');
+  }
   if (feats.length) out += (out ? (ftPre ? ' ' : ', ') : '') + (ftPre ? 'ft. ' : '') + names(feats);
   if (prods.length) out += (out ? ', ' : '') + (prPre ? 'prod. ' : '') + names(prods);
   return out;
@@ -27907,10 +28003,12 @@ async function renderArtistPage(aid, searchOnly) {
   const _aF = (arr) => _aq ? arr.filter(s => _songMatches(s, _aq)) : arr;
   const _aFA = (arr) => _aq ? arr.filter(a => _songMatches({ title: a.title, artist: a.artist, album: a.title }, _aq)) : arr;
   const songsAll = (pg && pg.songs) || [];
-  const songs = _aF(songsAll);
+  const songs = _searchRankSort(_aF(songsAll), _aq.toLowerCase());
   const localAlbums = _aFA((pg && pg.albums) || []);
   const appearsSongs = _aF((pg && pg.appears_songs) || []);
   const appearsAlbums = _aFA((pg && pg.appears_albums) || []);
+  const workedSongs = _searchRankSort(_aF((pg && pg.worked_songs) || []), _aq.toLowerCase());
+  const workedAlbums = _aFA((pg && pg.worked_albums) || []);
 
   if (_viewStale('artist', aid)) return; // left the artist page while it was loading
   if (!artist || artist.error) {
@@ -27953,6 +28051,7 @@ async function renderArtistPage(aid, searchOnly) {
           ${totalPlays ? statChip(totalPlays,'plays',false) : ''}
           ${(localAlbums||[]).length ? statChip(localAlbums.length,'albums',false) : ''}
           ${appearsSongs.length ? statChip(appearsSongs.length,'appears on',false) : ''}
+          ${workedSongs.length ? statChip(workedSongs.length,'worked on',false) : ''}
         </div>
       </div>
     </div>
@@ -27973,7 +28072,7 @@ async function renderArtistPage(aid, searchOnly) {
       <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">tracks in library</div>
       ${renderTable('library', songs, '')}
     </div>`;
-  } else if (!appearsSongs.length && !appearsAlbums.length) {
+  } else if (!appearsSongs.length && !appearsAlbums.length && !workedSongs.length && !workedAlbums.length) {
     html += `<div class="empty" style="padding:32px 0"><div class="ei">🎤</div><p>${_aq ? 'no tracks match "' + esc(_aq) + '"' : 'no tracks in library yet'}</p></div>`;
   }
 
@@ -27984,9 +28083,12 @@ async function renderArtistPage(aid, searchOnly) {
     </div>`;
   }
 
-  if (appearsSongs.length) {
-    S.viewSongs = [...songs, ...appearsSongs];
+  if (appearsSongs.length || workedSongs.length) {
+    S.viewSongs = [...songs, ...appearsSongs, ...workedSongs];
     _rebuildViewIdx();
+  }
+
+  if (appearsSongs.length) {
     const _aCompact = _calcListCompact('library');
     const _aCols = getViewCols('library');
     const _aTpl = buildGridTemplate(_aCols);
@@ -27998,12 +28100,32 @@ async function renderArtistPage(aid, searchOnly) {
     </div>`;
   }
 
+  if (workedAlbums.length) {
+    html += `<div style="margin-bottom:28px">
+      <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">worked on · albums</div>
+      <div class="albums-grid">${workedAlbums.map(a=>albumCard(a)).join('')}</div>
+    </div>`;
+  }
+
+  if (workedSongs.length) {
+    const _wCompact = _calcListCompact('library');
+    const _wCols = getViewCols('library');
+    const _wTpl = buildGridTemplate(_wCols);
+    const _wBase = songs.length + appearsSongs.length;
+    const _wRows = workedSongs.map((s, i) => songRow(s, i + 1, '', {view:'library', cols:_wCols, template:_wTpl}, _wBase + i)).join('');
+    const _wHdr = (tracksInLib || appearsSongs.length || _wCompact) ? '' : `<div class="list-header">${buildHeaderCells(_wCols)}</div>`;
+    html += `<div style="margin-bottom:16px">
+      <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">worked on · tracks</div>
+      <div class="song-table" style="${_tableStyle(_wCols)}">${_wHdr}<div class="song-list">${_wRows}</div></div>
+    </div>`;
+  }
+
   html += `<div id="artist-bio-section"></div>`;
 
   vc.innerHTML = html;
   updateHighlights();
   updateBulkBar();
-  if (appearsSongs.length && !tracksInLib) requestAnimationFrame(() => { _initListHeaderPin(); _initColResizeObserver(); });
+  if ((appearsSongs.length || workedSongs.length) && !tracksInLib) requestAnimationFrame(() => { _initListHeaderPin(); _initColResizeObserver(); });
 
   if (CFG.artist_extra_info && !searchOnly) {
     if (artist.ytm_channel_id) {
@@ -30155,14 +30277,15 @@ async function toggleQueueSkip(ids, val) {
   }
 }
 
-function songCtx(e, sid, pid) {
+function songCtx(e, sid, pid, qctx) {
   e.preventDefault();
   e.stopPropagation();
   const items = [];
-  const song = S.library.find(s => s.id === sid);
+  const song = S.library.find(s => s.id === sid) || (qctx && S.queue.find(s => s.id === sid));
   if (!song) return;
-  const ids = S.selected.size > 0 && S.selected.has(sid) ? [...S.selected] : [sid];
-  const songs = ids.map(id => S.library.find(s => s.id === id)).filter(Boolean);
+  const _selSet = qctx ? (S.qSelectMode ? S.qSelected : new Set()) : S.selected;
+  const ids = _selSet.size > 0 && _selSet.has(sid) ? [..._selSet] : [sid];
+  const songs = ids.map(id => S.library.find(s => s.id === id) || (qctx && S.queue.find(s => s.id === id))).filter(Boolean);
   const multi = ids.length > 1;
 
   const ICON_PLAY_NEXT = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><line x1="19" y1="4" x2="19" y2="20"></line><polygon points="1,5 11,12 1,19"></polygon><polygon points="10,5 18,12 10,19"></polygon></svg>';
@@ -30196,6 +30319,17 @@ function songCtx(e, sid, pid) {
   if (multi) items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>', label:`auto-fix genius (${ids.length})`, fn:()=> bulkGeniusFix(ids)});
   items.push({sep:true});
   items.push({icon: ICON_DELETE, label: multi ? `delete (${ids.length})` : 'delete from library', err:true, fn:()=> multi ? bulkDelete() : delSong(sid)});
+  if (qctx) {
+    // queue flavour: play jumps inside the queue, list-only and selection-bound items go, remove from queue joins
+    const _p = items.find(it => it.label === 'play');
+    if (_p) _p.fn = () => { S.qi = qctx.qi; S.cur = S.queue[qctx.qi]; playSong(S.cur); };
+    for (let k = items.length - 1; k >= 0; k--) {
+      const l = items[k].label || '';
+      if (l === 'play from here next' || (multi && (l.startsWith('add to playlist') || l.startsWith('delete (')))) items.splice(k, 1);
+    }
+    const _ix = items.findIndex(it => it.sep);
+    items.splice(_ix < 0 ? items.length : _ix, 0, {icon: ICON_REMOVE, label: multi ? `remove from queue (${ids.length})` : 'remove from queue', fn: () => _removeQueueRowsAt(qctx.qi, sid)});
+  }
   showCtx(e, items);
 }
 
