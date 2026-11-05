@@ -15375,10 +15375,15 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
 @media (hover:hover) and (pointer:fine){
   .song-table .song-row .sinfo:has(.is-trunc){overflow:visible}
   .song-table .song-row .is-trunc{
-    overflow:visible;text-overflow:clip;width:max-content;max-width:none;min-width:100%;
+    overflow:visible;text-overflow:clip;width:max-content;max-width:none;min-width:100%;box-sizing:border-box;
     position:relative;z-index:6;border-radius:var(--radius-sm);
+    padding:1px 6px;margin:-1px -6px;
     background:color-mix(in oklch,var(--color-surface-container-high) 96%,transparent);
-    box-shadow:0 0 0 4px color-mix(in oklch,var(--color-surface-container-high) 96%,transparent);
+  }
+  body.design-glassy .song-table .song-row .is-trunc{
+    background:color-mix(in oklch,var(--color-surface-container-highest) calc(55% * var(--glass-a,1)),transparent);
+    backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);
+    box-shadow:0 0 0 1px var(--glass-border-hi) inset,0 6px 20px rgba(0,0,0,.22);
   }
 }
 /* album detail header */
