@@ -2680,9 +2680,22 @@ def _gl_tree_to_lines(root):
     walk(root, {})
     return lines
 
+def _gl_head_segs(ln):
+    segs = [dict(s) for s in ln if s.get('t')]
+    if segs:
+        t0 = segs[0]['t'].lstrip()
+        segs[0]['t'] = t0[1:] if t0.startswith('[') else t0
+        t1 = segs[-1]['t'].rstrip()
+        segs[-1]['t'] = t1[:-1] if t1.endswith(']') else t1
+    segs = [s for s in segs if s['t']]
+    if segs:
+        segs[0]['t'] = segs[0]['t'].lstrip()
+        segs[-1]['t'] = segs[-1]['t'].rstrip()
+    return [s for s in segs if s['t']]
+
 def _gl_sections(lines):
     secs = []
-    cur = {'h': None, 'ha': None, 'lines': []}
+    cur = {'h': None, 'ha': None, 'hs': None, 'lines': []}
     def flush():
         ls = cur['lines']
         while ls and not ls[0]:
@@ -2691,6 +2704,8 @@ def _gl_sections(lines):
             ls.pop()
         if cur['h'] is not None or ls:
             sec = {'h': cur['h'], 'lines': ls}
+            if cur.get('hs'):
+                sec['hs'] = cur['hs']
             if cur['ha']:
                 sec['ha'] = cur['ha']
             secs.append(sec)
@@ -2700,7 +2715,7 @@ def _gl_sections(lines):
             ln = []
         if txt and _GL_HEAD_RE.fullmatch(txt):
             flush()
-            cur = {'h': txt[1:-1].strip(), 'ha': next((s['a'] for s in ln if s.get('a')), None), 'lines': []}
+            cur = {'h': txt[1:-1].strip(), 'ha': next((s['a'] for s in ln if s.get('a')), None), 'hs': _gl_head_segs(ln), 'lines': []}
             continue
         if not ln and (not cur['lines'] or not cur['lines'][-1]):
             continue
@@ -14604,6 +14619,9 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .gl-sec{margin-top:20px;padding-top:12px;border-top:1px solid color-mix(in oklch,var(--color-on-surface) 6%,transparent)}
 .gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
 .gl-h{font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);opacity:.6;margin-bottom:6px;letter-spacing:.02em}
+.gl-c{color:color-mix(in oklch,var(--color-on-surface-variant) 52%,var(--ac))}
+.gl-n{color:color-mix(in oklch,var(--color-on-surface-variant) 35%,var(--ac))}
+.gl-n::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ac);margin-right:5px;vertical-align:1px}
 .gl-l{min-height:1.8em}
 .gl-gap{height:.8em}
 .gl-a{cursor:pointer;border-radius:3px;background:color-mix(in oklch,var(--color-primary) 9%,transparent);transition:background var(--dur-2);-webkit-box-decoration-break:clone;box-decoration-break:clone}
@@ -23782,7 +23800,134 @@ function _lyrSanitize(html) {
   return walk(doc.body.firstChild);
 }
 
+const _LYR_HUES = [28, 88, 150, 200, 262, 330];
+function _lyrColOn() { return CFG.lyrics_artist_colors !== false; }
+function _lyrHue(h) { return 'oklch(0.82 0.11 ' + h + ')'; }
+function _lyrStyleKey(s) { return (s.i ? 'i' : '') + (s.b ? 'b' : ''); }
+
+function _lyrMajKey(counts) {
+  let best = '', n = -1;
+  for (const k in counts) if (counts[k] > n) { best = k; n = counts[k]; }
+  return best;
+}
+
+function _lyrHeadNames(hs) {
+  const chars = [];
+  hs.forEach(s => { for (let i = 0; i < s.t.length; i++) chars.push({ ch: s.t[i], k: _lyrStyleKey(s), i: s.i, b: s.b, a: s.a || '' }); });
+  const txt = chars.map(c => c.ch).join('');
+  const names = [];
+  const ci = txt.indexOf(':');
+  if (ci >= 0) {
+    const push = (s, e) => {
+      while (s < e && /\s/.test(txt[s])) s++;
+      while (e > s && /\s/.test(txt[e - 1])) e--;
+      if (e <= s) return;
+      const cnt = {};
+      for (let p = s; p < e; p++) { if (!/\s/.test(txt[p])) cnt[chars[p].k] = (cnt[chars[p].k] || 0) + 1; }
+      names.push({ s, e, name: txt.slice(s, e).toLowerCase(), key: _lyrMajKey(cnt) });
+    };
+    const start = ci + 1;
+    const rest = txt.slice(start);
+    const re = /\s*(?:,|&|\+|\band\b|\bi\b)\s*/g;
+    let last = start, m;
+    while ((m = re.exec(rest))) {
+      if (!m[0].length) { re.lastIndex++; continue; }
+      push(last, start + m.index);
+      last = start + m.index + m[0].length;
+    }
+    push(last, txt.length);
+  }
+  return { chars, names };
+}
+
+function _lyrArtistMap(g) {
+  const order = [], verse = [];
+  (g.sections || []).forEach(sc => {
+    const info = sc.hs && sc.hs.length ? _lyrHeadNames(sc.hs) : null;
+    verse.push(info);
+    if (info) info.names.forEach(n => { if (!order.includes(n.name)) order.push(n.name); });
+  });
+  return { order, verse };
+}
+
+function _lyrLineKey(ln) {
+  const cnt = {}, all = {};
+  ln.forEach(s => {
+    const k = _lyrStyleKey(s), w = s.t.trim().length;
+    all[k] = (all[k] || 0) + w;
+    if (!/^\s*\(.*\)\s*$/.test(s.t)) cnt[k] = (cnt[k] || 0) + w;
+  });
+  return _lyrMajKey(Object.keys(cnt).length ? cnt : all);
+}
+
 function _lyrGeniusHtml(g) {
+  const ann = g.ann || {};
+  const on = _lyrAnnOn();
+  const col = _lyrColOn();
+  const am = _lyrArtistMap(g);
+  const wrapSeg = (t, s) => {
+    let h = esc(t);
+    if (s.i) h = '<i>' + h + '</i>';
+    if (s.b) h = '<b>' + h + '</b>';
+    const a = on && s.a ? ann[s.a] : null;
+    if (a) h = '<a class="gl-a' + (a.cl === 'unreviewed' ? ' gl-pend' : '') + '" data-aid="' + esc(s.a) + '">' + h + '</a>';
+    return h;
+  };
+  const secs = (g.sections || []).map((sc, si) => {
+    const info = am.verse[si];
+    const lines0 = sc.lines || [];
+    let nameCol = null, keyCol = null;
+    if (info && col) {
+      const byKey = {};
+      info.names.forEach((n, ni) => { (byKey[n.key] = byKey[n.key] || []).push(ni); });
+      const single = Object.keys(byKey).filter(k => byKey[k].length === 1);
+      const used = new Set(lines0.filter(l => l.length).map(_lyrLineKey));
+      const hit = single.filter(k => used.has(k));
+      if (single.length >= 2 && hit.length >= 2) {
+        nameCol = {};
+        keyCol = {};
+        single.forEach(k => {
+          const ni = byKey[k][0];
+          const h = _LYR_HUES[am.order.indexOf(info.names[ni].name) % _LYR_HUES.length];
+          nameCol[ni] = h;
+          keyCol[k] = h;
+        });
+      }
+    }
+    let head = '';
+    if (info) {
+      const nameAt = new Array(info.chars.length).fill(-1);
+      info.names.forEach((n, ni) => { for (let p = n.s; p < n.e; p++) nameAt[p] = ni; });
+      const runs = [];
+      let cur = null;
+      info.chars.forEach((c, p) => {
+        const nk = nameCol && nameCol[nameAt[p]] !== undefined ? nameAt[p] : -1;
+        if (cur && cur.i === c.i && cur.b === c.b && cur.a === c.a && cur.n === nk) cur.t += c.ch;
+        else { cur = { t: c.ch, i: c.i, b: c.b, a: c.a, n: nk }; runs.push(cur); }
+      });
+      const hh = runs.map(r => {
+        const h = wrapSeg(r.t, r);
+        return r.n >= 0 ? '<span class="gl-n" style="--ac:' + _lyrHue(nameCol[r.n]) + '">' + h + '</span>' : h;
+      }).join('');
+      head = '<div class="gl-h">' + hh + '</div>';
+    } else if (sc.hs && sc.hs.length) {
+      head = '<div class="gl-h">' + sc.hs.map(s => wrapSeg(s.t, s)).join('') + '</div>';
+    } else if (sc.h) {
+      const hh = on && sc.ha && ann[sc.ha] ? '<a class="gl-a" data-aid="' + esc(sc.ha) + '">' + esc(sc.h) + '</a>' : esc(sc.h);
+      head = '<div class="gl-h">' + hh + '</div>';
+    }
+    const lines = lines0.map(ln => {
+      if (!ln.length) return '<div class="gl-gap"></div>';
+      const hue = keyCol ? keyCol[_lyrLineKey(ln)] : undefined;
+      const body = ln.map(s => wrapSeg(s.t, s)).join('');
+      return hue !== undefined ? '<div class="gl-l gl-c" style="--ac:' + _lyrHue(hue) + '">' + body + '</div>' : '<div class="gl-l">' + body + '</div>';
+    }).join('');
+    return '<div class="gl-sec">' + head + lines + '</div>';
+  }).join('');
+  return '<div class="gl-wrap" onclick="lyrAnnClick(event)">' + secs + '</div>';
+}
+
+function _lyrGeniusHtmlOld(g) {
   const ann = g.ann || {};
   const on = _lyrAnnOn();
   const seg = s => {
@@ -23868,6 +24013,13 @@ function lyrToggleAnn() {
   if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
 }
 
+function lyrToggleCol() {
+  const on = !_lyrColOn();
+  CFG.lyrics_artist_colors = on;
+  saveSetting('lyrics_artist_colors', on).catch(() => {});
+  if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
+}
+
 function lyrContext(e) {
   const d = S.lyricsData, song = S.cur;
   if (!d || !song || d.state !== 'ok') return;
@@ -23881,6 +24033,7 @@ function lyrContext(e) {
     items.push({ sep: true });
   }
   if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
+  if (av.genius) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
   items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
   showCtx(e, items);
 }
@@ -35865,6 +36018,7 @@ function renderSettings() {
           `);
         })()}
         ${row('genius annotations', 'show annotated lines in the genius lyrics view', toggle('lyrics_annotations', CFG.lyrics_annotations !== false))}
+        ${row('artist colors', 'color code lines per artist in mixed verses of the genius lyrics view', toggle('lyrics_artist_colors', CFG.lyrics_artist_colors !== false))}
         ${row('lyrics auto refresh', 'refetch genius lyrics and credits in the background when a song is played or queued next', toggle('lyrics_auto_refresh', CFG.lyrics_auto_refresh !== false))}
         ${row('refresh every', 'days between refreshes', `
           <input class="input" type="number" min="1" step="1" value="${CFG.lyrics_refresh_days ?? 3}" style="width:90px;text-align:right;padding:8px 6px"
