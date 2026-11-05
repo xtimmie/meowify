@@ -23888,10 +23888,10 @@ function _lyrGeniusHtml(g) {
       const single = Object.keys(byKey).filter(k => byKey[k].length === 1);
       const used = new Set(lines0.flat().filter(s => s.t.trim()).map(_lyrStyleKey));
       const hit = single.filter(k => used.has(k));
-      if (single.length >= 2 && (hit.length >= 2 || (hit.length === 1 && hit[0] !== ''))) {
+      if (single.length >= 2 && hit.some(k => k !== '')) {
         nameCol = {};
         keyCol = {};
-        single.forEach(k => {
+        single.filter(k => k !== '').forEach(k => {
           const ni = byKey[k][0];
           const h = _LYR_HUES[am.order.indexOf(info.names[ni].name) % _LYR_HUES.length];
           nameCol[ni] = h;
