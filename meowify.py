@@ -14838,6 +14838,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 #blyrics-sync.active .clock-minute { transform: rotate(120deg); }
 #blyrics-sync.active .clock-hour   { transform: rotate(-5deg); }
 #blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .3s cubic-bezier(.3,2,.4,1); }
+#blyrics-ann.active .ann-l1, #blyrics-ann.active .ann-l2 { transition: transform .3s cubic-bezier(.3,1,.4,1); }
 #blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(0); }
 #blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(0); }
 #blyrics-ann.active .ann-l1 { transform: scaleX(1); }
@@ -16655,6 +16656,21 @@ function mobSort(field){
 // ROW INTERACTION: click/tap=play, hold=select, hold+drag=multi-select
 // works on both touch and mouse (mobile layout or narrow desktop window)
 // ═══════════════════════════════════════════════
+let _mobPT = 'mouse';
+document.addEventListener('pointerdown', e => { _mobPT = e.pointerType; }, true);
+function _mobReorderDefault() { return CFG.mob_reorder_default === true; }
+function _mobHoldReorder(inQueue) {
+  return _mobReorderDefault() || !!(inQueue ? S.qSelectMode : S.selectMode);
+}
+// reorder by default: long press on a reorderable list never opens the menu, only the 3 dot button does
+document.addEventListener('contextmenu', e => {
+  if (!_mobReorderDefault() || _mobPT === 'mouse' || !isMobile()) return;
+  if (e.target.closest && e.target.closest('.sel-reorderable .song-row, .sel-reorderable .song-row-mobile')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}, true);
+
 function _initMobRowInteraction(){
   const HOLD_MS = 420;
   const DRAG_SLOP = 8;
@@ -16703,6 +16719,7 @@ function _initMobRowInteraction(){
     if(_startId) { clearTimeout(window._preloadT); window._preloadT=setTimeout(()=>engine.preload(_startId),150); }
 
     if(S.selectMode) return; // select mode: no ctx menu on hold, reorder handler takes over
+    if(_mobReorderDefault() && row.closest('.sel-reorderable')) return; // reorder by default: ctx menu only via the 3 dot button
     _holdTimer = setTimeout(()=>{
       if(_moved) return;
       _holdFired = true;
@@ -32014,7 +32031,7 @@ function initReorderDrag(listEl, opts) {
       setTimeout(() => { if (armedRow === target && !active) lift(target); }, 0);
       return;
     }
-    if (e.pointerType !== 'mouse') {
+    if (e.pointerType !== 'mouse' && _mobHoldReorder(!!listEl.closest('#queue-inner'))) {
       holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
     }
   });
@@ -32245,7 +32262,7 @@ function _initReorderDragOld(listEl, opts) {
     downY = lastY = e.clientY;
     armedRow = target;
     if (S.selectMode && e.target.closest('.sel-handle')) { e.preventDefault(); lift(target); return; }
-    if (e.pointerType !== 'mouse') {
+    if (e.pointerType !== 'mouse' && _mobHoldReorder(false)) {
       holdTimer = setTimeout(() => { if (armedRow) lift(armedRow); }, HOLD_MS);
     }
   });
@@ -32535,7 +32552,7 @@ function initVlistReorder(vl) {
       setTimeout(() => { if (armed === target && !active) lift(target); }, 0);
       return;
     }
-    if (e.pointerType !== 'mouse') {
+    if (e.pointerType !== 'mouse' && _mobHoldReorder(true)) {
       holdTimer = setTimeout(() => { if (armed) lift(armed); }, HOLD_MS);
     }
   });
@@ -36133,6 +36150,7 @@ function renderSettings() {
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
         ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
+        ${row('reorder on long press (mobile)', 'off: long press opens the song menu and reordering only works in select mode. on: long press reorders reorderable lists and the menu opens from the 3 dot button, lists you cant reorder still open the menu on long press', toggle('mob_reorder_default', CFG.mob_reorder_default === true))}
         ${row('"prod." label', 'write producers as "prod. name" instead of just adding them to the commas', toggle('list_prod_prefix', CFG.list_prod_prefix === true, 'rerenderCurrentView()'))}
         ${row('"ft." label', 'write feats as "artist ft. name, name" instead of plain commas', toggle('list_feat_prefix', CFG.list_feat_prefix === true, 'rerenderCurrentView()'))}
         ${row('search in producers', 'searching a name also finds songs it produced (prod:name always works)', toggle('search_credits_prod', CFG.search_credits_prod === true, 'rerenderCurrentView()'))}
