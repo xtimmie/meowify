@@ -14559,10 +14559,11 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   justify-content:space-evenly;
 }
 .np-lrc-preview:has(.np-lrc-line) {
-  min-height:105px;
+  height:132px;min-height:132px;box-sizing:border-box;overflow:hidden;justify-content:space-between;
 }
 /* lyrics = .np-section-hdr + one .np-lrc-preview panel, same shape as details / next up */
 .np-lrc-line{
+  margin:auto 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;
   font:var(--type-body-medium);font-variation-settings:var(--fv-body);
   color:var(--color-primary);
   font-weight:600;
@@ -14679,15 +14680,17 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   flex-shrink: 0;
 }
 /* synced lyrics scroll engine: the body stops being a native scroller, the content is moved with a transform instead */
-.lyrics-sidebar .lyrics-body.lyr-eng{overflow:hidden;scroll-behavior:auto;position:relative;touch-action:none;overscroll-behavior:contain;user-select:none;-webkit-user-select:none}
-.lyr-eng .lyr-sc{position:relative;will-change:transform}
+.lyrics-sidebar .lyrics-body.lyr-eng{overflow:hidden;scroll-behavior:auto;position:relative;touch-action:none;overscroll-behavior:contain;user-select:none;-webkit-user-select:none;padding:0 16px}
+.lyr-eng::after{display:none}
+.lyr-eng .lyr-sc{position:relative;will-change:transform;padding-bottom:calc(var(--bar-h) + 24px)}
 .lyr-eng .lrc-line,.lyr-eng .lrc-line.active{width:85%;transition:color var(--dur-3) ease,background var(--dur-2);will-change:transform,opacity,filter}
 .lyr-eng .lrc-line.active{transform:none}
-.lyr-eng .lyrics-resync{position:absolute;left:0;right:0;bottom:calc(var(--bar-h) + 8px);z-index:3}
-.lyr-thumb{position:absolute;right:2px;top:0;width:6px;border-radius:var(--radius-full);background:color-mix(in oklch,var(--color-on-surface) 28%,transparent);opacity:0;pointer-events:none;z-index:3;will-change:transform;transition:opacity var(--dur-3),background var(--dur-2),width var(--dur-2)}
+.lyr-eng .lyrics-resync{position:absolute;left:0;right:0;bottom:calc(var(--bar-h) + 14px);z-index:3;transform:translateY(8px) scale(.92);transition:opacity var(--dur-3) cubic-bezier(.2,1,.5,1),transform var(--dur-4) cubic-bezier(.34,1.56,.64,1)}
+.lyr-eng .lyrics-resync.on{transform:none}
+.lyr-thumb{position:absolute;right:0;top:0;width:var(--lyr-sbw,8px);border-radius:var(--radius-full);background:var(--lyr-sbc,rgba(255,255,255,.25));opacity:0;pointer-events:none;z-index:3;will-change:transform;transition:opacity var(--dur-3),filter var(--dur-2)}
 .lyr-thumb::before{content:'';position:absolute;inset:0 -8px}
 .lyr-thumb.on{opacity:1;pointer-events:auto}
-.lyr-thumb:hover,.lyr-thumb.drag{background:color-mix(in oklch,var(--color-on-surface) 45%,transparent);width:8px}
+.lyr-thumb:hover,.lyr-thumb.drag{filter:brightness(1.6)}
 .lrc-line{
   width:85%;
   padding:4px 8px;border-radius:var(--radius-sm);
@@ -14737,16 +14740,21 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   pointer-events: all;
 }
 .lyrics-resync button{
-  padding:6px 16px;border-radius:var(--radius-full);
-  background:var(--color-surface-container-highest);
-  border:1px solid var(--color-outline-variant);
+  display:inline-flex;align-items:center;gap:7px;
+  padding:8px 16px 8px 12px;border-radius:var(--radius-full);
+  background:color-mix(in oklch,var(--color-surface-container-highest) 78%,transparent);
+  backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);
+  border:1px solid color-mix(in oklch,var(--color-on-surface) 12%,transparent);
   color:var(--color-on-surface);
   font:var(--type-label-small);font-variation-settings:var(--fv-label);
   cursor:pointer;
-  box-shadow:0 2px 8px rgba(0,0,0,.35);
-  transition:background var(--dur-2);
+  box-shadow:0 4px 16px rgba(0,0,0,.28),0 1px 0 color-mix(in oklch,white 10%,transparent) inset;
+  transition:background var(--dur-2),transform var(--dur-2) cubic-bezier(.34,1.56,.64,1),filter var(--dur-2);
 }
-@media (hover: hover) {.lyrics-resync button:hover{background:var(--color-surface-container-high)}}
+.lyrics-resync button svg{flex-shrink:0;color:var(--color-primary)}
+.lyrics-resync button:active{transform:scale(.94)}
+@media (hover: hover) {.lyrics-resync button:hover{filter:brightness(1.15)}}
+body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)}
 .gl-wrap{font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);line-height:1.8}
 .gl-sec{margin-top:20px;padding-top:12px;border-top:1px solid color-mix(in oklch,var(--color-on-surface) 6%,transparent)}
 .gl-sec:first-child{margin-top:2px;padding-top:0;border-top:none}
@@ -24528,7 +24536,7 @@ function renderLrcLines(sid, prefixHtml) {
   if (!body) return;
   const linesHtml = _lrcLines.map((l, i) => _buildWordByWordLine(l, i)).join('');
   const _lrRs = `<div class="lyrics-resync" id="lrc-resync">
-      <button onclick="lrcResync()" style="display:inline-flex;align-items:center;gap:6px">${MEOW_ICONS.reload} sync</button>
+      <button onclick="lrcResync()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg>sync</button>
     </div>`;
   const _lrEng = _lyrEngOn();
   body.innerHTML = _lrEng
@@ -24589,11 +24597,11 @@ const _lyrBlurOn = () => CFG.lyrics_blur !== false;
 const _lyrCfg = (k, d) => { const v = Number(CFG[k]); return CFG[k] != null && isFinite(v) ? v : d; };
 const _npFxCls = () => CFG.np_lyrics_legacy === true ? '' : ' np-lrc-fx' + (_lyrBlurOn() ? ' np-lrc-blur' : '');
 const _LE = { on: false, sid: null, mode: 'sync', held: false, raf: 0, last: 0, fr: 4, redo: false, la: -1, lt: 0, sup: false,
-  U: { x: 0, v: 0 }, F: { x: 0, v: 0 }, foc: { x: 1, v: 0 }, S: [], A: [], els: [], top: [], hgt: [], H: 0, max: 0, thH: 28 };
+  U: { x: 0, v: 0 }, F: { x: 0, v: 0 }, foc: { x: 1, v: 0 }, S: [], A: [], els: [], top: [], hgt: [], H: 0, V: 0, B: 0, tb: 0, max: 0, thH: 28 };
 const _lyrClamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const _lyrRub = x => Math.sign(x) * 64 * (1 - Math.exp(-Math.abs(x) / 64));
-function _lyrSp(o, tg, k, c, dt) { const h = dt / 2; for (let j = 0; j < 2; j++) { o.v += (k * (tg - o.x) - c * o.v) * h; o.x += o.v * h; } }
-const _lyrTarget = (L, a) => a < 0 || !L.hgt[a] ? 0 : _lyrClamp(L.top[a] + L.hgt[a] / 2 - L.H / 2, 0, L.max);
+function _lyrSp(o, tg, k, c, dt) { const n = Math.max(2, Math.ceil(dt / .0085)), h = dt / n; for (let j = 0; j < n; j++) { o.v += (k * (tg - o.x) - c * o.v) * h; o.x += o.v * h; } }
+const _lyrTarget = (L, a) => a < 0 || !L.hgt[a] ? 0 : _lyrClamp(L.top[a] + L.hgt[a] / 2 - L.V / 2, 0, L.max);
 
 function _lyrSlider(key, def, min, max, unit, off) {
   const v = _lyrCfg(key, def);
@@ -24608,11 +24616,25 @@ function _lyrSliderIn(el, key, unit, off) {
   _lyrEngKick(true);
 }
 
+const _npEaseMemo = {};
+function _npEase() {
+  const bz = _lyrCfg('lyrics_bounce', 55) / 100, key = bz.toFixed(2);
+  if (_npEaseMemo[key]) return _npEaseMemo[key];
+  let r;
+  if (!(window.CSS && CSS.supports && CSS.supports('animation-timing-function', 'linear(0,1)'))) r = `cubic-bezier(.34,${(1 + .6 * bz).toFixed(2)},.64,1)`;
+  else {
+    const z = Math.min(.97, 1 - .72 * bz), w = 22, wd = w * Math.sqrt(1 - z * z), T = .8, n = 40, pts = [];
+    for (let i = 0; i <= n; i++) { const t = T * i / n, e = Math.exp(-z * w * t); pts.push((1 - e * (Math.cos(wd * t) + z * w / wd * Math.sin(wd * t))).toFixed(4)); }
+    pts[n] = '1';
+    r = `linear(${pts.join(',')})`;
+  }
+  return _npEaseMemo[key] = r;
+}
 function _npSpring(el) {
-  const kf = el.id === 'np-lrc-active' ? [{ transform: 'translateY(16px) scale(.94)', opacity: .5 }, { transform: 'none' }]
-    : el.id === 'np-lrc-prev' ? [{ transform: 'translateY(22px) scale(1.1)' }, { transform: 'none' }]
-    : [{ transform: 'translateY(14px)', opacity: 0 }, { transform: 'none' }];
-  return el.animate(kf, { duration: 460, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+  const kf = el.id === 'np-lrc-active' ? [{ transform: 'translateY(20px) scale(.9)', opacity: .45 }, { transform: 'none', opacity: 1 }]
+    : el.id === 'np-lrc-prev' ? [{ transform: 'translateY(24px) scale(1.12)' }, { transform: 'none' }]
+    : [{ transform: 'translateY(16px)', opacity: 0 }, { transform: 'none', opacity: 1 }];
+  return el.animate(kf, { duration: 800 / (_lyrCfg('lyrics_speed', 100) / 100), easing: _npEase() });
 }
 
 function _lyrEngOff() {
@@ -24634,10 +24656,37 @@ function _lyrEngKick(measure) {
 function _lyrEngMeasure() {
   const L = _LE;
   if (!L.on || !L.sc || !L.sc.isConnected) return;
+  const cs = getComputedStyle(L.body);
   L.H = L.body.clientHeight;
+  L.B = parseFloat(cs.getPropertyValue('--bar-h')) || 0;
+  L.tb = parseFloat(cs.getPropertyValue('--bar-track-margin')) || 0;
+  L.V = Math.max(60, L.H - L.B);
   L.top = L.els.map(e => e.offsetTop);
   L.hgt = L.els.map(e => e.offsetHeight);
-  L.max = Math.max(0, L.sc.offsetHeight - (L.H - 16));
+  L.max = Math.max(0, L.sc.offsetHeight - L.H);
+}
+const _lyrNow = () => { const t = engine.hasPaused && engine._pausedAt != null ? engine._pausedAt : engine._lastKnownPosition; return Number.isFinite(t) ? t : NaN; };
+function _lyrEngSeed() {
+  if (!_lrcLines.length) return;
+  const t = _lyrNow();
+  if (!Number.isFinite(t)) return;
+  let a = -1;
+  for (let i = _lrcLines.length - 1; i >= 0; i--) if (t >= _lrcLines[i].time) { a = i; break; }
+  if (a !== _lrcActiveIdx) { _lrcActiveIdx = a; _lrcActiveWordIdx = -1; _lrcNextLineTime = a + 1 < _lrcLines.length ? _lrcLines[a + 1].time : Infinity; }
+  if (a >= 0) document.getElementById('lrc-' + a)?.classList.add('active');
+}
+function _lyrEngProbe() {
+  const th = _LE.th;
+  if (!th) return;
+  let w = 0, c = '';
+  try {
+    const vc = document.getElementById('vc');
+    if (vc) { w = parseFloat(getComputedStyle(vc, '::-webkit-scrollbar').width) || 0; c = getComputedStyle(vc, '::-webkit-scrollbar-thumb').backgroundColor || ''; }
+  } catch (e) {}
+  if (!(w >= 3 && w <= 16)) w = 8;
+  if (!c || c === 'transparent' || /,\s*0\)$/.test(c)) c = 'rgba(255,255,255,.25)';
+  th.style.setProperty('--lyr-sbw', w + 'px');
+  th.style.setProperty('--lyr-sbc', c);
 }
 function _lyrEngInit(sid) {
   const L = _LE;
@@ -24655,6 +24704,8 @@ function _lyrEngInit(sid) {
   body.appendChild(L.th);
   if (L.mode === 'free') document.getElementById('lrc-resync')?.classList.add('on');
   if (!body._lyrEng) { body._lyrEng = true; _lyrEngWire(body); }
+  _lyrEngSeed();
+  _lyrEngProbe();
   _lyrEngMeasure();
   const a = _lrcActiveIdx, Ta = _lyrTarget(L, a);
   L.F.x = _lyrClamp(L.F.x, 0, L.max);
@@ -24717,7 +24768,7 @@ function _lyrEngWire(body) {
   // the sheet drag on mobile must not grab swipes that start inside the lyrics
   body.addEventListener('touchstart', e => { if (isMobile() && ok() && !e.target.closest('.lyrics-resync')) e.stopPropagation(); }, { passive: true });
   body.addEventListener('pointerdown', e => {
-    if (!ok() || e.button > 0 || e.target.closest('.lyrics-resync')) return;
+    if (!ok() || e.button > 1 || e.target.closest('.lyrics-resync')) return;
     if (isMobile()) e.stopPropagation();
     const L = _LE;
     L.sup = false;
@@ -24733,7 +24784,7 @@ function _lyrEngWire(body) {
   body.addEventListener('pointermove', e => {
     const L = _LE;
     if (L.tdrag) {
-      const p = _lyrClamp(L.tdrag.p0 + (e.clientY - L.tdrag.y) / ((L.H - 8 - L.thH) || 1), 0, 1);
+      const p = _lyrClamp(L.tdrag.p0 + (e.clientY - L.tdrag.y) / ((L.H - L.tb - 8 - L.thH) || 1), 0, 1);
       L.F.x = p * L.max; L.F.v = 0;
       _onLyricsScroll(); _lyrScrollMark(); _lyrEngKick();
       return;
@@ -24767,6 +24818,8 @@ function _lyrEngWire(body) {
   body.addEventListener('pointercancel', up);
   // a drag must not count as a tap on a line
   body.addEventListener('click', e => { if (_LE.sup) { _LE.sup = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  body.addEventListener('mousedown', e => { if (e.button === 1 && _LE.on && !e.target.closest('.lyrics-resync')) e.preventDefault(); });
+  body.addEventListener('auxclick', e => { if (e.button === 1 && _LE.on) e.preventDefault(); });
 }
 function _lyrEngFrame(now) {
   const L = _LE;
@@ -24775,6 +24828,7 @@ function _lyrEngFrame(now) {
   if (L.redo) { L.redo = false; _lyrEngMeasure(); }
   const dt = Math.min(.033, (now - L.last) / 1000) || .016;
   L.last = now;
+  const ds = dt * _lyrCfg('lyrics_speed', 100) / 100;
   const bz = _lyrCfg('lyrics_bounce', 55) / 100, zeta = 1 - .72 * bz, sm = _lyrCfg('lyrics_smooth', 35) / 100;
   const free = L.mode === 'free', hand = (L.drag && L.drag.moved) || L.tdrag, n = L.els.length;
   let busy = L.held || !!hand;
@@ -24783,7 +24837,7 @@ function _lyrEngFrame(now) {
   if (a >= 0) { L.la = a; L.lt = now; }
   else if (L.la >= 0 && now - L.lt < 400) { a = L.la; busy = true; }
   if (!free) {
-    if (!L.held) _lyrSp(L.U, 0, 170, 2 * Math.sqrt(170) * zeta, dt);
+    if (!L.held) _lyrSp(L.U, 0, 170, 2 * Math.sqrt(170) * zeta, ds);
     if (Math.abs(L.U.x) > .05 || Math.abs(L.U.v) > .5) busy = true;
   } else if (!hand) {
     const F = L.F;
@@ -24799,11 +24853,11 @@ function _lyrEngFrame(now) {
   for (let i = 0; i < n; i++) {
     const s = L.S[i], A = L.A[i], ad = Math.abs(i - a), tg = i === a ? 1 : 0;
     if (free && !kf) { s.x = T; s.v = 0; }
-    else { const kk = free ? kf : 190 * (1 - .05 * Math.min(ad, 7)); _lyrSp(s, T, kk, 2 * Math.sqrt(kk) * (free ? 1 : zeta), dt); }
-    _lyrSp(A, tg, 320, 2 * Math.sqrt(320) * (.8 - .45 * bz), dt);
+    else { const kk = free ? kf : 190 * (1 - .05 * Math.min(ad, 7)); _lyrSp(s, T, kk, 2 * Math.sqrt(kk) * (free ? 1 : zeta), free ? dt : ds); }
+    _lyrSp(A, tg, 320, 2 * Math.sqrt(320) * (.8 - .45 * bz), ds);
     if (Math.abs(s.x - T) > .05 || Math.abs(s.v) > .5 || Math.abs(A.x - tg) > .002 || Math.abs(A.v) > .02) busy = true;
   }
-  _lyrSp(L.foc, free ? 0 : 1, 220, 2 * Math.sqrt(220) * .8, dt);
+  _lyrSp(L.foc, free ? 0 : 1, 220, 2 * Math.sqrt(220) * .8, ds);
   if (Math.abs(L.foc.x - (free ? 0 : 1)) > .002 || Math.abs(L.foc.v) > .02) busy = true;
   // the content moves with the active line's scroll value, every line only adds its own small trailing offset on top
   const X = L.S[Math.max(0, a)] ? L.S[Math.max(0, a)].x : 0, f = _lyrClamp(L.foc.x, 0, 1), blur = _lyrBlurOn();
@@ -24822,7 +24876,7 @@ function _lyrEngFrame(now) {
   const th = L.th;
   if (th) {
     if (L.max > 0) {
-      const cur = free ? L.F.x : X, tr = L.H - 8;
+      const cur = free ? L.F.x : X, tr = L.H - L.tb - 8;
       L.thH = Math.max(28, tr * L.H / (L.max + L.H));
       th.style.display = '';
       th.style.height = L.thH + 'px';
@@ -36463,6 +36517,7 @@ function renderSettings() {
         ${row('lyrics blur', 'blur lines away from the current one, turn off for better performance', toggle('lyrics_blur', CFG.lyrics_blur !== false, '_lyrEngKick(true);if(S.nowPlayingOpen)renderNowPlaying()'))}
         ${row('scroll smoothness', 'how scrolling by hand feels, 0 is like normal scrolling, higher glides further and overshoots at the edges', _lyrSlider('lyrics_smooth', 35, 0, 100, '%'))}
         ${row('lyrics bounce', 'how springy the line animations and autoscroll are', _lyrSlider('lyrics_bounce', 55, 0, 100, '%'))}
+        ${row('lyrics speed', 'how fast the line animations and autoscroll move, same bounce at any speed', _lyrSlider('lyrics_speed', 100, 40, 250, '%'))}
         ${row('break resistance', 'how hard you have to scroll to unsync from the current line', _lyrSlider('lyrics_break', 110, 50, 260, 'px'))}
         ${row('auto resync', 'seconds without scrolling before it jumps back to the current line, 0 is off', _lyrSlider('lyrics_auto', 8, 0, 15, 's', true))}
         ${row('lyrics auto refresh', 'refetch genius lyrics and credits in the background when a song is played or queued next', toggle('lyrics_auto_refresh', CFG.lyrics_auto_refresh !== false))}
