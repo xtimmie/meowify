@@ -1438,6 +1438,36 @@ def _play_sql(a=''):
     return (f"CASE WHEN {a}source='spotify' THEN COALESCE({a}ms_played,0)>={_REAL_PLAY_MIN_MS} "
             f"ELSE COALESCE({a}skipped,0)=0 END")
 
+def _artist_alias_groups(c):
+    g = {}
+    for name, al in c.execute("SELECT name, aliases FROM artists").fetchall():
+        try: al = json.loads(al or '[]')
+        except Exception: al = []
+        keys = {_canonical(name)} | {_canonical(a) for a in al}
+        keys.discard('')
+        for k in keys:
+            g.setdefault(k, set()).update(keys)
+    return g
+
+def _sync_song_counts_from_stats(c):
+    groups = _artist_alias_groups(c)
+    by_title = {}
+    for ca, ct, pc in c.execute("SELECT canonical_artist, canonical_title, play_count FROM song_stats").fetchall():
+        by_title.setdefault(ct, {})[ca] = pc or 0
+    upd = []
+    for sid, title, artist, cur in c.execute(
+            "SELECT id, title, artist, play_count FROM songs WHERE source != 'downloading'").fetchall():
+        found = by_title.get(_canonical(title or ''))
+        if not found:
+            continue
+        ca = _canonical((artist or '').split(',')[0].strip())
+        keys = groups.get(ca, set()) | {ca}
+        hit = [pc for k, pc in found.items() if k in keys]
+        if hit and sum(hit) != (cur or 0):
+            upd.append((sum(hit), sid))
+    if upd:
+        c.executemany("UPDATE songs SET play_count=? WHERE id=?", upd)
+
 def _recompute_play_counts():
     with db() as c:
         c.execute(f"""
@@ -1445,16 +1475,7 @@ def _recompute_play_counts():
                 play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()})
             WHERE EXISTS (SELECT 1 FROM play_events WHERE song_stats_id=song_stats.id)
         """)
-        c.execute("""
-            UPDATE songs SET
-                play_count=COALESCE((
-                    SELECT ss.play_count FROM song_stats ss
-                    WHERE ss.canonical_artist = _canonical(TRIM(SUBSTR(songs.artist, 1,
-                        CASE WHEN INSTR(songs.artist,',')>0 THEN INSTR(songs.artist,',')-1
-                             ELSE LENGTH(songs.artist) END)))
-                      AND ss.canonical_title = _canonical(songs.title)
-                    LIMIT 1), songs.play_count)
-        """)
+        _sync_song_counts_from_stats(c)
 
 def _canonical(s):
     """lowercase, strip punctuation/articles for fuzzy identity key"""
@@ -6182,6 +6203,9 @@ def api_import_spotify_history():
                         "UPDATE songs SET play_count=?, last_played=MAX(COALESCE(last_played,0),?) WHERE id=?",
                         (new_pc, new_lp, best_sid)
                     )
+    try:
+        _recompute_play_counts()
+    except Exception: pass
     return jsonify({
         'ok': True,
         'imported': imported,
