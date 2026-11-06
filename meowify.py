@@ -2931,6 +2931,51 @@ def _lrclib_fetch(artist, title, duration, is_video=False):
                 break
     if not result and is_video and duration:
         result = _try({'artist_name': artist or '', 'track_name': title or ''})
+    if not result:
+        # /api/get is exact-match only, so titles like 'Race (feat. x)' or artists like 'a & b' miss - fall back to fuzzy search
+        import re as _re
+        def _tnorm(s):
+            s = (s or '').lower()
+            s = _re.sub(r'[\(\[][^\)\]]*\b(?:feat|ft|with)\b[^\)\]]*[\)\]]', ' ', s)
+            s = _re.sub(r'\b(?:feat|ft)\b\.?.*$', ' ', s)
+            return _re.sub(r'\W+', ' ', s).strip()
+        def _atoks(s):
+            parts = _re.split(r'\s*(?:,|;|&|\bx\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*', (s or '').lower())
+            return [t for t in (_re.sub(r'\W+', ' ', p).strip() for p in parts) if t]
+        want_t = _tnorm(title)
+        want_a = _atoks(artist)
+        if want_t and want_a:
+            best = None
+            for _q in ({'q': (want_t + ' ' + want_a[0]).strip()}, {'track_name': title or '', 'artist_name': want_a[0]}):
+                try:
+                    req = urllib.request.Request('https://lrclib.net/api/search?' + urllib.parse.urlencode(_q),
+                                                 headers={'User-Agent': 'meowify/1.0 (music player)'})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        items = json.loads(r.read()) if r.status == 200 else []
+                except Exception as e:
+                    _log_lyrics.warning('lrclib search err: %s', e)
+                    continue
+                for it in items or []:
+                    if not isinstance(it, dict) or it.get('instrumental'):
+                        continue
+                    if not (it.get('syncedLyrics') or it.get('plainLyrics')):
+                        continue
+                    if _tnorm(it.get('trackName')) != want_t:
+                        continue
+                    if not (set(want_a) & set(_atoks(it.get('artistName')))):
+                        continue
+                    dd = 0
+                    if duration and it.get('duration'):
+                        dd = abs(float(it['duration']) - float(duration))
+                        if dd > 3:
+                            continue
+                    score = (0 if it.get('syncedLyrics') else 1, dd)
+                    if best is None or score < best[0]:
+                        best = (score, it)
+                if best:
+                    break
+            if best:
+                result = best[1]
     return result
 
 def _song_instrumental(sid):
