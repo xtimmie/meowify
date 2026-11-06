@@ -24897,7 +24897,7 @@ function _lyrEngInit(sid) {
   if (L.sid !== sid) { L.F.x = 0; L.la = -1; L.lt = 0; }
   const els = [...sc.querySelectorAll('.lrc-line')];
   Object.assign(L, { on: true, sid, body, sc, els, S: els.map(() => ({ x: 0, v: 0 })), A: els.map(() => ({ x: 0, v: 0 })),
-    U: { x: 0, v: 0 }, held: false, drag: null, tdrag: null });
+    U: { x: 0, v: 0 }, held: false, drag: null, tdrag: null, Ft: null });
   L.F.v = 0;
   L.mode = S.lyricsAutoSync === false ? 'free' : 'sync';
   body.classList.add('lyr-eng');
