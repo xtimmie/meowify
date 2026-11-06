@@ -644,9 +644,9 @@ def _migrate_stats_canonical_artist(c):
                     "UPDATE OR IGNORE play_events SET song_stats_id=? WHERE song_stats_id=?",
                     (existing[0], ssid))
                 c.execute("DELETE FROM song_stats WHERE id=?", (ssid,))
-                c.execute("""
+                c.execute(f"""
                     UPDATE song_stats SET
-                        play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id),
+                        play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()}),
                         last_played=(SELECT MAX(timestamp) FROM play_events WHERE song_stats_id=song_stats.id),
                         first_played=(SELECT MIN(timestamp) FROM play_events WHERE song_stats_id=song_stats.id)
                     WHERE id=?""", (existing[0],))
@@ -679,9 +679,9 @@ def merge_duplicate_stats(c):
                 (keep_id, lose_id))
             c.execute("DELETE FROM song_stats WHERE id=?", (lose_id,))
             merged += 1
-        c.execute("""
+        c.execute(f"""
             UPDATE song_stats SET
-                play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id),
+                play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()}),
                 last_played=(SELECT MAX(timestamp) FROM play_events WHERE song_stats_id=song_stats.id),
                 first_played=(SELECT MIN(timestamp) FROM play_events WHERE song_stats_id=song_stats.id)
             WHERE id=?""", (keep_id,))
@@ -1432,6 +1432,30 @@ def init_db():
 
 
 # ── song stats (persistent across deletes/re-adds) ────────────────────────────
+_REAL_PLAY_MIN_MS = 10000
+
+def _play_sql(a=''):
+    return (f"CASE WHEN {a}source='spotify' THEN COALESCE({a}ms_played,0)>={_REAL_PLAY_MIN_MS} "
+            f"ELSE COALESCE({a}skipped,0)=0 END")
+
+def _recompute_play_counts():
+    with db() as c:
+        c.execute(f"""
+            UPDATE song_stats SET
+                play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()})
+            WHERE EXISTS (SELECT 1 FROM play_events WHERE song_stats_id=song_stats.id)
+        """)
+        c.execute("""
+            UPDATE songs SET
+                play_count=COALESCE((
+                    SELECT ss.play_count FROM song_stats ss
+                    WHERE ss.canonical_artist = _canonical(TRIM(SUBSTR(songs.artist, 1,
+                        CASE WHEN INSTR(songs.artist,',')>0 THEN INSTR(songs.artist,',')-1
+                             ELSE LENGTH(songs.artist) END)))
+                      AND ss.canonical_title = _canonical(songs.title)
+                    LIMIT 1), songs.play_count)
+        """)
+
 def _canonical(s):
     """lowercase, strip punctuation/articles for fuzzy identity key"""
     if not s: return ''
@@ -5550,9 +5574,9 @@ def merge_duplicate_songs(throttle=False):
                             "UPDATE OR IGNORE play_events SET song_stats_id=? WHERE song_stats_id=?",
                             (win_stats[0], lose_stats[0]))
                         c.execute("DELETE FROM song_stats WHERE id=?", (lose_stats[0],))
-                        c.execute("""
+                        c.execute(f"""
                             UPDATE song_stats SET
-                                play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id),
+                                play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()}),
                                 last_played=(SELECT MAX(timestamp) FROM play_events WHERE song_stats_id=song_stats.id),
                                 first_played=(SELECT MIN(timestamp) FROM play_events WHERE song_stats_id=song_stats.id)
                             WHERE id=?""", (win_stats[0],))
@@ -6032,7 +6056,7 @@ def api_import_spotify_history():
                     if ts is None:
                         ts = int(time.time())
 
-                    is_real_play = ms_played >= MIN_MS and not entry_skipped
+                    is_real_play = ms_played >= MIN_MS
 
                     # fuzzy match via cache
                     ca = _canonical(artist)
@@ -6183,9 +6207,9 @@ def api_stats():
             FROM songs s WHERE s.last_played IS NOT NULL AND s.source != 'downloading'
             ORDER BY s.last_played DESC LIMIT 50
         """).fetchall()
-        totals = c.execute("""
+        totals = c.execute(f"""
             SELECT COUNT(*) as total_songs,
-                COALESCE(SUM(play_count), 0) as total_plays,
+                (SELECT COUNT(*) FROM play_events WHERE {_play_sql()}) as total_plays,
                 COALESCE(SUM(CASE WHEN play_count > 0 THEN 1 ELSE 0 END), 0) as songs_played,
                 COALESCE(SUM(play_count * COALESCE(duration, 0)), 0) as total_seconds
             FROM songs WHERE source != 'downloading'
@@ -6194,6 +6218,7 @@ def api_stats():
             "SELECT COALESCE(SUM(play_count), 0) as total FROM song_stats"
         ).fetchone()
         event_count = c.execute("SELECT COUNT(*) FROM play_events").fetchone()[0]
+        real_play_total = c.execute(f"SELECT COUNT(*) FROM play_events WHERE {_play_sql()}").fetchone()[0]
         has_events = event_count > 0
 
         lib_songs = c.execute(
@@ -6229,44 +6254,44 @@ def api_stats():
         skip_hour_raw = []
 
         if has_events:
-            for r in c.execute("""
+            for r in c.execute(f"""
                 SELECT CAST(strftime('%H', datetime(timestamp,'unixepoch','localtime')) AS INTEGER),
-                       COUNT(*) FROM play_events GROUP BY 1
+                       COUNT(*) FROM play_events WHERE {_play_sql()} GROUP BY 1
             """).fetchall():
                 hourly[r[0]] = r[1]
 
-            for r in c.execute("""
+            for r in c.execute(f"""
                 SELECT CAST(strftime('%w', datetime(timestamp,'unixepoch','localtime')) AS INTEGER),
-                       COUNT(*) FROM play_events GROUP BY 1
+                       COUNT(*) FROM play_events WHERE {_play_sql()} GROUP BY 1
             """).fetchall():
                 weekday[r[0]] = r[1]
 
             cutoff_91 = int(time.time()) - 91 * 86400
             daily_data = [
-                {'day': r[0], 'cnt': r[1]} for r in c.execute("""
+                {'day': r[0], 'cnt': r[1]} for r in c.execute(f"""
                     SELECT strftime('%Y-%m-%d', datetime(timestamp,'unixepoch','localtime')) as day,
-                           COUNT(*) FROM play_events WHERE timestamp >= ? GROUP BY day
+                           COUNT(*) FROM play_events WHERE timestamp >= ? AND {_play_sql()} GROUP BY day
                 """, (cutoff_91,)).fetchall()
             ]
 
             cutoff_12m = int(time.time()) - 365 * 86400
             monthly_data = [
-                {'month': r[0], 'cnt': r[1]} for r in c.execute("""
+                {'month': r[0], 'cnt': r[1]} for r in c.execute(f"""
                     SELECT strftime('%Y-%m', datetime(timestamp,'unixepoch','localtime')) as month,
-                           COUNT(*) FROM play_events WHERE timestamp >= ?
+                           COUNT(*) FROM play_events WHERE timestamp >= ? AND {_play_sql()}
                     GROUP BY month ORDER BY month ASC
                 """, (cutoff_12m,)).fetchall()
             ]
 
             # cap streak scan to last 3 years - streak can't meaningfully exceed that
             cutoff_streak = int(time.time()) - 3 * 365 * 86400
-            all_days = [r[0] for r in c.execute("""
+            all_days = [r[0] for r in c.execute(f"""
                 SELECT DISTINCT strftime('%Y-%m-%d', datetime(timestamp,'unixepoch','localtime')) as day
-                FROM play_events WHERE timestamp >= ? ORDER BY day DESC
+                FROM play_events WHERE timestamp >= ? AND {_play_sql()} ORDER BY day DESC
             """, (cutoff_streak,)).fetchall()]
 
             unique_played = c.execute(
-                "SELECT COUNT(DISTINCT song_stats_id) FROM play_events"
+                f"SELECT COUNT(DISTINCT song_stats_id) FROM play_events WHERE {_play_sql()}"
             ).fetchone()[0]
             first_play_ts = c.execute("SELECT MIN(timestamp) FROM play_events").fetchone()[0]
             real_seconds_simple = c.execute("""
@@ -6274,8 +6299,8 @@ def api_stats():
                 FROM songs s WHERE s.play_count > 0 AND s.source != 'downloading'
                 AND s.duration IS NOT NULL
             """).fetchone()[0]
-            source_raw = c.execute("""
-                SELECT source, COUNT(*) FROM play_events GROUP BY source ORDER BY 2 DESC
+            source_raw = c.execute(f"""
+                SELECT source, COUNT(*) FROM play_events WHERE {_play_sql()} GROUP BY source ORDER BY 2 DESC
             """).fetchall()
             top_time = c.execute("""
                 SELECT s.id as song_id, s.title, s.artist, s.cover_path,
@@ -6285,15 +6310,15 @@ def api_stats():
             """).fetchall()
 
             # ── new: real shuffle/offline/skip/reason stats ───────────────
-            shuf_row = c.execute("""
+            shuf_row = c.execute(f"""
                 SELECT COUNT(CASE WHEN shuffle=1 THEN 1 END),
                        COUNT(CASE WHEN shuffle=0 THEN 1 END)
-                FROM play_events
+                FROM play_events WHERE {_play_sql()}
             """).fetchone()
-            offline_row = c.execute("""
+            offline_row = c.execute(f"""
                 SELECT COUNT(CASE WHEN offline=1 THEN 1 END),
                        COUNT(CASE WHEN offline=0 THEN 1 END)
-                FROM play_events
+                FROM play_events WHERE {_play_sql()}
             """).fetchone()
             end_reasons_raw = c.execute("""
                 SELECT reason_end, COUNT(*) as cnt FROM play_events
@@ -6323,15 +6348,15 @@ def api_stats():
                 ORDER BY (ss.play_count - skip_count) DESC LIMIT 10
             """).fetchall()
             # night owl: plays between 23:00 and 04:00
-            night_owl_cnt = c.execute("""
+            night_owl_cnt = c.execute(f"""
                 SELECT COUNT(*) FROM play_events
-                WHERE CAST(strftime('%H', datetime(timestamp,'unixepoch','localtime')) AS INTEGER)
+                WHERE {_play_sql()} AND CAST(strftime('%H', datetime(timestamp,'unixepoch','localtime')) AS INTEGER)
                       IN (23,0,1,2,3,4)
             """).fetchone()[0]
             # shuffle mode breakdown
-            shuffle_mode_raw = c.execute("""
+            shuffle_mode_raw = c.execute(f"""
                 SELECT shuffle_mode, COUNT(*) as cnt FROM play_events
-                WHERE shuffle_mode IS NOT NULL GROUP BY shuffle_mode ORDER BY cnt DESC
+                WHERE shuffle_mode IS NOT NULL AND {_play_sql()} GROUP BY shuffle_mode ORDER BY cnt DESC
             """).fetchall()
             # skip rate per hour of day
             skip_hour_raw = c.execute("""
@@ -6503,7 +6528,7 @@ def api_stats():
 
     # avg plays per active day
     active_days_count = len(all_days) or 1
-    avg_plays_per_day = round(event_count / active_days_count, 1)
+    avg_plays_per_day = round(real_play_total / active_days_count, 1)
     avg_seconds_per_day = round(real_seconds_simple / active_days_count)
 
     result.update({
@@ -6544,7 +6569,7 @@ def api_stats():
             'skip_count': r[3],
         } for r in guilty_raw] if has_events else [],
         'night_owl_plays': night_owl_cnt if has_events else 0,
-        'night_owl_pct': round(night_owl_cnt / event_count * 100) if (has_events and event_count) else 0,
+        'night_owl_pct': round(night_owl_cnt / real_play_total * 100) if (has_events and real_play_total) else 0,
         'shuffle_mode_breakdown': [{'mode': r[0], 'cnt': r[1]} for r in shuffle_mode_raw] if has_events else [],
         'skip_by_hour': [{'hr': r[0], 'skips': r[1], 'total': r[2]} for r in skip_hour_raw] if has_events else [],
         'offline_play_count': offline_row[0] if (has_events and offline_row) else 0,
@@ -6563,8 +6588,8 @@ def api_play_events():
     offset = int(request.args.get('offset', 0))
     limit  = min(int(request.args.get('limit', 200)), 500)
     with db() as c:
-        total = c.execute('SELECT COUNT(*) FROM play_events').fetchone()[0]
-        rows  = c.execute('''
+        total = c.execute(f'SELECT COUNT(*) FROM play_events WHERE {_play_sql()}').fetchone()[0]
+        rows  = c.execute(f'''
             SELECT pe.timestamp, pe.source,
                    ss.canonical_artist, ss.canonical_title,
                    s.id as song_id, s.cover_path, s.title, s.artist
@@ -6573,6 +6598,7 @@ def api_play_events():
             LEFT JOIN songs s ON _canonical(coalesce(s.title,'')) = ss.canonical_title
                 AND _canonical(TRIM(SUBSTR(coalesce(s.artist,''), 1, CASE WHEN INSTR(s.artist,',')>0 THEN INSTR(s.artist,',')-1 ELSE LENGTH(s.artist) END))) = ss.canonical_artist
                 AND s.source != 'downloading'
+            WHERE {_play_sql('pe.')}
             ORDER BY pe.timestamp DESC
             LIMIT ? OFFSET ?
         ''', (limit, offset)).fetchall()
@@ -9916,9 +9942,9 @@ def _dbx_merge_db(local_path, remote_path):
                             [(r[_di], r[_si], r[_ti], r[_oi]) for r in rows if r[_di]]
                         )
             # recompute denormalized counters from the now-merged play_events
-            c.execute("""
+            c.execute(f"""
                 UPDATE song_stats SET
-                    play_count   = (SELECT COUNT(*)      FROM play_events WHERE song_stats_id = song_stats.id),
+                    play_count   = (SELECT COUNT(*)      FROM play_events WHERE song_stats_id = song_stats.id AND {_play_sql()}),
                     last_played  = (SELECT MAX(timestamp) FROM play_events WHERE song_stats_id = song_stats.id),
                     first_played = (SELECT MIN(timestamp) FROM play_events WHERE song_stats_id = song_stats.id)
                 WHERE EXISTS (SELECT 1 FROM play_events WHERE song_stats_id = song_stats.id)
@@ -40051,6 +40077,9 @@ def main():
     try:
         with db() as _sc:
             _sc.execute("DELETE FROM songs WHERE source='downloading' AND file_path=''")
+    except Exception: pass
+    try:
+        _recompute_play_counts()
     except Exception: pass
     def _run_cleanup():
         time.sleep(5)          # let flask finish starting first
