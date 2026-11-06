@@ -1618,6 +1618,7 @@ def _stats_link_song(song_id, artist, title):
                 "UPDATE songs SET play_count=?, last_played=? WHERE id=? AND play_count=0",
                 (pc, lp, song_id)
             )
+            _sync_song_counts_from_stats(c)
 
 # ── spotify helpers ────────────────────────────────────────────────────────────
 def _parse_spotify_local(url):
@@ -10004,6 +10005,7 @@ def _dbx_merge_db(local_path, remote_path):
                           AND ss.canonical_title  = _canonical(songs.title)
                         LIMIT 1), songs.last_played)
             """)
+            _sync_song_counts_from_stats(c)
     except Exception as e:
         _log_dbx.warning(f'[dbx merge] write local: {e}')
         _merge_ok = False
