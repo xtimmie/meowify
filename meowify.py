@@ -24801,6 +24801,8 @@ function lrcLineClick(idx) {
   if (engine.hasPaused) { engine._pausedAt = t; updateProg(t, dur); syncMediaAudio(S.cur, true, t); }
   else { engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
   _lrcInvalidate();
+  _lrcActiveIdx = idx; _lrcActiveWordIdx = -1; _lrcNextLineTime = idx + 1 < _lrcLines.length ? _lrcLines[idx + 1].time : Infinity;
+  document.getElementById('lrc-' + idx)?.classList.add('active');
   lrcResync();
   saveSession();
 }
