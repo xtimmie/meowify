@@ -955,6 +955,14 @@ def init_db():
             ON song_stats(canonical_artist, canonical_title);
         CREATE INDEX IF NOT EXISTS idx_song_stats_title
             ON song_stats(canonical_title);
+        CREATE TABLE IF NOT EXISTS stats_redirects (
+            old_artist TEXT NOT NULL,
+            old_title TEXT NOT NULL,
+            new_artist TEXT NOT NULL,
+            new_title TEXT NOT NULL,
+            created_at INTEGER,
+            PRIMARY KEY (old_artist, old_title)
+        );
         CREATE TABLE IF NOT EXISTS play_events (
             id TEXT PRIMARY KEY,
             song_stats_id TEXT NOT NULL REFERENCES song_stats(id) ON DELETE CASCADE,
@@ -1438,6 +1446,47 @@ def _play_sql(a=''):
     return (f"CASE WHEN {a}source='spotify' THEN COALESCE({a}ms_played,0)>={_REAL_PLAY_MIN_MS} "
             f"ELSE COALESCE({a}skipped,0)=0 END")
 
+def _recount_stats_row(c, ssid):
+    c.execute(f"""
+        UPDATE song_stats SET
+            play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()}),
+            last_played=(SELECT MAX(timestamp) FROM play_events WHERE song_stats_id=song_stats.id),
+            first_played=(SELECT MIN(timestamp) FROM play_events WHERE song_stats_id=song_stats.id)
+        WHERE id=?""", (ssid,))
+
+def _apply_stats_redirects(c):
+    """fold stats rows whose key was manually relinked (stats_redirects) into their target row.
+    catches rows re-created by a sync and events another device still points at the old row."""
+    try:
+        reds = c.execute("SELECT old_artist, old_title, new_artist, new_title FROM stats_redirects").fetchall()
+    except Exception:
+        return 0
+    n = 0
+    for oa, ot, na, nt in reds:
+        if (oa, ot) == (na, nt):
+            continue
+        olds = [r[0] for r in c.execute(
+            "SELECT id FROM song_stats WHERE canonical_artist=? AND canonical_title=?", (oa, ot)).fetchall()]
+        if not olds:
+            continue
+        t = c.execute(
+            "SELECT id FROM song_stats WHERE canonical_artist=? AND canonical_title=? ORDER BY play_count DESC LIMIT 1",
+            (na, nt)).fetchone()
+        if t:
+            tid = t[0]
+        else:
+            tid = str(uuid.uuid4())
+            c.execute("INSERT INTO song_stats (id, canonical_artist, canonical_title, play_count) VALUES (?, ?, ?, 0)",
+                      (tid, na, nt))
+        for oid in olds:
+            if oid == tid:
+                continue
+            c.execute("UPDATE OR IGNORE play_events SET song_stats_id=? WHERE song_stats_id=?", (tid, oid))
+            c.execute("DELETE FROM song_stats WHERE id=?", (oid,))
+            n += 1
+        _recount_stats_row(c, tid)
+    return n
+
 def _artist_alias_groups(c):
     g = {}
     for name, al in c.execute("SELECT name, aliases FROM artists").fetchall():
@@ -1470,6 +1519,7 @@ def _sync_song_counts_from_stats(c):
 
 def _recompute_play_counts():
     with db() as c:
+        _apply_stats_redirects(c)
         c.execute(f"""
             UPDATE song_stats SET
                 play_count=(SELECT COUNT(*) FROM play_events WHERE song_stats_id=song_stats.id AND {_play_sql()})
@@ -1524,6 +1574,19 @@ def _stats_fuzzy_match(c, artist, title, threshold=0.80):
     ct = _canonical(title)
     if not ct:
         return None
+    # manual relink: this exact key was moved onto another song's stats row
+    try:
+        rd = c.execute("SELECT new_artist, new_title FROM stats_redirects WHERE old_artist=? AND old_title=?",
+                       (ca, ct)).fetchone()
+        if rd:
+            tgt = c.execute(
+                "SELECT id, canonical_artist, canonical_title, play_count, last_played, first_played "
+                "FROM song_stats WHERE canonical_artist=? AND canonical_title=? ORDER BY play_count DESC LIMIT 1",
+                (rd[0], rd[1])).fetchone()
+            if tgt:
+                return tgt
+    except Exception:
+        pass
     # narrow candidates: title first chars must match (cheap pre-filter).
     # LIMIT bounds the worst case for very short titles (e.g. "hi", "9"),
     # where the prefix match can otherwise return a large fraction of the
@@ -6883,6 +6946,115 @@ def api_song_skipped(sid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/songs/<sid>/stats-candidates', methods=['GET'])
+def api_song_stats_candidates(sid):
+    """stats rows that could belong to this song: fuzzy candidates, or a search by title/artist"""
+    q = _canonical(request.args.get('q') or '')
+    with db() as c:
+        song = c.execute("SELECT title, artist FROM songs WHERE id=?", (sid,)).fetchone()
+        if not song:
+            return jsonify({'error': 'not found'}), 404
+        ca = _canonical((song['artist'] or '').split(',')[0].strip())
+        ct = _canonical(song['title'] or '')
+        keys = _artist_alias_groups(c).get(ca, set()) | {ca}
+        rows = c.execute(
+            "SELECT id, canonical_artist, canonical_title, play_count, last_played, first_played FROM song_stats"
+        ).fetchall()
+        own = {r['id'] for r in rows if r['canonical_title'] == ct and r['canonical_artist'] in keys}
+        if q:
+            hits = [r for r in rows if q in r['canonical_title'] or q in r['canonical_artist']]
+            hits.sort(key=lambda r: -(r['play_count'] or 0))
+            picked = hits[:30]
+        else:
+            scored = []
+            for r in rows:
+                if r['id'] in own or not (r['play_count'] or 0):
+                    continue
+                rt, ra = r['canonical_title'], r['canonical_artist']
+                ts = _SequenceMatcher(None, ct, rt).ratio()
+                if len(ct) >= 3 and len(rt) >= 3 and (ct in rt or rt in ct):
+                    ts = max(ts, 0.85)
+                if ts < 0.6:
+                    continue
+                if ra in keys or (ca and ra and (ra.startswith(ca) or ca.startswith(ra))):
+                    a_s = 1.0
+                else:
+                    a_s = _SequenceMatcher(None, ca, ra).ratio()
+                sc = ts * 0.6 + a_s * 0.4
+                if sc >= 0.62:
+                    scored.append((sc, r))
+            scored.sort(key=lambda x: -x[0])
+            picked = [r for _, r in scored[:10]]
+        ids = list({r['id'] for r in picked} | own)
+        by_src = {}
+        if ids:
+            ph = ','.join('?' * len(ids))
+            for ssid, srcname, cnt in c.execute(
+                    f"SELECT song_stats_id, source, COUNT(*) FROM play_events "
+                    f"WHERE song_stats_id IN ({ph}) AND {_play_sql()} GROUP BY song_stats_id, source", ids).fetchall():
+                by_src.setdefault(ssid, {})[srcname] = cnt
+        out = []
+        for r in picked:
+            s = by_src.get(r['id'], {})
+            out.append({
+                'id': r['id'], 'artist': r['canonical_artist'], 'title': r['canonical_title'],
+                'plays': sum(s.values()), 'spotify': s.get('spotify', 0),
+                'meowify': sum(v for k, v in s.items() if k != 'spotify'),
+                'first': r['first_played'], 'last': r['last_played'], 'linked': r['id'] in own,
+            })
+        current = sum(sum(by_src.get(i, {}).values()) for i in own)
+    return jsonify({'rows': out, 'current_plays': current})
+
+
+@app.route('/api/songs/<sid>/stats-link', methods=['POST'])
+def api_song_stats_link(sid):
+    """manually move another stats row's plays onto this song and remember the old key,
+    so later imports/plays/syncs with that old title+artist land on this song too"""
+    ssid = (request.get_json(silent=True) or {}).get('stats_id')
+    if not ssid:
+        return jsonify({'error': 'no stats_id'}), 400
+    with db() as c:
+        song = c.execute("SELECT title, artist FROM songs WHERE id=?", (sid,)).fetchone()
+        if not song:
+            return jsonify({'error': 'not found'}), 404
+        src = c.execute("SELECT id, canonical_artist, canonical_title FROM song_stats WHERE id=?", (ssid,)).fetchone()
+        if not src:
+            return jsonify({'error': 'stats row not found'}), 404
+        ca = _canonical((song['artist'] or '').split(',')[0].strip())
+        ct = _canonical(song['title'] or '')
+        if not ct:
+            return jsonify({'error': 'song has no title'}), 400
+        tgt = c.execute(
+            "SELECT id FROM song_stats WHERE canonical_artist=? AND canonical_title=? ORDER BY play_count DESC LIMIT 1",
+            (ca, ct)).fetchone()
+        if tgt and tgt[0] == ssid:
+            return jsonify({'ok': True, 'moved': 0})
+        if tgt:
+            tid = tgt[0]
+        else:
+            tid = str(uuid.uuid4())
+            c.execute("INSERT INTO song_stats (id, canonical_artist, canonical_title, play_count) VALUES (?, ?, ?, 0)",
+                      (tid, ca, ct))
+        oa, ot = src['canonical_artist'], src['canonical_title']
+        moved = c.execute("SELECT COUNT(*) FROM play_events WHERE song_stats_id=?", (ssid,)).fetchone()[0]
+        c.execute("DELETE FROM stats_redirects WHERE old_artist=? AND old_title=?", (ca, ct))
+        c.execute("UPDATE stats_redirects SET new_artist=?, new_title=? WHERE new_artist=? AND new_title=?",
+                  (ca, ct, oa, ot))
+        if (oa, ot) != (ca, ct):
+            c.execute(
+                "INSERT OR REPLACE INTO stats_redirects (old_artist, old_title, new_artist, new_title, created_at) "
+                "VALUES (?, ?, ?, ?, ?)", (oa, ot, ca, ct, int(time.time())))
+        c.execute("UPDATE OR IGNORE play_events SET song_stats_id=? WHERE song_stats_id=?", (tid, ssid))
+        c.execute("DELETE FROM song_stats WHERE id=?", (ssid,))
+        _recount_stats_row(c, tid)
+        _sync_song_counts_from_stats(c)
+        lp = c.execute("SELECT last_played FROM song_stats WHERE id=?", (tid,)).fetchone()
+        if lp and lp[0]:
+            c.execute("UPDATE songs SET last_played=MAX(COALESCE(last_played,0), ?) WHERE id=?", (lp[0], sid))
+        pc = c.execute("SELECT play_count FROM songs WHERE id=?", (sid,)).fetchone()
+    return jsonify({'ok': True, 'moved': moved, 'play_count': pc[0] if pc else None})
+
+
 @app.route('/api/songs/<sid>/stats-detail', methods=['GET'])
 def api_song_stats_detail(sid):
     """per-song deep stats: timeline, skip rate, streaks, skip breakdown"""
@@ -9624,7 +9796,8 @@ def _dbx_merge_db(local_path, remote_path):
         rc = rem.cursor()
         tables_data = {}
         for tbl in ('songs', 'song_stats', 'play_events', 'playlists', 'playlist_songs',
-                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics', 'song_source', 'song_genius', 'devices'):
+                    'albums', 'artists', 'song_artists', 'album_tracks', 'lyrics', 'song_source', 'song_genius', 'devices',
+                    'stats_redirects'):
             try:
                 rc.execute(f'SELECT * FROM {tbl}')
                 rows = rc.fetchall()
@@ -10011,6 +10184,7 @@ def _dbx_merge_db(local_path, remote_path):
                             "UPDATE play_events SET device_id=? WHERE song_stats_id=? AND timestamp=? AND source=? AND device_id IS NULL",
                             [(r[_di], r[_si], r[_ti], r[_oi]) for r in rows if r[_di]]
                         )
+            _apply_stats_redirects(c)
             # recompute denormalized counters from the now-merged play_events
             c.execute(f"""
                 UPDATE song_stats SET
@@ -26088,6 +26262,10 @@ function editSong(sid) {
          <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">track #</span>
          <input class="inp" id="edit-song-tracknum" type="number" min="0" value="${song.track_num||0}" style="max-width:100px">
        </label>
+       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+         <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">play history link</span>
+         <button class="btn btn-out mu-ripple" style="flex-shrink:0;padding:4px 10px;font-size:12px" onclick="openStatsLink('${sid}')">stats link</button>
+       </div>
        <div style="display:flex;flex-direction:column;gap:6px">
          <div style="display:flex;align-items:center;justify-content:space-between">
            <span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant)">single</span>
@@ -26166,6 +26344,71 @@ function applyAlbumPick(sid, albumId, albumTitle) {
   const nameEl = document.getElementById('edit-album-name');
   if (nameEl) nameEl.textContent = albumTitle;
   toggleSingleMode(sid, false);
+}
+
+function _statsLinkRows(sid, rows) {
+  window._slRows = {};
+  if (!rows || !rows.length) return '<div style="padding:12px;font:var(--type-body-small);color:var(--color-on-surface-variant)">nothing found, try searching</div>';
+  return rows.map(r => {
+    window._slRows[r.id] = r;
+    const parts = [r.plays + ' plays'];
+    if (r.spotify) parts.push(r.spotify + ' spotify');
+    if (r.meowify) parts.push(r.meowify + ' meowify');
+    if (r.last) parts.push('last ' + new Date(r.last * 1000).toLocaleDateString());
+    return `<div class="search-track mu-ripple" style="cursor:pointer;${r.linked ? 'opacity:.6' : ''}" onclick="confirmStatsLink('${sid}','${r.id}')">
+      <div class="search-track-info" style="min-width:0">
+        <div class="search-track-title">${esc(r.title)}${r.linked ? ' (already linked)' : ''}</div>
+        <div class="search-track-artist">${esc(r.artist)} · ${esc(parts.join(' · '))}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openStatsLink(sid) {
+  const song = S.library.find(s => s.id === sid);
+  if (!song) return;
+  let d = null;
+  try { d = await api('GET', '/api/songs/' + sid + '/stats-candidates'); } catch (e) { d = null; }
+  if (!d || d.error) { showModal('error', `<p>${esc((d && d.error) || 'could not load play history')}</p>`, '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>'); return; }
+  showModal('play history link',
+    `<div style="font:var(--type-body-small);color:var(--color-on-surface-variant);margin-bottom:10px">
+       ${esc(song.title || '')} currently has ${d.current_plays} plays. pick the history that belongs to this song, or search for it.
+     </div>
+     <input class="inp" id="statslink-q" placeholder="search title or artist" autocomplete="off" style="width:100%;margin-bottom:10px" oninput="statsLinkSearch('${sid}', this.value)">
+     <div id="statslink-list" style="display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto;padding-right:4px">${_statsLinkRows(sid, d.rows)}</div>`,
+    `<button class="btn btn-out mu-ripple" onclick="editSong('${sid}')">back</button>`
+  );
+}
+
+let _slTimer = null;
+function statsLinkSearch(sid, v) {
+  clearTimeout(_slTimer);
+  _slTimer = setTimeout(async () => {
+    const qs = v && v.trim() ? '?q=' + encodeURIComponent(v.trim()) : '';
+    let d = null;
+    try { d = await api('GET', '/api/songs/' + sid + '/stats-candidates' + qs); } catch (e) { d = null; }
+    const el = document.getElementById('statslink-list');
+    if (el && d && !d.error) el.innerHTML = _statsLinkRows(sid, d.rows);
+  }, 250);
+}
+
+function confirmStatsLink(sid, ssid) {
+  const r = (window._slRows || {})[ssid];
+  const song = S.library.find(s => s.id === sid);
+  if (!r || !song) return;
+  showModal('link play history',
+    `<p>move ${r.plays} plays from <b>${esc(r.title)}</b> (${esc(r.artist)}) onto <b>${esc(song.title || '')}</b>?</p>
+     <p style="font:var(--type-body-small);color:var(--color-on-surface-variant)">future plays and spotify imports under that old name will go to this song too. this can not be undone.</p>`,
+    `<button class="btn btn-out mu-ripple" onclick="openStatsLink('${sid}')">cancel</button>
+     <button class="btn btn-fill mu-ripple" onclick="doStatsLink('${sid}','${ssid}')">link</button>`
+  );
+}
+
+async function doStatsLink(sid, ssid) {
+  let res = null;
+  try { res = await api('POST', '/api/songs/' + sid + '/stats-link', { stats_id: ssid }); } catch (e) { res = null; }
+  if (res && res.ok) { closeModal(); await loadData(); rerenderCurrentView(); }
+  else showModal('error', `<p>${esc((res && res.error) || 'could not link')}</p>`, '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
 }
 
 async function saveSongEdit(sid) {
