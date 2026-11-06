@@ -14778,11 +14778,11 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   justify-content:space-evenly;
 }
 .np-lrc-preview:has(.np-lrc-line) {
-  height:132px;min-height:132px;box-sizing:border-box;overflow:hidden;justify-content:space-between;
+  height:132px;min-height:132px;box-sizing:border-box;overflow:hidden;justify-content:space-evenly;padding:0 14px;gap:0;
 }
 /* lyrics = .np-section-hdr + one .np-lrc-preview panel, same shape as details / next up */
 .np-lrc-line{
-  margin:auto 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;
+  max-height:4.5em;overflow:hidden;
   font:var(--type-body-medium);font-variation-settings:var(--fv-body);
   color:var(--color-primary);
   font-weight:600;
@@ -14808,8 +14808,6 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   width:100%;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.np-lrc-fx>*{transform-origin:left center}
-.np-lrc-fx.np-lrc-blur .np-lrc-prev-line,.np-lrc-fx.np-lrc-blur .np-lrc-next-line{filter:blur(.7px)}
 .np-lrc-plain{
   width:100%;
   display:flex;flex-direction:column;gap:2px;
@@ -24814,7 +24812,6 @@ function lrcLineClick(idx) {
 const _lyrEngOn = () => CFG.lyrics_legacy !== true;
 const _lyrBlurOn = () => CFG.lyrics_blur !== false;
 const _lyrCfg = (k, d) => { const v = Number(CFG[k]); return CFG[k] != null && isFinite(v) ? v : d; };
-const _npFxCls = () => CFG.np_lyrics_legacy === true ? '' : ' np-lrc-fx' + (_lyrBlurOn() ? ' np-lrc-blur' : '');
 const _LE = { on: false, sid: null, mode: 'sync', held: false, raf: 0, last: 0, fr: 4, redo: false, la: -1, lt: 0, sup: false,
   U: { x: 0, v: 0 }, F: { x: 0, v: 0 }, foc: { x: 1, v: 0 }, S: [], A: [], els: [], top: [], hgt: [], H: 0, V: 0, B: 0, tb: 0, max: 0, thH: 28 };
 const _lyrClamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -24835,25 +24832,11 @@ function _lyrSliderIn(el, key, unit, off) {
   _lyrEngKick(true);
 }
 
-const _npEaseMemo = {};
-function _npEase() {
-  const bz = _lyrCfg('lyrics_bounce', 55) / 100, key = bz.toFixed(2);
-  if (_npEaseMemo[key]) return _npEaseMemo[key];
-  let r;
-  if (!(window.CSS && CSS.supports && CSS.supports('animation-timing-function', 'linear(0,1)'))) r = `cubic-bezier(.34,${(1 + .6 * bz).toFixed(2)},.64,1)`;
-  else {
-    const z = Math.min(.97, 1 - .72 * bz), w = 22, wd = w * Math.sqrt(1 - z * z), T = .8, n = 40, pts = [];
-    for (let i = 0; i <= n; i++) { const t = T * i / n, e = Math.exp(-z * w * t); pts.push((1 - e * (Math.cos(wd * t) + z * w / wd * Math.sin(wd * t))).toFixed(4)); }
-    pts[n] = '1';
-    r = `linear(${pts.join(',')})`;
-  }
-  return _npEaseMemo[key] = r;
-}
-function _npSpring(el) {
-  const kf = el.id === 'np-lrc-active' ? [{ transform: 'translateY(20px) scale(.9)', opacity: .45 }, { transform: 'none', opacity: 1 }]
-    : el.id === 'np-lrc-prev' ? [{ transform: 'translateY(24px) scale(1.12)' }, { transform: 'none' }]
-    : [{ transform: 'translateY(16px)', opacity: 0 }, { transform: 'none', opacity: 1 }];
-  return el.animate(kf, { duration: 800 / (_lyrCfg('lyrics_speed', 100) / 100), easing: _npEase() });
+function _npFit(el) {
+  if (!el) return;
+  el.style.fontSize = '';
+  let fs = parseFloat(getComputedStyle(el).fontSize) || 14, n = 0;
+  while (el.scrollHeight > el.clientHeight + 1 && fs > 8 && n++ < 30) { fs -= .5; el.style.fontSize = fs + 'px'; }
 }
 
 function _lyrEngOff() {
@@ -24900,7 +24883,7 @@ function _lyrEngProbe() {
   let w = 0, c = '';
   try {
     const vc = document.getElementById('vc');
-    if (vc) { w = parseFloat(getComputedStyle(vc, '::-webkit-scrollbar').width) || 0; c = getComputedStyle(vc, '::-webkit-scrollbar-thumb').backgroundColor || ''; }
+    void vc;
   } catch (e) {}
   if (!(w >= 3 && w <= 16)) w = 8;
   if (!c || c === 'transparent' || /,\s*0\)$/.test(c)) c = 'rgba(255,255,255,.25)';
@@ -24946,7 +24929,7 @@ function _lyrEngUi() {
 function _lyrEngBreak(carry) {
   const L = _LE, s = L.S[Math.max(0, _lrcActiveIdx)];
   L.F.x = s ? s.x : 0; L.F.v = (carry || 0) * L.fr;
-  L.U.x = 0; L.U.v = 0; L.held = false; L.mode = 'free';
+    L.U.x = 0; L.U.v = 0; L.held = false; L.mode = 'free'; L.Ft = null;
   _onLyricsScroll();
 }
 function _lyrEngResync() {
@@ -24962,11 +24945,16 @@ function _lyrEngUser(d, kind) {
   _lyrScrollMark();
   if (L.mode === 'sync') {
     L.held = true; L.U.x += d * .75; L.U.v = 0;
-    if (Math.abs(L.U.x) > _lyrCfg('lyrics_break', 110)) { L.fr = 6.5 - 3.5 * sm; _lyrEngBreak(kind === 'notch' ? d * .5 : 0); }
+    if (Math.abs(L.U.x) > _lyrCfg('lyrics_break', 110)) {
+      L.fr = 6.5 - 3.5 * sm;
+      if (sm < .02 && kind === 'notch') { _lyrEngBreak(0); L.Ft = _lyrClamp(L.F.x + d, 0, L.max); }
+      else _lyrEngBreak(kind === 'notch' ? d * .5 : 0);
+    }
   } else {
     const F = L.F, over = F.x < 0 ? -F.x : F.x > L.max ? F.x - L.max : 0;
     if ((F.x <= 0 && d < 0) || (F.x >= L.max && d > 0)) d *= .5 * sm / (1 + over / 35);
-    if (kind === 'notch') { L.fr = 6.5 - 3.5 * sm; F.v += d * L.fr; } else { F.x += d; F.v = 0; }
+    if (sm < .02) { if (kind === 'notch') { L.Ft = _lyrClamp((L.Ft != null ? L.Ft : F.x) + d, 0, L.max); F.v = 0; } else { F.x += d; F.v = 0; L.Ft = null; } }
+    else if (kind === 'notch') { L.fr = 6.5 - 3.5 * sm; F.v += d * L.fr; } else { F.x += d; F.v = 0; }
     if (sm < .02) F.x = _lyrClamp(F.x, 0, L.max);
     _onLyricsScroll();
   }
@@ -25004,7 +24992,7 @@ function _lyrEngWire(body) {
     const L = _LE;
     if (L.tdrag) {
       const p = _lyrClamp(L.tdrag.p0 + (e.clientY - L.tdrag.y) / ((L.H - L.tb - 8 - L.thH) || 1), 0, 1);
-      L.F.x = p * L.max; L.F.v = 0;
+      L.F.x = p * L.max; L.F.v = 0; L.Ft = null;
       _onLyricsScroll(); _lyrScrollMark(); _lyrEngKick();
       return;
     }
@@ -25047,8 +25035,8 @@ function _lyrEngFrame(now) {
   if (L.redo) { L.redo = false; _lyrEngMeasure(); }
   const dt = Math.min(.033, (now - L.last) / 1000) || .016;
   L.last = now;
-  const ds = dt * _lyrCfg('lyrics_speed', 100) / 100;
-  const bz = _lyrCfg('lyrics_bounce', 55) / 100, zeta = 1 - .72 * bz, sm = _lyrCfg('lyrics_smooth', 35) / 100;
+  const sp = _lyrCfg('lyrics_speed', 100) / 100, ds = dt * sp * 1.7;
+  const bz = _lyrClamp(_lyrCfg('lyrics_bounce', 55) / 100 * Math.pow(sp, -.9), 0, 1), zeta = 1 - .72 * bz, sm = _lyrCfg('lyrics_smooth', 35) / 100;
   const free = L.mode === 'free', hand = (L.drag && L.drag.moved) || L.tdrag, n = L.els.length;
   let busy = L.held || !!hand;
   // while a seek is in flight the active index is -1 for a moment, keep the last one so the list does not jump to the top
@@ -25062,6 +25050,7 @@ function _lyrEngFrame(now) {
     const F = L.F;
     if (F.x < 0 || F.x > L.max) { _lyrSp(F, F.x < 0 ? 0 : L.max, 170, 26, dt); busy = true; }
     else {
+      if (L.Ft != null) { const df = L.Ft - F.x; F.x += df * (1 - Math.exp(-dt / .055)); if (Math.abs(df) < .5) { F.x = L.Ft; L.Ft = null; } else busy = true; }
       F.x += F.v * dt; F.v *= Math.exp(-L.fr * dt);
       if (Math.abs(F.v) < 1) F.v = 0; else busy = true;
       if (sm < .02 && (F.x < 0 || F.x > L.max)) { F.x = _lyrClamp(F.x, 0, L.max); F.v = 0; }
@@ -25151,11 +25140,12 @@ function _npLrcSectionHtml(song) {
   // the inner content (#np-lrc-active etc) is updated by tickNowPlaying
   // same shape as the other np sections: header, then one panel
   const box = inner => `<div class="np-section-hdr ui-section-hdr">lyrics</div>
-    <div class="np-lrc-preview ui-panel${_npFxCls()}" onclick="toggleLyrics()">${inner}</div>`;
+    <div class="np-lrc-preview ui-panel" onclick="toggleLyrics()">${inner}</div>`;
   const hasSynced = _lrcLines.length > 0;
   const hasPlain  = !!(S.lyricsData?.plain);
   if (hasSynced) {
     _npLrcMode = 'synced';
+    requestAnimationFrame(() => _npFit(document.getElementById('np-lrc-active')));
     const prev = _lrcActiveIdx > 0 ? _lrcLines[_lrcActiveIdx - 1] : null;
     const cur  = _lrcActiveIdx >= 0 ? _lrcLines[_lrcActiveIdx] : null;
     // before first timestamp: show first line as the upcoming "next" so the container isn't empty
@@ -25236,8 +25226,8 @@ function tickNowPlaying() {
       ? (_lrcActiveIdx < _lrcLines.length - 1 ? _lrcLines[_lrcActiveIdx + 1] : null)
       : (_lrcLines.length > 0 ? _lrcLines[0] : null);
 
-    const _npAnimIn = el => CFG.np_lyrics_legacy === true ? el.animate([{transform:'translateY(15px)'},{transform:'translateY(0)'}],{duration:300,easing:'cubic-bezier(.2,1.7,.2,1)',fill:'forwards'}) : _npSpring(el);
-    if (activeEl) { activeEl.innerHTML = cur ? _npRenderLine(cur) : ''; _npAnimIn(activeEl); }
+    const _npAnimIn = el => el.animate([{transform:'translateY(15px)'},{transform:'translateY(0)'}],{duration:300,easing:'cubic-bezier(.2,1.7,.2,1)',fill:'forwards'});
+    if (activeEl) { activeEl.innerHTML = cur ? _npRenderLine(cur) : ''; _npFit(activeEl); _npAnimIn(activeEl); }
     if (prevEl) {
       if (prev) { prevEl.textContent = prev.text; prevEl.style.opacity = ''; _npAnimIn(prevEl); }
       else { prevEl.textContent = '\u00a0'; prevEl.style.opacity = '0'; }
@@ -36801,8 +36791,7 @@ function renderSettings() {
         ${row('pretty lyrics display', 'split genius lyrics into subtle sections with dimmed labels and artist colors, off shows it like on genius', toggle('lyrics_pretty', CFG.lyrics_pretty !== false))}
         ${row('artist colors', 'color code lines per artist in mixed verses of the genius lyrics view', toggle('lyrics_artist_colors', CFG.lyrics_artist_colors !== false))}
         ${row('legacy synced lyrics', 'old look and plain native scrolling for the synced lyrics sidebar', toggle('lyrics_legacy', CFG.lyrics_legacy === true, '_lyrEngRefresh()'))}
-        ${row('legacy now playing lyrics', 'old line animation in the now playing lyrics preview', toggle('np_lyrics_legacy', CFG.np_lyrics_legacy === true, 'if(S.nowPlayingOpen)renderNowPlaying()'))}
-        ${row('lyrics blur', 'blur lines away from the current one, turn off for better performance', toggle('lyrics_blur', CFG.lyrics_blur !== false, '_lyrEngKick(true);if(S.nowPlayingOpen)renderNowPlaying()'))}
+        ${row('lyrics blur', 'blur lines away from the current one, turn off for better performance', toggle('lyrics_blur', CFG.lyrics_blur !== false, '_lyrEngKick(true)'))}
         ${row('scroll smoothness', 'how scrolling by hand feels, 0 is like normal scrolling, higher glides further and overshoots at the edges', _lyrSlider('lyrics_smooth', 35, 0, 100, '%'))}
         ${row('lyrics bounce', 'how springy the line animations and autoscroll are', _lyrSlider('lyrics_bounce', 55, 0, 100, '%'))}
         ${row('lyrics speed', 'how fast the line animations and autoscroll move, same bounce at any speed', _lyrSlider('lyrics_speed', 100, 40, 250, '%'))}
