@@ -24266,7 +24266,7 @@ function _lyrGeniusHtml(g) {
   const secs = (g.sections || []).map((sc, si) => {
     const info = am.verse[si];
     const lines0 = sc.lines || [];
-    let nameCol = null, keyCol = null;
+    let nameCol = null, keyCol = null, nameDef = null;
     if (info && col) {
       const byKey = {};
       info.names.forEach((n, ni) => { (byKey[n.key] = byKey[n.key] || []).push(ni); });
@@ -24276,6 +24276,7 @@ function _lyrGeniusHtml(g) {
       if (single.length >= 2 && hit.some(k => k !== '')) {
         nameCol = {};
         keyCol = {};
+        nameDef = new Set(single.includes('') ? byKey[''] : []);
         single.filter(k => k !== '').forEach(k => {
           const ni = byKey[k][0];
           const h = _LYR_HUES[am.order.indexOf(info.names[ni].name) % _LYR_HUES.length];
@@ -24291,13 +24292,13 @@ function _lyrGeniusHtml(g) {
       const runs = [];
       let cur = null;
       info.chars.forEach((c, p) => {
-        const nk = nameCol && nameCol[nameAt[p]] !== undefined ? nameAt[p] : -1;
+        const nk = nameCol && (nameCol[nameAt[p]] !== undefined || nameDef.has(nameAt[p])) ? nameAt[p] : -1;
         if (cur && cur.i === c.i && cur.b === c.b && cur.a === c.a && cur.n === nk) cur.t += c.ch;
         else { cur = { t: c.ch, i: c.i, b: c.b, a: c.a, n: nk }; runs.push(cur); }
       });
       const hh = runs.map(r => {
         const h = wrapSeg(r.t, r);
-        return r.n >= 0 ? '<span class="gl-n" style="--ac:' + _lyrHue(nameCol[r.n]) + '">' + h + '</span>' : h;
+        return r.n >= 0 ? '<span class="gl-n" style="--ac:' + (nameCol[r.n] !== undefined ? _lyrHue(nameCol[r.n]) : 'var(--color-on-surface-variant)') + '">' + h + '</span>' : h;
       }).join('');
       head = '<div class="gl-h">' + hh + '</div>';
     } else if (sc.hs && sc.hs.length) {
