@@ -24869,7 +24869,7 @@ function _lyrEngMeasure() {
   L.hgt = L.els.map(e => e.offsetHeight);
   L.max = Math.max(0, L.sc.offsetHeight - L.H);
 }
-const _lyrNow = () => { const t = engine.hasPaused && engine._pausedAt != null ? engine._pausedAt : engine._lastKnownPosition; return Number.isFinite(t) ? t : NaN; };
+const _lyrNow = () => engine.hasPaused && Number.isFinite(engine._pausedAt) ? engine._pausedAt : NaN;
 function _lyrEngSeed() {
   if (!_lrcLines.length) return;
   const t = _lyrNow();
