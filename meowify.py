@@ -32525,6 +32525,7 @@ function initReorderDrag(listEl, opts) {
   const ANIM_MS = 160;
   const STACK_GAP = 5;
   const ROWS = ':scope > .song-row, :scope > .song-row-mobile';
+  const accel = makeEdgeAccel();
   const sc = opts.scrollEl;
 
   // every position below is in visual (client) px, read straight from rects / pointer / list scroll,
@@ -32697,9 +32698,10 @@ function initReorderDrag(listEl, opts) {
       const barB = listEl.closest('#queue-inner') ? (parseInt(getComputedStyle(sc).getPropertyValue('--bar-h')) || 0) * kT : 0;
       const toTop = r.top - c.top;
       const toBot = c.bottom - barB - r.bottom;
-      let v = 0;
-      if (toTop < zone) v = -SCROLL_MAX * Math.min(1, (zone - toTop) / zone);
-      else if (toBot < zone) v = SCROLL_MAX * Math.min(1, (zone - toBot) / zone);
+      let f = 0, dir = 0;
+      if (toTop < zone) { f = Math.min(1, (zone - toTop) / zone); dir = -1; }
+      else if (toBot < zone) { f = Math.min(1, (zone - toBot) / zone); dir = 1; }
+      const v = dir * SCROLL_MAX * f * accel.step(f, dir);
       if (v) sc.scrollTop += v;
     }
     update();
@@ -33029,6 +33031,26 @@ function _initReorderDragOld(listEl, opts) {
   }, true);
 }
 
+// edge autoscroll acceleration for drag reorder. f = how deep in the edge zone (0 edge of zone, 1 = at/over the edge), dir = -1 up / 1 down / 0 none.
+// held at the max edge the speed multiplier keeps growing (up to MAXM). a bit less deep decays it gradually (decay rate scales with how far out you are),
+// and at f = 0 (no scrolling) it drops back to 1 right away
+function makeEdgeAccel() {
+  const MAXM = 20, ACC = 1.2, GROW = 0.45, DEC = 7, FULL = 0.98;
+  let m = 1, last = 0, lastDir = 0;
+  return {
+    step(f, dir) {
+      const now = performance.now();
+      const gap = now - last > 120;
+      const dt = gap ? 0 : Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (!dir || dir !== lastDir || gap) { m = 1; lastDir = dir; if (!dir) return 1; }
+      if (f >= FULL) m = Math.min(MAXM, m + dt * (ACC + m * GROW));
+      else m = 1 + (m - 1) * Math.exp(-DEC * (1 - f) * dt);
+      return m;
+    }
+  };
+}
+
 function initVlistReorder(vl) {
   const inner = vl && vl._inner;
   if (!inner || inner._vReorder) return;
@@ -33041,6 +33063,7 @@ function initVlistReorder(vl) {
   const SCROLL_MAX = 18;
   const ANIM_MS = 160;
   const sc = vl._scroller;
+  const accel = makeEdgeAccel();
   let pid = null, downY = 0, lastY = 0, raf = 0;
   let armed = null, holdTimer = null;
   let active = false, dropping = false, suppressClick = false;
@@ -33088,9 +33111,10 @@ function initVlistReorder(vl) {
     const c = sc.getBoundingClientRect();
     const toTop = (lastY - c.top) / z;
     const toBot = (c.bottom - (parseInt(getComputedStyle(sc).getPropertyValue('--bar-h')) || 0) * z - lastY) / z; // minus the player covering the bottom
-    let v = 0;
-    if (toTop < SCROLL_ZONE) v = -SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE);
-    else if (toBot < SCROLL_ZONE) v = SCROLL_MAX * Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE);
+    let f = 0, dir = 0;
+    if (toTop < SCROLL_ZONE) { f = Math.min(1, (SCROLL_ZONE - toTop) / SCROLL_ZONE); dir = -1; }
+    else if (toBot < SCROLL_ZONE) { f = Math.min(1, (SCROLL_ZONE - toBot) / SCROLL_ZONE); dir = 1; }
+    const v = dir * SCROLL_MAX * f * accel.step(f, dir);
     if (v) sc.scrollTop += v;
     // after the fly in, followers stop chasing with a transition and ride rigidly in the stack
     if (!stacked && performance.now() >= stackAt) {
