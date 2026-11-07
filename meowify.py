@@ -14900,7 +14900,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
 .lyrics-sidebar .lyrics-body.lyr-eng{overflow:hidden;scroll-behavior:auto;position:relative;touch-action:none;overscroll-behavior:contain;user-select:none;-webkit-user-select:none;padding:0 16px}
 .lyr-eng::after{display:none}
 .lyr-eng .lyr-sc{position:relative;will-change:transform;padding-bottom:calc(var(--bar-h) + 24px)}
-.lyr-eng .lrc-line,.lyr-eng .lrc-line.active{width:85%;transition:color var(--dur-3) ease,background var(--dur-2);will-change:transform,opacity,filter}
+.lyr-eng .lrc-line,.lyr-eng .lrc-line.active{width:85%;font-weight:600;transition:color var(--dur-3) ease,background var(--dur-2);will-change:transform,opacity,filter}
 .lyr-eng .lrc-line.active{transform:none}
 .lyr-eng .lyrics-resync{position:absolute;left:0;right:0;bottom:calc(var(--bar-h) + 14px);z-index:3;transform:translateY(8px) scale(.92);transition:opacity var(--dur-3) cubic-bezier(.2,1,.5,1),transform var(--dur-4) cubic-bezier(.34,1.56,.64,1)}
 .lyr-eng .lyrics-resync.on{transform:none}
