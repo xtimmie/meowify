@@ -27279,10 +27279,10 @@ function _sdCreditRows(song) {
   return _songCreditsGrouped(song).filter(([role]) => role !== 'Featuring').map(([role, ns]) => ({role, names: ns.join(', ')}));
 }
 function _sdCreditRowHtml(role, names) {
-  return `<div class="sd-cr" style="display:flex;gap:6px;align-items:center">
-    <input class="inp sd-cr-role" list="sd-roles" value="${esc(role)}" placeholder="role" style="flex:0 0 38%;min-width:0" autocomplete="off">
-    <input class="inp sd-cr-names" value="${esc(names)}" placeholder="name, name" style="flex:1;min-width:0" autocomplete="off">
-    <button type="button" class="btn btn-out mu-ripple" style="padding:2px 9px" onclick="this.closest('.sd-cr').remove()">×</button></div>`;
+  return `<div class="sd-cr" style="display:grid;grid-template-columns:minmax(120px,34%) minmax(0,1fr) auto;gap:6px;align-items:center">
+    <input class="inp sd-cr-role" list="sd-roles" value="${esc(role)}" placeholder="role" style="flex:none;width:100%;min-width:0;box-sizing:border-box" autocomplete="off">
+    <input class="inp sd-cr-names" value="${esc(names)}" placeholder="name, name" style="flex:none;width:100%;min-width:0;box-sizing:border-box" autocomplete="off">
+    <button type="button" class="btn btn-out mu-ripple" style="padding:8px 12px;line-height:1" onclick="this.closest('.sd-cr').remove()">×</button></div>`;
 }
 function _sdAddCredit() {
   const box = document.getElementById('sd-credits');
@@ -27297,8 +27297,10 @@ function _sdReadCredits() {
   })).filter(c => c.role && c.names);
 }
 function _sdShowOpt(k, focus) {
+  // unfilled optional blocks wait in a <template> and only enter the page when added
+  const tpl = document.querySelector(`template[data-opt="${k}"]`);
+  if (tpl) { tpl.insertAdjacentHTML('beforebegin', `<div class="sd-opt" data-opt="${k}">${tpl.innerHTML}</div>`); tpl.remove(); }
   const blk = document.querySelector(`.sd-opt[data-opt="${k}"]`);
-  if (blk) blk.style.display = 'block';
   document.querySelector(`[data-chip="${k}"]`)?.remove();
   const chips = document.getElementById('sd-chips');
   if (chips && !chips.children.length) chips.style.display = 'none';
@@ -27354,14 +27356,14 @@ function _sdRestore(sid) {
   if ('release_date' in o) set('sd-release', o.release_date);
   if ('track_num' in o) set('edit-song-tracknum', o.track_num);
   if ('credits' in o) {
+    _sdShowOpt('credits');
     const box = document.getElementById('sd-credits');
     if (box) box.innerHTML = o.credits.map(c => _sdCreditRowHtml(c.role, c.names)).join('');
-    _sdShowOpt('credits');
   }
-  if ('mv_url' in o) { set('sd-mv-url', o.mv_url); _sdShowOpt('mv'); }
-  if ('mv_offset' in o) { set('sd-mv-offset', o.mv_offset); _sdShowOpt('mv'); }
-  if ('play_offset' in o) { set('sd-play-offset', o.play_offset); _sdShowOpt('plays'); }
-  if ('loudness_user' in o) { set('sd-loud', o.loudness_user); _sdShowOpt('loud'); }
+  if ('mv_url' in o) { _sdShowOpt('mv'); set('sd-mv-url', o.mv_url); }
+  if ('mv_offset' in o) { _sdShowOpt('mv'); set('sd-mv-offset', o.mv_offset); }
+  if ('play_offset' in o) { _sdShowOpt('plays'); set('sd-play-offset', o.play_offset); }
+  if ('loudness_user' in o) { _sdShowOpt('loud'); set('sd-loud', o.loudness_user); }
   d.reset.forEach(k => _sdReset(k));
 }
 
@@ -27406,6 +27408,7 @@ async function showSongDetails(sid, editMode) {
   showModal('song details', build(null),
     `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title || '')}','${escJ(song.artist || '')}')">stats</button><button class="btn btn-out mu-ripple" onclick="editSong('${escJ(sid)}')">edit</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
   );
+  document.querySelector('.mbox').style.maxWidth = '600px';
   const x = await api('GET', `/api/songs/${sid}/extra`).catch(() => null);
   const mb = document.getElementById('mbody');
   if (mb && x && !x.error) mb.innerHTML = build(x);
@@ -27450,7 +27453,9 @@ async function _sdRenderEdit(sid, song) {
     {k: 'plays', label: 'extra plays', filled: po > 0},
     {k: 'loud', label: 'loudness override', filled: lu != null},
   ];
-  const blk = (k, inner) => `<div class="sd-opt" data-opt="${k}" style="display:${opts.find(o => o.k === k).filled ? 'block' : 'none'}">${inner}</div>`;
+  const blk = (k, inner) => opts.find(o => o.k === k).filled
+    ? `<div class="sd-opt" data-opt="${k}">${inner}</div>`
+    : `<template data-opt="${k}">${inner}</template>`;
   const g = x.genius;
   const body = `<div id="sd-err" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-error-container,rgba(186,26,26,.15));color:var(--color-on-error-container,var(--color-error,#ba1a1a));font:var(--type-body-small)"></div>
     <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px">${_sdCover(song, 72, 'edit-song-cover-img')}
@@ -27502,6 +27507,7 @@ async function _sdRenderEdit(sid, song) {
   showModal('edit song', body,
     `<button class="btn btn-out mu-ripple" onclick="showSongDetails('${escJ(sid)}')">cancel</button><button class="btn btn-fill mu-ripple" onclick="saveSongDetails('${escJ(sid)}')">save</button>`
   );
+  document.querySelector('.mbox').style.maxWidth = '600px';
   _sdRestore(sid);
 }
 
