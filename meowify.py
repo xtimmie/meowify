@@ -15101,6 +15101,26 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
 #blyrics-src svg{display:block}
+.lye{display:flex;flex-direction:column;gap:12px;padding-bottom:24px}
+.lye .lye-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.lye .lye-tabs{display:flex;gap:4px}
+.lye .lye-tab{padding:6px 14px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer}
+.lye .lye-tab.on{background:var(--color-surface-container-high);color:inherit}
+.lye .lye-acts{display:flex;gap:6px}
+.lye .lye-ta{width:100%;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;white-space:pre;overflow:auto;box-sizing:border-box}
+.lye .lye-hint{color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.8}
+.lye .lye-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lye .lye-sw{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)}
+.lye .lye-rows{display:flex;flex-direction:column;gap:4px}
+.lye .lye-row{display:flex;align-items:center;gap:6px;padding:4px;border-radius:12px;cursor:pointer}
+.lye .lye-row.on{background:var(--color-surface-container-high)}
+.lye .lye-t{width:78px;flex:none;text-align:center;font-variant-numeric:tabular-nums}
+.lye .lye-x{flex:1;min-width:0}
+.lye .lye-sec .lye-x{font-weight:700}
+.lye .lye-br{flex:none;opacity:.5}
+.lye .lye-n{display:flex;flex:none}
+.lye .lye-mini{width:26px;height:26px;border:0;border-radius:8px;background:transparent;color:var(--color-on-surface-variant);cursor:pointer;font-size:15px;line-height:1}
+.lye .lye-mini:hover{background:var(--color-surface-container-high)}
 .cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
@@ -23017,6 +23037,7 @@ function _exclusiveOpen(which) {
 }
 
 function _sheetDismiss(sidebarEl) {
+  if (sidebarEl.id === 'lyrics-sidebar' && S.lyrEdit) { lyrEditGuard(() => _sheetDismiss(sidebarEl)); return; }
   const which = sidebarEl.id === 'queue-sidebar'    ? 'queue'
               : sidebarEl.id === 'lyrics-sidebar'   ? 'lyrics'
               :                                       'nowplaying';
@@ -24171,6 +24192,7 @@ updateProg = function(t, d) {
 };
 
 function toggleLyrics() {
+  if (S.lyricsOpen && S.lyrEdit) { lyrEditGuard(toggleLyrics); return; }
   S.lyricsOpen = !S.lyricsOpen;
   if (S.lyricsOpen) {
     _exclusiveOpen('lyrics');
@@ -24281,8 +24303,8 @@ function _lyrScrollMark() { if (typeof _lrcScrollSuppress !== 'undefined' && _lr
 function _lyrGet(sid) { return fetch('/api/songs/' + sid + '/lyrics').then(r => r.json()).catch(() => null); }
 
 const _LYR_ICO = {
-  genius: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 6.2A6.6 6.6 0 1 0 16.6 10.6H10.4"/></svg>',
-  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14M3 10h8M3 14.5h5"/><path d="M13.5 11.5l3.8 2.5-3.8 2.5z" fill="currentColor"/></svg>',
+  genius: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>',
+  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16"><mask id="lyr-lrc-m"><rect width="20" height="20" fill="white"/><text x="10" y="9" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="9" textLength="16.5" lengthAdjust="spacingAndGlyphs" fill="black">LRC</text><text x="10" y="17.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="9" textLength="16.5" lengthAdjust="spacingAndGlyphs" fill="black">LIB</text></mask><rect width="20" height="20" rx="4" fill="currentColor" mask="url(#lyr-lrc-m)"/></svg>',
   manual: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l.9-3.6L13.8 3.5a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3L7.1 15.6z"/><path d="M12.2 5.2l2.6 2.6"/></svg>'
 };
 
@@ -24722,13 +24744,7 @@ async function _lyrManualMake(kind) {
       plain = lp || ls.map(l => l.text).join('\n');
     } else plain = lp;
   }
-  const body = { plain };
-  if (items) body.items = items;
-  await api('PUT', '/api/songs/' + song.id + '/lyrics/manual', body).catch(() => {});
-  S.lyrSrcSid = null;
-  S.lyrTypeSid = null;
-  _lyrMem.delete(song.id);
-  if (S.cur && S.cur.id === song.id) renderLyricsForSong(song);
+  lyrEditStart({ plain, items });
 }
 
 async function lyrManualDelete() {
@@ -24764,6 +24780,358 @@ function lyrToggleCol() {
   if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
 }
 
+// ── manual lyrics editor ─────────────────────────────────────────────────────
+function _lyrEdFmt(t) {
+  if (!Number.isFinite(t)) return '';
+  const cs = Math.round(Math.max(0, t) * 100), m = Math.floor(cs / 6000), s = ((cs % 6000) / 100).toFixed(2).padStart(5, '0');
+  return m + ':' + s;
+}
+function _lyrEdParseT(v) {
+  v = String(v || '').trim();
+  if (!v) return null;
+  const m = v.match(/^(?:(\d+):)?(\d+(?:[.,]\d+)?)$/);
+  if (!m) return undefined;
+  return (m[1] ? parseInt(m[1]) * 60 : 0) + parseFloat(m[2].replace(',', '.'));
+}
+function _lyrEdNow() { return engine.hasPaused ? (engine._pausedAt || 0) : (engine.curTime || 0); }
+function _lyrEdSeek(t) {
+  if (!Number.isFinite(t)) return;
+  const dur = _getSeekDur();
+  if (dur) _commitSeekFrac(Math.min(1, Math.max(0, t / dur)), dur);
+}
+function _lyrEdDirty() {
+  const e = S.lyrEdit;
+  return !!e && (e.plain !== e.op || JSON.stringify(e.items) !== e.oi);
+}
+function _lyrPlainToItems(text) {
+  const out = [];
+  String(text || '').replace(/\r/g, '').split('\n').forEach(raw => {
+    const ln = raw.trim();
+    if (!ln) return;
+    const hm = ln.match(/^\[(.+)\]$/);
+    if (hm) out.push({ k: 's', x: hm[1] });
+    else out.push({ k: 'l', t: null, x: raw.replace(/\s+$/, '') });
+  });
+  return out;
+}
+function _lyrItemsToPlain(items) {
+  const out = [];
+  (items || []).forEach(it => {
+    if (it.k === 's') { if (out.length) out.push(''); out.push('[' + it.x + ']'); }
+    else out.push(it.x);
+  });
+  return out.join('\n');
+}
+function _lyrSeed(kind, d) {
+  let plain = '', items = null;
+  if (kind === 'genius' && d.genius) plain = _lyrGeniusToText(d.genius);
+  else if (kind === 'lrclib') {
+    const lp = d.source === 'lrclib' ? (d.plain || '') : '';
+    if (d.lrc) {
+      const ls = parseLrc(d.lrc);
+      items = ls.map(l => ({ k: 'l', t: l.time, x: _lyrMdEsc(l.text) }));
+      plain = lp ? _lyrMdEsc(lp) : ls.map(l => _lyrMdEsc(l.text)).join('\n');
+    } else plain = _lyrMdEsc(lp);
+  }
+  return { plain, items };
+}
+function _lyrAsk(title, text, ok, fn) {
+  window._lyrAskFn = fn;
+  showModal(title, '<p>' + esc(text) + '</p>', `<button class="btn btn-out mu-ripple" onclick="closeModal()">cancel</button><button class="btn btn-fill mu-ripple" onclick="closeModal();const f=window._lyrAskFn;window._lyrAskFn=null;if(f)f()">${esc(ok)}</button>`);
+}
+
+function lyrEditStart(seed) {
+  const song = S.cur, d = S.lyricsData;
+  if (!song) return;
+  if (S.lyrEdit) { if (S.lyrEdit.sid === song.id) _lyrEditRender(); return; }
+  const m = d && d.manual;
+  const plain = seed ? (seed.plain || '') : (m ? (m.plain || '') : '');
+  const items = seed ? (seed.items || null) : (m && m.items ? JSON.parse(JSON.stringify(m.items)) : null);
+  S.lyrEdit = {
+    sid: song.id, plain, items, op: plain, oi: JSON.stringify(items),
+    mode: !plain.trim() && items ? 'synced' : 'plain', isNew: !!seed,
+    active: Math.max(0, (items || []).findIndex(x => x.k === 'l')),
+    scrub: false, scrubOrig: CFG.audio_scrub, hid: {}
+  };
+  _lyrEditRender();
+}
+
+function _lyrEditRender() {
+  const e = S.lyrEdit, body = document.getElementById('lyrics-body');
+  if (!e || !body) return;
+  _lyrEngOff();
+  _lrcLines = [];
+  _lrcActiveIdx = -1;
+  ['blyrics-src', 'blyrics-sync', 'blyrics-ann', 'blyrics-reload'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    if (!(id in e.hid)) e.hid[id] = b.style.display;
+    b.style.display = 'none';
+  });
+  const top = body.scrollTop;
+  const bar = `<div class="lye-bar">
+    <div class="lye-tabs"><button class="lye-tab${e.mode === 'plain' ? ' on' : ''}" onclick="lyrEditMode('plain')">text</button><button class="lye-tab${e.mode === 'synced' ? ' on' : ''}" onclick="lyrEditMode('synced')">synced</button></div>
+    <div class="lye-acts"><button class="btn btn-out mu-ripple" onclick="lyrEditCancel()">cancel</button><button class="btn btn-fill mu-ripple" onclick="lyrEditDone()">done</button></div>
+  </div>`;
+  let main;
+  if (e.mode === 'synced') {
+    const rows = (e.items || []).map((it, i) => it.k === 's'
+      ? `<div class="lye-row lye-sec${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditActive(${i})"><span class="lye-br">[</span><input class="input lye-x" value="${esc(it.x)}" placeholder="section name" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-br">]</span><span class="lye-n"><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">+</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`
+      : `<div class="lye-row${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditRow(${i})"><input class="input lye-t" id="lye-t-${i}" value="${esc(_lyrEdFmt(it.t))}" placeholder="--:--" onclick="event.stopPropagation()" onfocus="lyrEditActive(${i},true)" onchange="lyrEditTime(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><input class="input lye-x" value="${esc(it.x)}" placeholder="lyrics line" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="-0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},-0.1)">-</button><button class="lye-mini" title="+0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},0.1)">+</button><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">↵</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`).join('');
+    main = `<div class="lye-tools">
+      <button class="btn btn-fill mu-ripple" onclick="lyrEditStamp()">stamp</button>
+      <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('l')">add line</button>
+      <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('s')">add section</button>
+      <label class="lye-sw"><input type="checkbox" ${e.scrub ? 'checked' : ''} onchange="lyrEditScrub(this.checked)">hear while dragging the seekbar</label>
+    </div>
+    <div class="lye-rows" id="lye-rows">${rows}</div>
+    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, - and + nudge it by 0.1s, sections are markers that keep your chorus and verse structure</div>`;
+  } else {
+    main = `<textarea id="lyr-ed-ta" class="input lye-ta" spellcheck="false" placeholder="[Verse 1: artist]&#10;lyrics here" oninput="lyrEditInput(this.value)" oncontextmenu="lyrEditCtx(event)" onkeydown="lyrEditKey(event)">${esc(e.plain)}</textarea>
+    <div class="lye-hint">[Chorus] or [Verse 1: name, name] lines group the lyrics, *italic* and **bold** style text, right click for helpers</div>`;
+  }
+  body.innerHTML = `<div class="lye" oncontextmenu="event.stopPropagation()">${bar}${main}</div>`;
+  body.scrollTop = top;
+}
+
+function lyrEditInput(v) { if (S.lyrEdit) S.lyrEdit.plain = v; }
+function lyrEditText(i, v) { const e = S.lyrEdit; if (e && e.items && e.items[i]) e.items[i].x = v; }
+function lyrEditTime(i, v) {
+  const e = S.lyrEdit, it = e && e.items && e.items[i];
+  if (!it) return;
+  const t = _lyrEdParseT(v), inp = document.getElementById('lye-t-' + i);
+  if (t === undefined) { if (inp) inp.value = _lyrEdFmt(it.t); return; }
+  it.t = t;
+  if (inp) inp.value = _lyrEdFmt(t);
+}
+function lyrEditNudge(i, dt) {
+  const e = S.lyrEdit, it = e && e.items && e.items[i];
+  if (!it || !Number.isFinite(it.t)) return;
+  it.t = Math.max(0, Math.round((it.t + dt) * 100) / 100);
+  const inp = document.getElementById('lye-t-' + i);
+  if (inp) inp.value = _lyrEdFmt(it.t);
+  lyrEditActive(i, true);
+  _lyrEdSeek(it.t);
+}
+function lyrEditActive(i, quiet) {
+  const e = S.lyrEdit;
+  if (!e) return;
+  e.active = i;
+  document.querySelectorAll('#lye-rows .lye-row.on').forEach(r => r.classList.remove('on'));
+  const r = document.getElementById('lye-r-' + i);
+  if (r) { r.classList.add('on'); if (!quiet) r.scrollIntoView({ block: 'nearest' }); }
+}
+function lyrEditRow(i) {
+  const e = S.lyrEdit, it = e && e.items && e.items[i];
+  if (!it) return;
+  lyrEditActive(i, true);
+  if (it.k === 'l') _lyrEdSeek(it.t);
+}
+function lyrEditStamp() {
+  const e = S.lyrEdit;
+  if (!e || e.mode !== 'synced' || !e.items) return;
+  let i = e.active;
+  if (!e.items[i] || e.items[i].k !== 'l') { i = e.items.findIndex(x => x.k === 'l'); if (i < 0) return; }
+  const t = Math.round(Math.max(0, _lyrEdNow()) * 100) / 100;
+  e.items[i].t = t;
+  const inp = document.getElementById('lye-t-' + i);
+  if (inp) inp.value = _lyrEdFmt(t);
+  let n = i + 1;
+  while (n < e.items.length && e.items[n].k !== 'l') n++;
+  lyrEditActive(n < e.items.length ? n : i);
+}
+function lyrEditAdd(kind, after) {
+  const e = S.lyrEdit;
+  if (!e || !e.items) return;
+  const at = after != null ? after + 1 : (e.items.length ? Math.min(e.active + 1, e.items.length) : 0);
+  e.items.splice(at, 0, kind === 's' ? { k: 's', x: 'Chorus' } : { k: 'l', t: null, x: '' });
+  e.active = at;
+  _lyrEditRender();
+  const inp = document.querySelector('#lye-r-' + at + ' .lye-x');
+  if (inp) { inp.focus(); inp.scrollIntoView({ block: 'nearest' }); }
+}
+function lyrEditDel(i) {
+  const e = S.lyrEdit;
+  if (!e || !e.items) return;
+  e.items.splice(i, 1);
+  e.active = Math.max(0, Math.min(e.active, e.items.length - 1));
+  _lyrEditRender();
+}
+function lyrEditScrub(on) {
+  const e = S.lyrEdit;
+  if (!e) return;
+  e.scrub = !!on;
+  CFG.audio_scrub = on ? true : e.scrubOrig;
+}
+
+function lyrEditMode(m) {
+  const e = S.lyrEdit;
+  if (!e || e.mode === m) return;
+  if (m === 'plain') { e.mode = 'plain'; _lyrEditRender(); return; }
+  if (e.items && e.items.length) { e.mode = 'synced'; _lyrEditRender(); return; }
+  const d = S.lyricsData || {}, opts = [];
+  if (d.lrc) opts.push(['lrclib', 'lrclib synced lyrics', 'text and timings from lrclib']);
+  if ((e.plain || '').trim()) opts.push(['text', 'lines from the text tab', 'sections stay as markers, lines get a time when you stamp them']);
+  opts.push(['empty', 'start empty', 'add lines yourself']);
+  if (opts.length === 1) { _lyrEditConvert('empty'); return; }
+  const rows = opts.map(([k, t, s], i) => `<label style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer"><input type="radio" name="lyr-cv" value="${k}" ${i === 0 ? 'checked' : ''} style="accent-color:var(--color-primary)"><span><span style="display:block;font:var(--type-body-medium);font-variation-settings:var(--fv-body)">${t}</span><span style="display:block;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)">${s}</span></span></label>`).join('');
+  const acts = `<button class="btn btn-out mu-ripple" onclick="closeModal()">cancel</button><button class="btn btn-fill mu-ripple" onclick="closeModal();_lyrEditConvert(document.querySelector('input[name=lyr-cv]:checked')?.value||'empty')">create</button>`;
+  showModal('create synced version', `<div style="color:var(--color-on-surface-variant);margin-bottom:6px">where should the synced lines come from</div>${rows}`, acts);
+}
+function _lyrEditConvert(kind) {
+  const e = S.lyrEdit, d = S.lyricsData || {};
+  if (!e) return;
+  if (kind === 'lrclib' && d.lrc) e.items = parseLrc(d.lrc).map(l => ({ k: 'l', t: l.time, x: _lyrMdEsc(l.text) }));
+  else if (kind === 'text') e.items = _lyrPlainToItems(e.plain);
+  else e.items = [];
+  e.mode = 'synced';
+  e.active = Math.max(0, e.items.findIndex(x => x.k === 'l'));
+  _lyrEditRender();
+}
+
+function _lyrEdWrap(open, close) {
+  const ta = document.getElementById('lyr-ed-ta');
+  if (!ta) return;
+  const s = ta.selectionStart, en = ta.selectionEnd, v = ta.value, sel = v.slice(s, en);
+  ta.value = v.slice(0, s) + open + sel + close + v.slice(en);
+  const a = s + open.length;
+  ta.setSelectionRange(a, a + sel.length);
+  ta.focus();
+  lyrEditInput(ta.value);
+}
+function _lyrEdHeader() {
+  const ta = document.getElementById('lyr-ed-ta');
+  if (!ta) return;
+  const v = ta.value;
+  let s = ta.selectionStart, en = ta.selectionEnd;
+  if (s === en) {
+    s = s > 0 ? v.lastIndexOf('\n', s - 1) + 1 : 0;
+    en = v.indexOf('\n', en);
+    if (en < 0) en = v.length;
+  }
+  ta.setSelectionRange(s, en);
+  _lyrEdWrap('[', ']');
+}
+function _lyrEdClip(kind) {
+  const ta = document.getElementById('lyr-ed-ta');
+  if (!ta) return;
+  const s = ta.selectionStart, en = ta.selectionEnd;
+  if (kind === 'paste') {
+    navigator.clipboard.readText().then(t => { ta.setRangeText(t, s, en, 'end'); lyrEditInput(ta.value); ta.focus(); }).catch(() => {});
+    return;
+  }
+  const sel = ta.value.slice(s, en);
+  if (!sel) return;
+  navigator.clipboard.writeText(sel).catch(() => {});
+  if (kind === 'cut') { ta.setRangeText('', s, en, 'end'); lyrEditInput(ta.value); }
+  ta.focus();
+}
+function lyrEditKey(ev) {
+  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  if (k === 'b') { ev.preventDefault(); _lyrEdWrap('**', '**'); }
+  else if (k === 'i') { ev.preventDefault(); _lyrEdWrap('*', '*'); }
+}
+function lyrEditCtx(ev) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const d = S.lyricsData || {};
+  const items = [
+    { label: 'bold', fn: () => _lyrEdWrap('**', '**') },
+    { label: 'italic', fn: () => _lyrEdWrap('*', '*') },
+    { label: 'make header', fn: () => _lyrEdHeader() },
+    { sep: true },
+    { label: 'cut', fn: () => _lyrEdClip('cut') },
+    { label: 'copy', fn: () => _lyrEdClip('copy') },
+    { label: 'paste', fn: () => _lyrEdClip('paste') }
+  ];
+  const rs = _lyrRestoreItems(d);
+  if (rs.length) { items.push({ sep: true }); rs.forEach(x => items.push(x)); }
+  showCtx(ev, items);
+}
+
+function _lyrRestoreItems(d) {
+  const av = _lyrAvail(d), out = [];
+  if (av.genius) out.push({ label: 'genius', fn: () => lyrRestore('genius') });
+  if (av.lrclib) out.push({ label: 'lrclib', fn: () => lyrRestore('lrclib') });
+  return out.length ? [{ _header: true, label: 'restore from' }, ...out] : [];
+}
+function lyrRestore(kind) {
+  const d = S.lyricsData, song = S.cur;
+  if (!d || !song) return;
+  if (S.lyrEdit && S.lyrEdit.sid !== song.id) return;
+  const sd = _lyrSeed(kind, d);
+  _lyrAsk('restore from ' + kind, 'replaces everything in the editor with the ' + kind + ' copy, nothing is saved until you press done and the ' + kind + ' lyrics themselves stay untouched', 'restore', () => {
+    if (!S.lyrEdit) lyrEditStart();
+    const x = S.lyrEdit;
+    if (!x) return;
+    x.plain = sd.plain;
+    x.items = sd.items;
+    if (x.mode === 'synced' && !x.items) x.mode = 'plain';
+    x.active = Math.max(0, (x.items || []).findIndex(i => i.k === 'l'));
+    _lyrEditRender();
+  });
+}
+
+async function lyrEditSave() {
+  const e = S.lyrEdit;
+  if (!e) return false;
+  let plain = e.plain || '';
+  const items = e.items && e.items.length ? e.items : null;
+  if (!plain.trim() && items) plain = _lyrItemsToPlain(items);
+  const has = !!plain.trim() || (items || []).some(x => x.k === 'l' && (x.x || '').trim());
+  try {
+    if (has) await api('PUT', '/api/songs/' + e.sid + '/lyrics/manual', { plain, items });
+    else if (!e.isNew) await api('DELETE', '/api/songs/' + e.sid + '/lyrics/manual');
+  } catch (err) {
+    showModal('could not save', '<p>the lyrics could not be saved, your edits are still in the editor</p>', '<button class="btn btn-fill mu-ripple" onclick="closeModal()">ok</button>');
+    return false;
+  }
+  return true;
+}
+function _lyrEditExit(saved, quiet) {
+  const e = S.lyrEdit;
+  S.lyrEdit = null;
+  if (!e) return;
+  CFG.audio_scrub = e.scrubOrig;
+  Object.keys(e.hid || {}).forEach(id => { const b = document.getElementById(id); if (b) b.style.display = e.hid[id]; });
+  if (saved) { _lyrMem.delete(e.sid); S.lyrSrcSid = null; S.lyrTypeSid = null; }
+  if (!quiet && S.cur) renderLyricsForSong(S.cur);
+}
+function lyrEditDone() { lyrEditSave().then(ok => { if (ok) _lyrEditExit(true); }); }
+function lyrEditCancel() { lyrEditGuard(null); }
+function lyrEditGuard(next) {
+  const e = S.lyrEdit;
+  if (!e) { if (next) next(); return; }
+  if (!_lyrEdDirty()) { _lyrEditExit(false, !!next); if (next) next(); return; }
+  window._lyrEdNext = next || null;
+  const acts = `<button class="btn btn-out mu-ripple" onclick="closeModal()">keep editing</button><button class="btn btn-err mu-ripple" onclick="closeModal();_lyrEdResolve('discard')">discard</button><button class="btn btn-fill mu-ripple" onclick="closeModal();_lyrEdResolve('save')">save</button>`;
+  showModal('unsaved changes', '<p>you have unsaved changes to your lyrics, save them or discard them</p>', acts);
+}
+async function _lyrEdResolve(a) {
+  const next = window._lyrEdNext;
+  window._lyrEdNext = null;
+  if (a === 'save') {
+    if (!await lyrEditSave()) return;
+    _lyrEditExit(true, !!next);
+  } else _lyrEditExit(false, !!next);
+  if (next) next();
+}
+
+function _lyrEdSpace(ev) {
+  const e = S.lyrEdit;
+  if (!e || e.mode !== 'synced' || !S.lyricsOpen) return false;
+  if (ev.code !== 'Space' || ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+  const t = ev.target, tn = t && t.tagName;
+  if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || tn === 'BUTTON' || (t && t.isContentEditable)) return false;
+  const mo = document.getElementById('modal-overlay');
+  if (mo && mo.classList.contains('open')) return false;
+  return true;
+}
+document.addEventListener('keydown', ev => { if (_lyrEdSpace(ev)) { ev.preventDefault(); ev.stopImmediatePropagation(); if (!ev.repeat) lyrEditStamp(); } }, true);
+document.addEventListener('keyup', ev => { if (_lyrEdSpace(ev)) { ev.preventDefault(); ev.stopImmediatePropagation(); } }, true);
+window.addEventListener('beforeunload', ev => { if (S.lyrEdit && _lyrEdDirty()) { ev.preventDefault(); ev.returnValue = ''; } });
+
 function _lyrMenuItems(song, d, full) {
   const av = _lyrAvail(d), pk = _lyrPick(song, d), src = pk.src, pr = d.pref || {};
   const items = [];
@@ -24776,15 +25144,20 @@ function _lyrMenuItems(song, d, full) {
     items.push({ sep: true });
     const isDef = pr.def_src === src && (!pr.def_type || pr.def_type === pk.type);
     if (!isDef) items.push({ label: 'set as default for this song', icon: MEOW_ICONS.check, fn: () => lyrSetDefault() });
-    if (pr.def_src) items.push({ label: 'unset default', fn: () => lyrUnsetDefault() });
-    items.push({ sep: true });
+    if (pr.def_src) items.push({ label: 'unset default', icon: MEOW_ICONS.close, fn: () => lyrUnsetDefault() });
+    if (full) items.push({ sep: true });
   }
   if (!full) return items;
   if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
   if (av.genius) items.push({ label: 'pretty display', check: _lyrPrettyOn(), fn: () => lyrTogglePretty() });
   if (av.genius && _lyrPrettyOn()) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
   if (!d.manual) items.push({ label: 'create manual lyrics', icon: MEOW_ICONS.pencil, fn: () => lyrManualCreate() });
-  else items.push({ label: 'delete manual lyrics', icon: MEOW_ICONS.trash, err: true, fn: () => lyrManualDelete() });
+  else {
+    items.push({ label: 'edit lyrics', icon: MEOW_ICONS.pencil, fn: () => lyrEditStart() });
+    const rs = _lyrRestoreItems(d);
+    if (rs.length) { items.push({ sep: true }); rs.forEach(x => items.push(x)); items.push({ sep: true }); }
+    items.push({ label: 'delete manual lyrics', icon: MEOW_ICONS.trash, err: true, fn: () => lyrManualDelete() });
+  }
   items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
   return items;
 }
@@ -24850,6 +25223,7 @@ function _lyrWire() {
 }
 
 function _lyrDraw(song, data, forceSynced) {
+  if (S.lyrEdit && S.lyrEdit.sid === song.id) { S.lyricsData = data; _lyrMem.set(song.id, data); return; }
   const sid = song.id;
   const body = document.getElementById('lyrics-body');
   const hdr = document.getElementById('lyrics-hdr-title');
@@ -24975,6 +25349,11 @@ async function _lyrApply(song, data, forceSynced, live) {
 }
 
 async function renderLyricsForSong(song, forceSynced) {
+  if (S.lyrEdit && song) {
+    if (S.lyrEdit.sid === song.id) { _lyrEditRender(); return; }
+    lyrEditGuard(() => renderLyricsForSong(song, forceSynced));
+    return;
+  }
   if (!song) return;
   const sid = song.id;
   const tok = ++_lyrTok;
