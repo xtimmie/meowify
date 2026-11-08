@@ -15024,8 +15024,11 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
   contain:layout style;
 }
 .dl-unavailable{opacity:0.45;filter:grayscale(0.6);cursor:default;}
-.q-disabled{opacity:0.45;filter:grayscale(0.6);}
-.q-disabled.playing,.q-disabled.paused{opacity:1;filter:none;}
+.q-disabled,.q-played{opacity:0.45;filter:grayscale(0.6);}
+.q-disabled.playing,.q-disabled.paused,.q-played.playing,.q-played.paused{opacity:1;filter:none;}
+.song-list>.q-active-start{position:relative;}
+.q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
+.q-active-start::before{content:'previously played';position:absolute;top:-7px;left:50%;transform:translateX(-50%);padding:0 8px;font-size:9px;line-height:13px;letter-spacing:.08em;white-space:nowrap;color:var(--color-on-surface-variant);background:var(--color-surface-container-lowest);pointer-events:none;z-index:1;}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
@@ -19723,67 +19726,75 @@ const S = {
   queueSource: {type: 'single', id: null},
   // snapshot of the unshuffled source order, set in buildQueue, used to restore on unshuffle
   _unshuffledQueue: [],
+  // index in S.queue of the first row that takes part in the shuffle (queue logic, repeat wrap, rebuilds).
+  // rows before it are the "previously played" ones: playable and navigable like any queue row, but greyed
+  // out and left alone when the queue gets reshuffled or wraps. always 0 while shuffle is off
+  _qActiveFrom: 0,
+  _wrapPlan: null,
 };
 
-// ── smart shuffle: space out same-artist songs ──────────────────────────────
+// ── smart shuffle: spread same-artist songs evenly over the queue ──────────
+// every artist gets an evenly spaced grid of slots across the whole queue (random offset per artist) and each
+// song lands somewhere inside its slot, so a big artist is spread out instead of clumping up at the end.
+// a unit is an array of songs that has to stay together (a single song, or an album block in intact mode).
+// everything is tweakable through the options below, CFG.smart_opts overrides them (advanced shuffle sets it)
 // primary (first, comma-split) artist, normalized for bucketing - a collab
 // credited as "Artist A, Artist B" should space against Artist A's solo
 // tracks, not be treated as a distinct third artist
 function _smartShuffleArtistKey(artist) {
   return ((artist || '').split(',')[0] || '').toLowerCase().trim() || '__unknown__';
 }
-function _smartShuffle(songs) {
-  // fisher-yates first pass
-  const arr = [...songs];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+const _SMART_DEFAULTS = {
+  jitter: 0.6,      // 0 = every song dead center in its slot (very even), 1 = anywhere inside its slot (looser)
+  phase: 'random',  // 'random' = each artist's slot grid gets a random offset, 'even' = all grids line up
+  minGap: 1,        // min units between two units of the same artist, best effort
+  lookahead: 6,     // how far ahead the min gap repair looks for a unit to swap in
+  artistKey: _smartShuffleArtistKey, // maps an artist string to its bucket
+};
+function _smartOpts() {
+  return Object.assign({}, _SMART_DEFAULTS, (CFG && CFG.smart_opts) || {});
+}
+function _smartOrderUnits(units, opts) {
+  const o = Object.assign(_smartOpts(), opts || {});
+  if (units.length < 2) return [...units];
+  const keyOf = u => o.artistKey(u[0] && u[0].artist);
+  const groups = new Map();
+  for (const u of units) {
+    const k = keyOf(u);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(u);
   }
-  if (arr.length < 4) return arr;
-
-  // spread same-artist songs using a penalty-based insertion sort
-  // build artist buckets - use the primary (first, comma-split) artist so a
-  // collab credited as "Artist A, Artist B" buckets with Artist A's solo
-  // tracks instead of being treated as an unrelated third artist, matching
-  // the same primary-artist convention used elsewhere in this codebase
-  const byArtist = new Map();
-  for (const s of arr) {
-    const key = _smartShuffleArtistKey(s.artist);
-    if (!byArtist.has(key)) byArtist.set(key, []);
-    byArtist.get(key).push(s);
-  }
-  // interleave: always pick from artist with most remaining, with tie-breaking randomness
-  const buckets = [...byArtist.values()].map(b => {
-    // shuffle within bucket for variety
-    for (let i = b.length - 1; i > 0; i--) {
+  const placed = [];
+  for (const g of groups.values()) {
+    for (let i = g.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [b[i], b[j]] = [b[j], b[i]];
+      [g[i], g[j]] = [g[j], g[i]];
     }
-    return b;
-  });
-  const result = [];
-  const recentArtists = []; // last N artists seen
-  const WINDOW = Math.min(5, Math.ceil(arr.length / byArtist.size));
-  while (buckets.some(b => b.length)) {
-    // score each non-empty bucket: prefer larger + not recently used
-    let best = null, bestScore = -Infinity;
-    for (const b of buckets) {
-      if (!b.length) continue;
-      const artist = _smartShuffleArtistKey(b[0].artist);
-      const recency = recentArtists.lastIndexOf(artist);
-      const penaltyRaw = recency === -1 ? 0 : (WINDOW - (recentArtists.length - 1 - recency));
-      const penalty = Math.max(0, penaltyRaw);
-      const score = b.length - penalty * 2 + Math.random() * 0.5;
-      if (score > bestScore) { bestScore = score; best = b; }
+    const phase = o.phase === 'even' ? 0.5 : Math.random();
+    for (let i = 0; i < g.length; i++) {
+      const jit = (Math.random() - 0.5) * o.jitter;
+      placed.push({ u: g[i], pos: (i + phase + jit) / g.length + Math.random() * 1e-9 });
     }
-    if (!best) break;
-    const song = best.shift();
-    result.push(song);
-    const artist = _smartShuffleArtistKey(song.artist);
-    recentArtists.push(artist);
-    if (recentArtists.length > WINDOW * 2) recentArtists.shift();
   }
-  return result;
+  placed.sort((a, b) => a.pos - b.pos);
+  const out = placed.map(p => p.u);
+  // min gap repair: if a unit sits too close to the same artist, swap in a nearby unit of another artist
+  const clashes = (i, k) => {
+    for (let d = 1; d <= o.minGap && i - d >= 0; d++) if (keyOf(out[i - d]) === k) return true;
+    return false;
+  };
+  for (let i = 1; i < out.length; i++) {
+    if (!clashes(i, keyOf(out[i]))) continue;
+    for (let j = i + 1; j < out.length && j <= i + o.lookahead; j++) {
+      if (clashes(i, keyOf(out[j]))) continue;
+      [out[i], out[j]] = [out[j], out[i]];
+      break;
+    }
+  }
+  return out;
+}
+function _smartShuffle(songs, opts) {
+  return _smartOrderUnits(songs.map(s => [s]), opts).map(u => u[0]);
 }
 
 // ── apply flow mode adjustments to a shuffled queue ────────────────────────
@@ -19797,22 +19808,28 @@ function _applyFlowMode(queue, taIds = null) {
   // if taIds set, only apply flow to transition albums
   const albumSongs = new Map();
   for (const s of queue) {
-    if (!s.album_id) continue;
+    if (!s.album_id || !(s.track_num > 0)) continue;
     if (taIds && !taIds.has(s.album_id)) continue;
     if (!albumSongs.has(s.album_id)) albumSongs.set(s.album_id, []);
     albumSongs.get(s.album_id).push(s);
   }
+  // split every album into runs of consecutive track numbers, a missing track number ends a run
+  // (that is the gap detection). multiAlbums maps song id -> the run it is part of, runs of 1 are skipped
   const multiAlbums = new Map();
-  for (const [aid, songs] of albumSongs) {
-    if (songs.length >= 2) {
-      songs.sort((a, b) => (a.track_num || 0) - (b.track_num || 0));
-      multiAlbums.set(aid, songs);
+  for (const songs of albumSongs.values()) {
+    songs.sort((a, b) => a.track_num - b.track_num);
+    let run = [];
+    const flush = () => {
+      if (run.length >= 2) for (const r of run) multiAlbums.set(r.id, run);
+      run = [];
+    };
+    for (const s of songs) {
+      if (run.length && s.track_num !== run[run.length - 1].track_num + 1) flush();
+      run.push(s);
     }
+    flush();
   }
   if (!multiAlbums.size) return queue;
-
-  // ownedTracks: id -> track_num, for gap detection
-  const ownedIds = new Set(queue.map(s => s.id));
 
   const processed = new Set();
   let result = [...queue];
@@ -19820,17 +19837,16 @@ function _applyFlowMode(queue, taIds = null) {
   function processFlowAt(idx) {
     const song = result[idx];
     if (!song || !song.album_id || processed.has(song.id)) return;
-    const albumArr = multiAlbums.get(song.album_id);
+    const albumArr = multiAlbums.get(song.id);
     if (!albumArr) return;
     processed.add(song.id);
 
     const myTrack = song.track_num || 0;
 
-    // following: tracks after current, stopping at first gap (track missing from original queue)
+    // following: the rest of this run (consecutive track numbers after the current one)
     const following = [];
     for (const as of albumArr) {
-      if ((as.track_num || 0) <= myTrack) continue;
-      if (!ownedIds.has(as.id)) break; // gap - missing track, stop chain
+      if (as.track_num <= myTrack) continue;
       following.push(as);
     }
 
@@ -19872,56 +19888,103 @@ function _applyFlowMode(queue, taIds = null) {
   return result;
 }
 
-// ── smart shuffle for units (arrays of songs) - spaces out same-artist album blocks ──
-function _smartShuffleUnits(units) {
-  if (units.length < 4) {
-    // basic fisher-yates for small counts
-    for (let i = units.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [units[i], units[j]] = [units[j], units[i]];
-    }
-    return units;
+// ── smart shuffle for units (arrays of songs) - same spreading as _smartShuffle, a unit counts as one ──
+function _smartShuffleUnits(units, opts) {
+  return _smartOrderUnits(units, opts);
+}
+
+// ── shuffle builders: one place that orders a pool of songs for the current shuffle mode ──
+function _taIdSet() {
+  return (CFG.transition_albums && CFG.shuffle_transition_only)
+    ? new Set(S.albums.filter(a => a.transition_album).map(a => a.id))
+    : null;
+}
+function _shufflePlain(list) {
+  if (S.smartShuffle) return _smartShuffle(list);
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
   }
-  // group units by the primary artist of their first song
-  const byArtist = new Map();
-  for (const u of units) {
-    const key = _smartShuffleArtistKey(u[0]?.artist);
-    if (!byArtist.has(key)) byArtist.set(key, []);
-    byArtist.get(key).push(u);
+  return a;
+}
+// orders pool for random / flow / intact (chaos has its own picker). cur = the song that has to be playing,
+// it ends up at queue[qi]: first in random and flow, inside its album block in intact. null = nothing pinned
+function _shuffleBuild(pool, cur) {
+  const curId = cur ? cur.id : null;
+  if (S.shuffleMode === 'intact') {
+    const list = (cur && !pool.some(s => s.id === curId)) ? [cur, ...pool] : pool;
+    const out = _applyBlockMode(list, S.smartShuffle, _taIdSet(), curId);
+    return { queue: out, qi: curId ? Math.max(0, out.findIndex(s => s.id === curId)) : 0 };
   }
-  // shuffle within each artist bucket for variety
-  for (const bucket of byArtist.values()) {
-    for (let i = bucket.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [bucket[i], bucket[j]] = [bucket[j], bucket[i]];
-    }
+  let rest = pool;
+  if (cur) {
+    const k = pool.findIndex(s => s.id === curId);
+    if (k >= 0) rest = pool.filter((_, n) => n !== k);
   }
-  const buckets = [...byArtist.values()];
-  const result = [];
-  const recentArtists = [];
-  const WINDOW = Math.min(5, Math.ceil(units.length / byArtist.size));
-  while (buckets.some(b => b.length)) {
-    let best = null, bestScore = -Infinity;
-    for (const b of buckets) {
-      if (!b.length) continue;
-      const artist = _smartShuffleArtistKey(b[0][0]?.artist);
-      const recency = recentArtists.lastIndexOf(artist);
-      const penalty = Math.max(0, recency === -1 ? 0 : (WINDOW - (recentArtists.length - 1 - recency)));
-      const score = b.length - penalty * 2 + Math.random() * 0.5;
-      if (score > bestScore) { bestScore = score; best = b; }
-    }
-    if (!best) break;
-    const unit = best.shift();
-    result.push(unit);
-    const artist = _smartShuffleArtistKey(unit[0]?.artist);
-    recentArtists.push(artist);
-    if (recentArtists.length > WINDOW * 2) recentArtists.shift();
+  const shuffled = _shufflePlain(rest);
+  const tentative = cur ? [cur, ...shuffled] : shuffled;
+  if (S.shuffleMode === 'flow') return { queue: _applyFlowMode(tentative, _taIdSet()), qi: 0 };
+  return { queue: tentative, qi: 0 };
+}
+
+// full context of the queue: every song the shuffle draws from, one source of truth (saved in the session).
+// while shuffle is off it is just the queue, songs added by hand land in it too
+function _qCtx() {
+  if (!S._unshuffledQueue || !S._unshuffledQueue.length) {
+    const base = (S.shuffle && S.shuffleMode === 'chaos' && S._chaosContext.length) ? S._chaosContext : S.queue;
+    S._unshuffledQueue = [...base];
   }
-  return result;
+  return S._unshuffledQueue;
+}
+function _qCtxAdd(songs, afterCur) {
+  const ctx = _qCtx();
+  const k = (afterCur && S.cur) ? ctx.findIndex(s => s.id === S.cur.id) : -1;
+  if (k >= 0) ctx.splice(k + 1, 0, ...songs);
+  else ctx.push(...songs);
+}
+// a song can sit in the queue twice (greyed copy + active copy), so the playing row is found by distance
+function _qLocateCur(arr, curSong, oldQi) {
+  if (!curSong) return oldQi;
+  let best = -1;
+  for (let k = 0; k < arr.length; k++) {
+    if (arr[k].id !== curSong.id) continue;
+    if (best < 0 || Math.abs(k - oldQi) < Math.abs(best - oldQi)) best = k;
+  }
+  return best;
+}
+
+// repeat all in a shuffled (non chaos) queue: the next lap is a fresh shuffle of the whole context, the greyed
+// "previously played" rows above stay exactly as they are. built once and cached so the gapless preload and
+// the real wrap agree
+function _wrapPlanGet() {
+  if (S.repeat !== 'all' || !S.shuffle || S.shuffleMode === 'chaos' || !S.queue.length) return null;
+  const from = S._qActiveFrom || 0;
+  const sig = S.queue.length + '|' + from + '|' + S.shuffleMode + '|' + S.smartShuffle + '|' + _qCtx().length;
+  if (S._wrapPlan && S._wrapPlan.sig === sig) return S._wrapPlan;
+  const inLib = new Set(S.library.map(s => s.id));
+  let pool = _qCtx().filter(s => inLib.has(s.id));
+  if (!pool.length) pool = S.queue.slice(from);
+  const list = _shuffleBuild(pool, null).queue;
+  const lastId = S.queue[S.queue.length - 1].id;
+  if (S.shuffleMode === 'random' && list.length > 1 && list[0].id === lastId) [list[0], list[1]] = [list[1], list[0]];
+  S._wrapPlan = { sig, list };
+  return S._wrapPlan;
+}
+// reached the end of the queue with repeat all: start the next lap at the first active row
+function _applyWrap() {
+  const from = S._qActiveFrom || 0;
+  const p = _wrapPlanGet();
+  if (p) {
+    S.queue = [...S.queue.slice(0, from), ...p.list];
+    S._wrapPlan = null;
+  }
+  S.qi = from;
+  if (p && S.queueOpen) renderQueueSidebar();
 }
 
 // ── apply block mode: group albums as contiguous blocks ─────────────────────
-function _applyBlockMode(songs, smart = false, taIds = null) {
+function _applyBlockMode(songs, smart = false, taIds = null, pinId = null) {
   // group songs by album_id (only albums with ≥2 songs present)
   // if taIds set, only group transition albums - others become singles
   const albumGroups = new Map(); // albumId -> [songs in track order]
@@ -19950,18 +20013,26 @@ function _applyBlockMode(songs, smart = false, taIds = null) {
   // build shuffle units: one array per album block, one per single
   const albumUnits = [];
   for (const group of albumGroups.values()) albumUnits.push(group);
-  const singleUnits = (smart ? _smartShuffle(singles) : singles).map(s => [s]);
+  const allUnits = [...albumUnits, ...singles.map(s => [s])];
 
-  const allUnits = [...albumUnits, ...singleUnits];
+  // pinId: the unit holding that song goes first (the song the user started on), the rest gets shuffled
+  let pinned = null;
+  if (pinId != null) {
+    const pi = allUnits.findIndex(u => u.some(s => s.id === pinId));
+    if (pi >= 0) pinned = allUnits.splice(pi, 1)[0];
+  }
 
-  // shuffle units - smart mode spaces out same-artist album blocks, plain mode is random
-  const orderedUnits = smart ? _smartShuffleUnits(allUnits) : (() => {
+  // shuffle units - smart mode spreads same-artist units out, plain mode is random
+  let orderedUnits = allUnits;
+  if (smart) {
+    orderedUnits = _smartShuffleUnits(allUnits);
+  } else {
     for (let i = allUnits.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [allUnits[i], allUnits[j]] = [allUnits[j], allUnits[i]];
     }
-    return allUnits;
-  })();
+  }
+  if (pinned) orderedUnits = [pinned, ...orderedUnits];
 
   // flatten - albums appear in track order, position among other units is random
   return orderedUnits.flat();
@@ -20007,6 +20078,8 @@ function buildQueue(songs, startIdx, source) {
   S._continueFrom = null; // any fresh queue build cancels a pending "play from here next"
   S._queueScrollPending = true; // queue got replaced by a play from outside it - scroll the open queue to the current song
   S._unshuffledQueue = [...songs];
+  S._qActiveFrom = 0;
+  S._wrapPlan = null;
   _chaosReset();
   engine._stopNxt();
   if (S.shuffle) {
@@ -20024,43 +20097,9 @@ function buildQueue(songs, startIdx, source) {
       S.qi = 0;
       S._chaosNext = _chaosPickNext();
     } else {
-      const rest = songs.filter((_, i) => i !== startIdx);
-      let shuffled;
-      if (S.smartShuffle) {
-        shuffled = _smartShuffle(rest);
-      } else {
-        shuffled = [...rest];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-      }
-      if (S.shuffleMode === 'flow') {
-        // build tentative full queue then apply flow adjustments
-        // shuffle_transition_only: only apply flow logic to transition album songs
-        const _taIds = (CFG.transition_albums && CFG.shuffle_transition_only)
-          ? new Set(S.albums.filter(a=>a.transition_album).map(a=>a.id))
-          : null;
-        const tentative = [startSong, ...shuffled];
-        const adjusted = _applyFlowMode(tentative, _taIds);
-        S.queue = adjusted;
-        S.qi = 0;
-      } else if (S.shuffleMode === 'intact') {
-        // group albums as blocks, keep start song first
-        // _applyBlockMode handles its own unit-level shuffle internally
-        // shuffle_transition_only: only group songs from transition albums, treat others as singles
-        const _taIds = (CFG.transition_albums && CFG.shuffle_transition_only)
-          ? new Set(S.albums.filter(a=>a.transition_album).map(a=>a.id))
-          : null;
-        const withoutStart = songs.filter((_, i) => i !== startIdx);
-        const blocked = _applyBlockMode(withoutStart, S.smartShuffle, _taIds);
-        S.queue = [startSong, ...blocked];
-        S.qi = 0;
-      } else {
-        // random (default)
-        S.queue = [startSong, ...shuffled];
-        S.qi = 0;
-      }
+      const built = _shuffleBuild(songs, startSong);
+      S.queue = built.queue;
+      S.qi = built.qi;
     }
   } else {
     S.queue = [...songs];
@@ -20082,14 +20121,12 @@ function _chaosReset() {
   _chaosRecentArtists.length = 0;
 }
 
-// leave chaos: reset all chaos state and give the real queue back (current song first, then everything that was queued before chaos)
+// leave chaos: reset all chaos state, the queue is just the current song until the caller rebuilds the real
+// queue from the context (toggleShuffle / setShuffleMode both do that right after)
 function _chaosLeave() {
-  const inLib = new Set(S.library.map(s => s.id));
-  const base = (S._chaosStash && S._chaosStash.queue.length) ? S._chaosStash.queue : S._chaosContext;
-  const curId = S.cur && S.cur.id;
-  const rest = base.filter(s => inLib.has(s.id) && s.id !== curId);
-  S.queue = [...(S.cur ? [S.cur] : []), ...rest];
+  S.queue = S.cur ? [S.cur] : [];
   S.qi = 0;
+  S._qActiveFrom = 0;
   _chaosReset();
 }
 
@@ -20134,7 +20171,11 @@ function getNextSong() {
     return S._chaosNext;
   }
   const ni = S.qi + 1;
-  if (ni >= S.queue.length) return S.repeat === 'all' ? S.queue[0] : null;
+  if (ni >= S.queue.length) {
+    if (S.repeat !== 'all') return null;
+    const p = _wrapPlanGet();
+    return p ? p.list[0] : S.queue[S._qActiveFrom || 0];
+  }
   return S.queue[ni];
 }
 
@@ -20545,7 +20586,7 @@ async function _doOnSongEnd(scheduledNid) {
   const nextQi = S.qi + 1;
   if (nextQi >= S.queue.length) {
     if (S.repeat === 'all') {
-      S.qi = 0;
+      _applyWrap();
     } else {
       S.isPlaying = false; S.cur = null;
       updatePlayerUI(null); updateHighlights(); updatePlayBtn();
@@ -20791,7 +20832,7 @@ async function nextSong() {
       }
       const nextQi = S.qi + 1;
       if (nextQi >= S.queue.length) {
-        if (S.repeat === 'all') S.qi = 0;
+        if (S.repeat === 'all') _applyWrap();
         else return;
       } else {
         S.qi = nextQi;
@@ -20810,56 +20851,36 @@ function seekClick(e) {
 }
 
 function _shuffleRemaining() {
-  // shuffle remaining queue songs after current, respecting mode
+  // (re)shuffle the whole context around the current song, respecting the mode. everything that sat before the
+  // current song stays on top as the greyed "previously played" rows, the pool for the rest is the full context
   if (!S.queue.length) return;
   const curId = S.cur?.id;
+  const ctx = _qCtx();
   if (S.shuffleMode === 'chaos') {
     if (!S._chaosOn) {
       // entering chaos: keep the real queue so turning chaos off hands it back
       S._chaosStash = { queue: [...S.queue], qi: S.qi };
-      S._chaosContext = [...S.queue];
+      S._chaosContext = [...ctx];
       S._chaosPlayed = curId ? new Set([curId]) : new Set();
       S._chaosHistory = [];
       _chaosRecentArtists.length = 0;
       S._chaosOn = true;
       S.queue = S.cur ? [S.cur] : [];
       S.qi = 0;
+      S._qActiveFrom = 0;
     }
     S._chaosNext = _chaosPickNext();
     if (S.queueOpen) renderQueueSidebar();
     return;
   }
-  const before = S.queue.slice(0, S.qi + 1);
-  const after  = S.queue.slice(S.qi + 1);
-  let shuffled;
-  if (S.smartShuffle) {
-    shuffled = _smartShuffle(after);
-  } else {
-    shuffled = [...after];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-  }
-  if (S.shuffleMode === 'flow') {
-    // only apply flow to the upcoming songs - history (before) is already played and
-    // should not be subject to preceding-removal or reordering
-    const _taIds = (CFG.transition_albums && CFG.shuffle_transition_only)
-      ? new Set(S.albums.filter(a=>a.transition_album).map(a=>a.id))
-      : null;
-    const adjusted = _applyFlowMode([S.cur || S.queue[S.qi], ...shuffled], _taIds);
-    S.queue = [...before.slice(0, -1), ...adjusted];
-    S.qi = curId ? Math.max(0, S.queue.findIndex(s => s.id === curId)) : 0;
-  } else if (S.shuffleMode === 'intact') {
-    const _taIds = (CFG.transition_albums && CFG.shuffle_transition_only)
-      ? new Set(S.albums.filter(a=>a.transition_album).map(a=>a.id))
-      : null;
-    const blocked = _applyBlockMode(after, S.smartShuffle, _taIds);
-    S.queue = [...before, ...blocked];
-  } else {
-    S.queue = [...before, ...shuffled];
-  }
-  if (curId) S.qi = Math.max(0, S.queue.findIndex(s => s.id === curId));
+  const cur = S.queue[S.qi] || S.cur;
+  const greyed = S.queue.slice(0, S.qi);
+  const inLib = new Set(S.library.map(s => s.id));
+  const built = _shuffleBuild(ctx.filter(s => inLib.has(s.id)), cur);
+  S.queue = [...greyed, ...built.queue];
+  S.qi = greyed.length + built.qi;
+  S._qActiveFrom = greyed.length;
+  S._wrapPlan = null;
 }
 
 function setShuffleMode(mode) {
@@ -20875,7 +20896,7 @@ function setShuffleMode(mode) {
 function setSmartShuffle(on) {
   S.smartShuffle = on;
   saveSetting('smart_shuffle', on);
-  if (S.shuffle) _shuffleRemaining();
+  if (S.shuffle) { _shuffleRemaining(); _queueNextChanged(); if (S.queueOpen) renderQueueSidebar(); }
 }
 
 function _updateShuffleBtnTitle() {
@@ -20910,25 +20931,28 @@ function toggleShuffle() {
   if (!S.queue.length) return;
   const curId = S.cur?.id;
   if (S.shuffle) {
+    // while shuffle was off the queue is the context (it may have been edited by hand), so shuffle starts from it
+    S._unshuffledQueue = [...S.queue];
     _shuffleRemaining();
   } else {
-    // leaving chaos: reset chaos state (queue gets rebuilt below, or by _chaosLeave if there is no snapshot)
+    // unshuffle: the queue goes back to the full context in its original order. the current song stays what it
+    // is, if the context somehow has no row for it, it gets put on top instead of swapping it for another song
+    const ctx = [..._qCtx()];
     if (S._chaosOn) _chaosLeave();
-    // unshuffle: restore initial source order from the snapshot taken in buildQueue
-    // filter out songs no longer in the library (deleted), but don't restrict to current
-    // flow-pruned queue - flow deletions only apply during shuffle playback
-    if (S._unshuffledQueue.length) {
-      const inLib = new Set(S.library.map(s => s.id));
-      const seen = new Set();
-      const ordered = S._unshuffledQueue.filter(s => {
-        if (!inLib.has(s.id) || seen.has(s.id)) return false;
-        seen.add(s.id);
-        return true;
-      });
-      S.queue = ordered;
-      S.qi = curId ? Math.max(0, ordered.findIndex(s => s.id === curId)) : 0;
-      S.cur = S.queue[S.qi] || null;
-    }
+    const inLib = new Set(S.library.map(s => s.id));
+    const seen = new Set();
+    const ordered = ctx.filter(s => {
+      if (!inLib.has(s.id) || seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
+    let qi = curId ? ordered.findIndex(s => s.id === curId) : -1;
+    if (qi < 0 && S.cur) { ordered.unshift(S.cur); qi = 0; }
+    S.queue = ordered;
+    S.qi = Math.max(0, qi);
+    S._qActiveFrom = 0;
+    S._wrapPlan = null;
+    S._unshuffledQueue = [...ordered];
   }
   updateHighlights();
   engine._stopNxt();
@@ -22769,7 +22793,16 @@ function _removeQueueMany(idxs) {
   const step = (ghosts.find(Boolean) || {}).step;
   const ghosted = new Set(idxs.filter((k, j) => ghosts[j]));
   const below = idxs.filter(k => k < S.qi).length;
+  const _af0 = S._qActiveFrom || 0;
+  const _rmActive = idxs.filter(k => k >= _af0).map(k => S.queue[k].id);
   for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
+  S._qActiveFrom = _af0 - idxs.filter(k => k < _af0).length;
+  if (_rmActive.length && !(S.shuffle && S.shuffleMode === 'chaos')) {
+    // a removed row also leaves the shuffle context, unless the song still has another active row
+    const _still = new Set(S.queue.slice(S._qActiveFrom).map(s => s.id));
+    const _gone = new Set(_rmActive.filter(id => !_still.has(id)));
+    if (_gone.size) S._unshuffledQueue = _qCtx().filter(s => !_gone.has(s.id));
+  }
   // when the playing row is gone this is the first survivor after it (== queue.length if there is none)
   S.qi = S.qi - below;
   if (S.queueOpen) {
@@ -25385,7 +25418,7 @@ function _makeQueueRow(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -25602,7 +25635,10 @@ function _qPlayNext(songs) {
     if (S.queueOpen) renderQueueSidebar();
     return;
   }
-  S.queue.splice(S.qi + 1, 0, ...songs);
+  _qCtxAdd(songs, true);
+  const _at = S.qi + 1;
+  if (_at < (S._qActiveFrom || 0)) S._qActiveFrom += songs.length;
+  S.queue.splice(_at, 0, ...songs);
   _queueAdded(S.qi + 1, songs.length);
 }
 function _qAddToQueue(songs) {
@@ -25611,11 +25647,13 @@ function _qAddToQueue(songs) {
     // chaos: add to the pool it randomizes from (songs already in the pool are skipped)
     const _inPool = new Set(S._chaosContext.map(s => s.id));
     const _fresh = songs.filter(s => !_inPool.has(s.id));
+    _qCtxAdd(_fresh);
     S._chaosContext.push(..._fresh);
     if (S._chaosStash) S._chaosStash.queue.push(..._fresh);
     if (S.queueOpen) renderQueueSidebar();
     return;
   }
+  _qCtxAdd(songs);
   const _ai = S.queue.length;
   S.queue.push(...songs);
   _queueAdded(_ai, songs.length);
@@ -25779,7 +25817,7 @@ function renderQueueSidebar() {
   }
 
   // same songs in the same order: only touch the rows whose playing state changed, no rebuild
-  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
+  const _sig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
   if (_qSig === _sig && S.queue.length && (_qvlist || inner.querySelector('.song-list'))) {
     if (_qvlist) _qvlist.songs = S.queue;
     if (_qLastQi !== S.qi) _queueRefreshRow(_qLastQi);
@@ -25841,16 +25879,15 @@ function renderQueueSidebar() {
     isSelected: id => !!S.qSelectMode && S.qSelected.has(id),
     onCommit: async (newIds) => {
       const idMap = new Map(S.queue.map(s => [s.id, s]));
-      const curId = S.cur?.id;
       S.queue = newIds.map(id => idMap.get(id)).filter(Boolean);
-      S.qi = curId ? Math.max(0, S.queue.findIndex(s => s.id === curId)) : 0;
+      S.qi = S.cur ? Math.max(0, _qLocateCur(S.queue, S.cur, S.qi)) : 0;
       // re-index data-qi on rows
       _qListEl.querySelectorAll('.song-row').forEach((r, i) => {
         r.dataset.qi = i;
         const sn = r.querySelector('.snum-num');
         if (sn && !r.classList.contains('playing')) sn.textContent = i + 1;
       });
-      _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',');
+      _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
       _qLastQi = S.qi;
     }
   });
@@ -26685,6 +26722,8 @@ function _sessionBody(position) {
     chaos: isChaos ? [...(S._chaosPlayed || [])] : undefined,
     chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
     chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
+    ctx: (S.shuffle && !isChaos) ? (S._unshuffledQueue || []).map(s => s.id) : undefined,
+    afrom: isChaos ? 0 : (S._qActiveFrom || 0),
   };
 }
 function saveSession() {
@@ -32479,6 +32518,8 @@ async function rmFromPl(pid, sid) {
     const qi = S.queue.findIndex(s => s.id === sid);
     if (qi !== -1) {
       S.queue.splice(qi, 1);
+      if (qi < (S._qActiveFrom || 0)) S._qActiveFrom--;
+      S._unshuffledQueue = S._unshuffledQueue.filter(s => s.id !== sid);
       if (qi < S.qi) S.qi--;
       else if (qi === S.qi) {
         // current song removed - stop or advance
@@ -33271,10 +33312,10 @@ function initVlistReorder(vl) {
       }
       if (arr) {
         const _curItem = S.queue[S.qi];
-        S.qi = Math.max(0, arr.indexOf(_curItem));
+        S.qi = Math.max(0, _qLocateCur(arr, _curItem, S.qi));
         S.queue = arr;
         vl.songs = arr;
-        _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',');
+        _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
         _qLastQi = S.qi;
         changed = true;
         _queueNextChanged();
@@ -35310,17 +35351,22 @@ async function loadData() {
   const oldCurId = S.cur?.id;
   // remap to the fresh library objects so edits (title/artist/cover etc) reach queue, cur and next up
   const _libById = new Map(S.library.map(s => [s.id, s]));
-  S.queue = S.queue.filter(s => validIds.has(s.id)).map(s => _libById.get(s.id));
+  const _oldQi = S.qi, _oldAf = S._qActiveFrom || 0;
+  let _keptBeforeQi = 0, _keptBeforeAf = 0, _curKept = false;
+  S.queue = S.queue.filter((s, n) => {
+    const ok = validIds.has(s.id);
+    if (ok && n < _oldQi) _keptBeforeQi++;
+    if (ok && n < _oldAf) _keptBeforeAf++;
+    if (ok && n === _oldQi) _curKept = true;
+    return ok;
+  }).map(s => _libById.get(s.id));
+  S._qActiveFrom = _keptBeforeAf;
+  S._unshuffledQueue = S._unshuffledQueue.filter(s => validIds.has(s.id)).map(s => _libById.get(s.id));
   if (S.cur && _libById.has(S.cur.id)) S.cur = _libById.get(S.cur.id);
   if (S._continueFrom && _libById.has(S._continueFrom.startId)) S._continueFrom.start = _libById.get(S._continueFrom.startId);
   if (S._chaosNext && _libById.has(S._chaosNext.id)) S._chaosNext = _libById.get(S._chaosNext.id);
   if (Array.isArray(S._chaosHistory)) S._chaosHistory = S._chaosHistory.filter(s => _libById.has(s.id)).map(s => _libById.get(s.id));
-  if (oldCurId) {
-    const newQi = S.queue.findIndex(s => s.id === oldCurId);
-    S.qi = newQi !== -1 ? newQi : Math.max(0, Math.min(S.qi, S.queue.length - 1));
-  } else {
-    if (S.qi >= S.queue.length) S.qi = Math.max(0, S.queue.length - 1);
-  }
+  S.qi = _curKept ? _keptBeforeQi : Math.max(0, Math.min(_keptBeforeQi, S.queue.length - 1));
   const cfg = await api('GET', '/api/settings');
   const _prevCfg = CFG; // compare against this so unchanged settings arent reapplied
   // api() returns a truthy {error:...} object on network/HTTP failure - guard
@@ -38038,6 +38084,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
           S.queue = restoredQueue;
           S.qi = sess.qi || 0;
+          S._qActiveFrom = Math.max(0, Math.min(sess.afrom || 0, S.queue.length));
         }
       } else {
         S.queue = [song];
@@ -38046,6 +38093,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       S.cur = song;
       updatePlayerUI(song);
       updateHighlights();
+      const _libMap = new Map(S.library.map(s => [s.id, s]));
+      S._unshuffledQueue = (sess.ctx || []).map(id => _libMap.get(id)).filter(Boolean);
       S._restoredDuration = sess.duration || song.duration || 0;
       S._restoredPosition = sess.position || 0;
       engine._restoredPosition = S._restoredPosition;
