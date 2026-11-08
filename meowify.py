@@ -6588,6 +6588,11 @@ def api_stats():
 
     # ── artist aggregation: single pass over lib + ghost ─────────────────
     artist_stats = {}
+    _lib_art_canon = {}
+    for _r in lib_songs:
+        for _a in _split_artists(_r[2] or ''):
+            if _a:
+                _lib_art_canon.setdefault(_canonical(_a), _disp_artist(_a) if CFG.get('artist_use_main_name', True) else _a)
 
     def _add_artist(key_name, display_name, play_count, duration, last_played,
                     cover_path=None, cover_song_id=None):
@@ -6628,6 +6633,7 @@ def api_stats():
         for a in _split_artists(gs['artist']):
             if a:
                 _dn = _disp_artist(a) if CFG.get('artist_use_main_name', True) else a
+                _dn = _lib_art_canon.get(_canonical(a), _dn)
                 _add_artist(_dn, _dn, gs['play_count'], None, gs['last_played'])
 
     top_artists_plays = sorted(artist_stats.values(), key=lambda x: -x['play_count'])[:30]
