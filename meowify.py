@@ -20366,6 +20366,32 @@ function _qCtxAdd(songs, afterCur) {
   if (k >= 0) ctx.splice(k + 1, 0, ...songs);
   else ctx.push(...songs);
 }
+// applies a drag reorder by row position (a song can sit in the queue twice, so ids are not enough).
+// group = old indexes of the dragged rows (ascending), slot = where the block lands among the rows that stay.
+// the greyed marker follows the rows: dropped into the greyed area = greyed, dropped into the active area = active,
+// every other row keeps its look
+function _qReorderApply(group, slot) {
+  const old = S.queue;
+  const gset = new Set(group);
+  const rest = old.filter((x, k) => !gset.has(k));
+  const arr = rest.slice(0, slot).concat(group.map(k => old[k]), rest.slice(slot));
+  const from = S._qActiveFrom || 0;
+  let restGrey = 0;
+  for (let k = 0; k < from && k < old.length; k++) if (!gset.has(k)) restGrey++;
+  const gGrey = group.filter(k => k < from).length;
+  const nf = slot < restGrey ? restGrey + group.length : (slot > restGrey ? restGrey : restGrey + gGrey);
+  let ni;
+  if (gset.has(S.qi)) ni = slot + group.indexOf(S.qi);
+  else {
+    const v = S.qi - group.filter(k => k < S.qi).length;
+    ni = v < slot ? v : v + group.length;
+  }
+  S.queue = arr;
+  S.qi = Math.max(0, ni);
+  S._qActiveFrom = nf;
+  S._wrapPlan = null;
+  if (!S.shuffle) S._unshuffledQueue = [...arr];
+}
 // a song can sit in the queue twice (greyed copy + active copy), so the playing row is found by distance
 function _qLocateCur(arr, curSong, oldQi) {
   if (!curSong) return oldQi;
@@ -20555,6 +20581,7 @@ const CHAOS_ARTIST_WINDOW = 4;
 function _chaosReset() {
   S._chaosOn = false; S._chaosStash = null;
   S._chaosContext = []; S._chaosPlayed = new Set(); S._chaosHistory = []; S._chaosNext = null;
+  S._chaosForced = []; S._chaosNextForced = false;
   _chaosRecentArtists.length = 0;
 }
 
@@ -20568,6 +20595,9 @@ function _chaosLeave() {
 }
 
 // chaos knobs: plain chaos keeps the old behavior, advanced (chaos picking) can tune them
+function _chaosPlayNextOn() {
+  return S.shuffleChoice === 'advanced' ? !!_advOpts().chaosPlayNext : !!CFG.chaos_play_next;
+}
 function _chaosOpts() {
   const a = S.shuffleChoice === 'advanced' ? _advOpts() : null;
   return a
@@ -20579,6 +20609,12 @@ function _chaosPickNext() {
   const ctx = S._chaosContext;
   if (!ctx.length) return null;
   const co = _chaosOpts();
+  // forced "play next" songs go first, in order, before any random pick
+  S._chaosNextForced = false;
+  if (S._chaosForced && S._chaosForced.length) {
+    S._chaosNextForced = true;
+    return S._chaosForced.shift();
+  }
 
   // check stop condition: repeat off + every song played at least once
   if (S.repeat === 'none' && co.stop) {
@@ -21313,7 +21349,7 @@ function seekClick(e) {
   _commitSeekFrac(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),dur);
 }
 
-function _shuffleRemaining() {
+function _shuffleRemaining(partial) {
   // (re)shuffle the whole context around the current song, respecting the mode. everything that sat before the
   // current song stays on top as the greyed "previously played" rows, the pool for the rest is the full context
   if (!S.queue.length) return;
@@ -21332,8 +21368,23 @@ function _shuffleRemaining() {
       S.qi = 0;
       S._qActiveFrom = 0;
     }
-    S._chaosNext = _chaosPickNext();
+    if (!S._chaosNextForced) S._chaosNext = _chaosPickNext();
     if (S.queueOpen) renderQueueSidebar();
+    return;
+  }
+  if (partial) {
+    // only the rows after the current song get reshuffled, everything before stays exactly as it is
+    // (no greying, nothing pulled into the pool). if the current song sits on a greyed row only the rows
+    // after the greyed area are touched
+    const _af = S._qActiveFrom || 0;
+    const _curIn = S.qi >= _af;
+    const _inLib = new Set(S.library.map(s => s.id));
+    const _tail = S.queue.slice(_curIn ? S.qi + 1 : _af).filter(s => _inLib.has(s.id));
+    const _b = _shuffleBuild(_tail, _curIn ? (S.queue[S.qi] || S.cur) : null);
+    const _head = S.queue.slice(0, _curIn ? S.qi : _af);
+    S.queue = [..._head, ..._b.queue];
+    if (_curIn) S.qi = _head.length + _b.qi;
+    S._wrapPlan = null;
     return;
   }
   const cur = S.queue[S.qi] || S.cur;
@@ -21360,7 +21411,7 @@ function setShuffleMode(mode) {
 function setSmartShuffle(on) {
   S.smartShuffle = on;
   saveSetting('smart_shuffle', on);
-  if (S.shuffle) { _shuffleRemaining(); _queueNextChanged(); if (S.queueOpen) renderQueueSidebar(); }
+  if (S.shuffle) { _shuffleRemaining(true); _queueNextChanged(); if (S.queueOpen) renderQueueSidebar(); }
 }
 
 function _updateShuffleBtnTitle() {
@@ -21383,6 +21434,7 @@ const _ADV_DEFAULTS = {
   chaosArtistWindow: 4,  // chaos picking + smart: how many recent artists get pushed down
   chaosTopShare: 0.5,    // chaos picking + smart: roll among this share of the best scored songs
   chaosStop: true,       // chaos picking + repeat off: end once every song played at least once
+  chaosPlayNext: false,  // chaos picking: play next also works with several songs (they play in order, then random continues)
 };
 function _advOpts() {
   return Object.assign({}, _ADV_DEFAULTS, (CFG && CFG.adv_shuffle) || {});
@@ -21393,12 +21445,15 @@ function _effShuffleMode() {
   return (c === 'advanced' && _advOpts().pick === 'chaos') ? 'chaos' : c;
 }
 // settings changed while advanced is the active mode: rebuild the shuffle with them
-function _advApply() {
+// full = true: whole context gets reshuffled around the current song (played rows go greyed). otherwise only the
+// rows after the current song are reshuffled. an engine switch (queue <-> chaos) is always a full one
+function _advApply(full) {
   const m = _effShuffleMode();
+  const _was = S.shuffleMode;
   S.shuffleMode = m;
   _updateShuffleBtnTitle();
   if (S.shuffle && S._chaosOn && m !== 'chaos') _chaosLeave();
-  if (S.shuffle) _shuffleRemaining();
+  if (S.shuffle) _shuffleRemaining(!full && m === _was);
   if (S.queueOpen) renderQueueSidebar();
   if (S.shuffle) _queueNextChanged();
 }
@@ -21412,13 +21467,16 @@ function _advSet(key, val) {
     o[key] = val;
     saveSetting('adv_shuffle', o);
   }
-  if (S.shuffleChoice === 'advanced') _advApply();
+  if (S.shuffleChoice === 'advanced') {
+    if (key === 'lapReshuffle') { S._wrapPlan = null; _queueNextChanged(); }
+    else _advApply(key === 'pick' || key === 'albums');
+  }
   _advRefresh();
 }
 function _advReset() {
   saveSetting('adv_shuffle', {});
   saveSetting('smart_opts', {});
-  if (S.shuffleChoice === 'advanced') _advApply();
+  if (S.shuffleChoice === 'advanced') _advApply(true);
   _advRefresh();
 }
 function _advFmt(kind, v) {
@@ -21457,11 +21515,12 @@ function _advBodyHtml() {
     h += head('chaos');
     h += row('no repeat window', 'the last n songs sit out of the roll, off = pure chaos', slider('chaosNoRepeat', 0, 50, 1, a.chaosNoRepeat, 'off0'));
     h += row('stop after all played', 'repeat off: end once every song played at least once, off = chaos never ends', sw("_advSet('chaosStop',this.checked)", a.chaosStop));
+    h += row('play next for several songs', 'off: play next is hidden for a multi selection. on: the songs play in order next, then random picking continues', sw("_advSet('chaosPlayNext',this.checked)", a.chaosPlayNext));
     h += row('artist window', 'smart shuffle: how many recent artists get pushed down', slider('chaosArtistWindow', 0, 8, 1, a.chaosArtistWindow, 'off0'), !smartOn);
     h += row('roll among best', 'smart shuffle: roll among this share of the best scored songs', slider('chaosTopShare', 0.1, 1, 0.05, a.chaosTopShare, 'pct'), !smartOn);
   }
   h += head('smart shuffle');
-  h += row('smart shuffle', 'spread same-artist songs apart instead of pure random', sw('setSmartShuffle(this.checked);_advRefresh()', smartOn));
+  h += row('smart shuffle', 'spread same-artist songs apart instead of pure random', sw('_advSmartToggle(this.checked)', smartOn));
   const dimSpread = !smartOn || !queue;
   h += row('looseness', '0% = songs sit evenly spaced, 100% = anywhere inside their slot', slider('smart.jitter', 0, 1, 0.05, so.jitter, 'pct'), dimSpread);
   h += row('min gap', 'songs between two songs of the same artist, best effort', slider('smart.minGap', 0, 5, 1, so.minGap, 'off0'), dimSpread);
@@ -21477,6 +21536,11 @@ function _advRefresh() {
   b.innerHTML = '<div data-adv="1">' + _advBodyHtml() + '</div>';
   b.scrollTop = st;
   if (window.MU) MU.init(b);
+}
+function _advSmartToggle(on) {
+  setSmartShuffle(on);
+  _advRefresh();
+  if (document.querySelector('.set-panel') && typeof renderSettings === 'function') renderSettings();
 }
 function showAdvancedShuffle() {
   showModal('advanced shuffle', '<div data-adv="1">' + _advBodyHtml() + '</div>',
@@ -23374,12 +23438,12 @@ function _removeQueueMany(idxs) {
   const ghosted = new Set(idxs.filter((k, j) => ghosts[j]));
   const below = idxs.filter(k => k < S.qi).length;
   const _af0 = S._qActiveFrom || 0;
-  const _rmActive = idxs.filter(k => k >= _af0).map(k => S.queue[k].id);
+  const _rmActive = idxs.filter(k => k >= _af0 || S.queue[k]._qa).map(k => S.queue[k].id);
   for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
   S._qActiveFrom = _af0 - idxs.filter(k => k < _af0).length;
   if (_rmActive.length && !(S.shuffle && S.shuffleMode === 'chaos')) {
     // a removed row also leaves the shuffle context, unless the song still has another active row
-    const _still = new Set(S.queue.slice(S._qActiveFrom).map(s => s.id));
+    const _still = new Set(S.queue.filter((s, k) => k >= S._qActiveFrom || s._qa).map(s => s.id));
     const _gone = new Set(_rmActive.filter(id => !_still.has(id)));
     if (_gone.size) S._unshuffledQueue = _qCtx().filter(s => !_gone.has(s.id));
   }
@@ -26598,7 +26662,7 @@ function _makeQueueRow(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) && !s._qa ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -26809,16 +26873,26 @@ function _queueNextChanged() {
 function _qPlayNext(songs) {
   if (!songs.length) return;
   if (S.shuffle && S.shuffleMode === 'chaos') {
-    // chaos: the song replaces the pre-picked random next (first one if several are selected)
+    // chaos: the first song replaces the pre-picked random next. with chaos play next enabled the rest are
+    // forced right after it (in order, before random picking continues), otherwise only the first one counts
+    const _keep = (S._chaosNextForced && S._chaosNext) ? [S._chaosNext] : [];
+    if (_chaosPlayNextOn()) S._chaosForced = [...songs.slice(1), ..._keep, ...(S._chaosForced || [])];
     S._chaosNext = songs[0];
+    S._chaosNextForced = true;
     _queueNextChanged();
     if (S.queueOpen) renderQueueSidebar();
     return;
   }
   _qCtxAdd(songs, true);
   const _at = S.qi + 1;
-  if (_at < (S._qActiveFrom || 0)) S._qActiveFrom += songs.length;
-  S.queue.splice(_at, 0, ...songs);
+  if (_at < (S._qActiveFrom || 0)) {
+    // the current row is in the greyed area: the new rows go right after it but are flagged active, so they
+    // are not greyed (the originals are in the shuffle context for the next reshuffle)
+    S._qActiveFrom += songs.length;
+    S.queue.splice(_at, 0, ...songs.map(s => Object.assign({}, s, { _qa: true })));
+  } else {
+    S.queue.splice(_at, 0, ...songs);
+  }
   _queueAdded(S.qi + 1, songs.length);
 }
 function _qAddToQueue(songs) {
@@ -27058,17 +27132,25 @@ function renderQueueSidebar() {
     scrollEl: inner,
     isSelected: id => !!S.qSelectMode && S.qSelected.has(id),
     onCommit: async (newIds) => {
-      const idMap = new Map(S.queue.map(s => [s.id, s]));
-      S.queue = newIds.map(id => idMap.get(id)).filter(Boolean);
-      S.qi = S.cur ? Math.max(0, _qLocateCur(S.queue, S.cur, S.qi)) : 0;
-      // re-index data-qi on rows
+      const _rm = window._lastReorderMeta;
+      window._lastReorderMeta = null;
+      if (_rm && _rm.group.every(k => k < S.queue.length)) {
+        _qReorderApply(_rm.group, _rm.slot);
+      } else {
+        const idMap = new Map(S.queue.map(s => [s.id, s]));
+        S.queue = newIds.map(id => idMap.get(id)).filter(Boolean);
+        S.qi = S.cur ? Math.max(0, _qLocateCur(S.queue, S.cur, S.qi)) : 0;
+      }
       _qListEl.querySelectorAll('.song-row').forEach((r, i) => {
         r.dataset.qi = i;
         const sn = r.querySelector('.snum-num');
         if (sn && sn.textContent) sn.textContent = i + 1;
+        r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
+        r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
       });
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
       _qLastQi = S.qi;
+      _queueNextChanged();
     }
   });
 }
@@ -33683,7 +33765,7 @@ function songCtx(e, sid, pid, qctx) {
     items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><polygon points="2,4 13,12 2,20"></polygon><circle cx="17.5" cy="12" r="1.4"></circle><circle cx="21.5" cy="12" r="1.4"></circle></svg>', label:'play from here next', fn:()=> continueFromList(S.viewSongs, S.viewSongs.findIndex(s=>s.id===sid))});
     items.push({icon: ICON_ADD_QUEUE, label:'add to queue', fn:()=>{ _qAddToQueue([song]); }});
   } else {
-    items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ _qPlayNext(songs); }});
+    if (!(S.shuffle && S.shuffleMode === 'chaos') || _chaosPlayNextOn()) items.push({icon: ICON_PLAY_NEXT, label:`play next (${ids.length})`, fn:()=>{ _qPlayNext(songs); }});
     items.push({icon: ICON_ADD_QUEUE, label:`add to queue (${ids.length})`, fn:()=>{ _qAddToQueue(songs); }});
   }
   items.push({icon:'<svg width="16" height="14" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg>', label: multi ? `add to playlist (${ids.length})` : 'add to playlist', fn:()=> multi ? bulkAddToPl() : showAddToPl(sid)});
@@ -34272,6 +34354,7 @@ function initReorderDrag(listEl, opts) {
     if (!commit) rest.forEach(i => { rows[i].style.translate = ''; });
     const order = rest.slice(0, slot).concat(group, rest.slice(slot));
     const ids = order.map(i => rows[i].dataset.id);
+    window._lastReorderMeta = { group: group.slice(), slot };
     // final neighbours decide the inner corners: set them now so they morph during the landing, not after it
     if (!commit) rows.forEach(r => { if (r._n0 !== undefined) { const sn = r.querySelector('.snum-num'); if (sn) sn.textContent = r._n0; r._n0 = undefined; } });
     const fin = commit ? order : rows.map((_, i) => i);
@@ -34817,9 +34900,8 @@ function initVlistReorder(vl) {
         if (!arr.some((x, k) => x !== S.queue[k])) arr = null;
       }
       if (arr) {
-        const _curItem = S.queue[S.qi];
-        S.qi = Math.max(0, _qLocateCur(arr, _curItem, S.qi));
-        S.queue = arr;
+        _qReorderApply(group, slot);
+        arr = S.queue;
         vl.songs = arr;
         _qSig = arr.length + ':' + arr.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
         _qLastQi = S.qi;
@@ -36865,7 +36947,7 @@ async function loadData() {
     if (ok && n < _oldAf) _keptBeforeAf++;
     if (ok && n === _oldQi) _curKept = true;
     return ok;
-  }).map(s => _libById.get(s.id));
+  }).map(s => s._qa ? Object.assign({}, _libById.get(s.id), { _qa: true }) : _libById.get(s.id));
   S._qActiveFrom = _keptBeforeAf;
   S._unshuffledQueue = S._unshuffledQueue.filter(s => validIds.has(s.id)).map(s => _libById.get(s.id));
   if (S.cur && _libById.has(S.cur.id)) S.cur = _libById.get(S.cur.id);
@@ -38282,6 +38364,11 @@ function renderSettings() {
           `) + row('smart shuffle', 'spaces out same-artist songs for more variety', `
             <label class="switch" style="flex-shrink:0">
               <input type="checkbox" ${smart?'checked':''} onchange="setSmartShuffle(this.checked)" onclick="event.stopPropagation()">
+              <div class="switch-track"><div class="switch-thumb"></div></div>
+            </label>
+          `) + row('chaos: play next for several songs', 'chaos only. lets play next work with a multi selection, the songs play in order before random picking continues', `
+            <label class="switch" style="flex-shrink:0">
+              <input type="checkbox" ${CFG.chaos_play_next?'checked':''} onchange="saveSetting('chaos_play_next', this.checked)" onclick="event.stopPropagation()">
               <div class="switch-track"><div class="switch-thumb"></div></div>
             </label>
           `);
