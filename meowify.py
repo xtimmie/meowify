@@ -4056,7 +4056,8 @@ def _genius_view(data, opts):
     if not (opts or {}).get('skip_title'):
         if data.get('title'):
             out['title'] = clean_title(data['title'])
-        pa = ((data.get('primary_artist') or {}).get('name') or '').strip()
+        _pas = [(a.get('name') or '').strip() for a in (data.get('primary_artists') or [])]
+        pa = ', '.join(n for n in _pas if n) or ((data.get('primary_artist') or {}).get('name') or '').strip()
         if pa:
             out['artist'] = pa
     feat = ', '.join((a.get('name') or '').strip() for a in (data.get('featured_artists') or [])
