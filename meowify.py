@@ -20105,10 +20105,11 @@ const S = {
   view: 'library', activePid: null, activeAid: null, activeArtid: null,
   queue: [], qi: -1,
   isPlaying: false, shuffle: false, repeat: 'none',
-  // shuffleMode: 'random' | 'chaos' | 'flow' | 'intact'
+  // shuffleMode: 'random' | 'chaos' | 'flow' | 'intact' | 'advanced'
   // 'flow'  = continue-album mode (play songs that follow in the album)
   // 'intact' = dont-shuffle-albums mode (keep albums grouped as one block)
-  shuffleMode: 'random',
+  shuffleMode: 'random', // what the engine runs, advanced with chaos picking runs as 'chaos'
+  shuffleChoice: 'random', // what the user picked in the menu, advanced stays 'advanced' even when it runs as chaos
   smartShuffle: false,
   // chaos state
   _chaosPlayed: new Set(), // ids played in current chaos iteration
@@ -20163,7 +20164,7 @@ const _SMART_DEFAULTS = {
   phase: 'random',  // 'random' = each artist's slot grid gets a random offset, 'even' = all grids line up
   minGap: 1,        // min units between two units of the same artist, best effort
   lookahead: 6,     // how far ahead the min gap repair looks for a unit to swap in
-  artistKey: _smartShuffleArtistKey, // maps an artist string to its bucket
+  artistMode: 'primary', // 'primary' = a collab buckets with its first credited artist, 'full' = the whole artist string
 };
 function _smartOpts() {
   return Object.assign({}, _SMART_DEFAULTS, (CFG && CFG.smart_opts) || {});
@@ -20171,7 +20172,10 @@ function _smartOpts() {
 function _smartOrderUnits(units, opts) {
   const o = Object.assign(_smartOpts(), opts || {});
   if (units.length < 2) return [...units];
-  const keyOf = u => o.artistKey(u[0] && u[0].artist);
+  const bucket = o.artistKey || (o.artistMode === 'full'
+    ? (a => (a || '').toLowerCase().trim() || '__unknown__')
+    : _smartShuffleArtistKey);
+  const keyOf = u => bucket(u[0] && u[0].artist);
   const groups = new Map();
   for (const u of units) {
     const k = keyOf(u);
@@ -20216,7 +20220,7 @@ function _smartShuffle(songs, opts) {
 //   - pull following tracks (by track_num, stopping at first gap) to immediately after it
 //   - remove all preceding album tracks from the queue entirely
 //   - recurse into each pulled song so it also pulls its own tail
-function _applyFlowMode(queue, taIds = null) {
+function _applyFlowMode(queue, taIds = null, minTracks = 2, dropPreceding = true) {
   // build map of albumId -> all songs present in this queue, sorted by track_num
   // only albums with ≥2 songs get flow treatment
   // if taIds set, only apply flow to transition albums
@@ -20234,7 +20238,7 @@ function _applyFlowMode(queue, taIds = null) {
     songs.sort((a, b) => a.track_num - b.track_num);
     let run = [];
     const flush = () => {
-      if (run.length >= 2) for (const r of run) multiAlbums.set(r.id, run);
+      if (run.length >= minTracks) for (const r of run) multiAlbums.set(r.id, run);
       run = [];
     };
     for (const s of songs) {
@@ -20260,7 +20264,7 @@ function _applyFlowMode(queue, taIds = null) {
     // following: the rest of this run (consecutive track numbers after the current one)
     const following = [];
     for (const as of albumArr) {
-      if (as.track_num <= myTrack) continue;
+      if (as.track_num <= myTrack || processed.has(as.id)) continue;
       following.push(as);
     }
 
@@ -20269,7 +20273,7 @@ function _applyFlowMode(queue, taIds = null) {
     // deleting them would remove the currently-playing song from the queue)
     const precedingIds = new Set(
       albumArr
-        .filter(as => (as.track_num || 0) < myTrack && !processed.has(as.id))
+        .filter(as => dropPreceding && (as.track_num || 0) < myTrack && !processed.has(as.id))
         .map(as => as.id)
     );
 
@@ -20326,9 +20330,13 @@ function _shufflePlain(list) {
 // it ends up at queue[qi]: first in random and flow, inside its album block in intact. null = nothing pinned
 function _shuffleBuild(pool, cur) {
   const curId = cur ? cur.id : null;
-  if (S.shuffleMode === 'intact') {
+  // advanced brings its own album handling, the classic modes map onto the same three: split / intact / flow
+  const adv = S.shuffleChoice === 'advanced' ? _advOpts() : null;
+  const albums = adv ? adv.albums : (S.shuffleMode === 'intact' ? 'intact' : S.shuffleMode === 'flow' ? 'flow' : 'split');
+  const minTracks = adv ? adv.minTracks : 2;
+  if (albums === 'intact') {
     const list = (cur && !pool.some(s => s.id === curId)) ? [cur, ...pool] : pool;
-    const out = _applyBlockMode(list, S.smartShuffle, _taIdSet(), curId);
+    const out = _applyBlockMode(list, S.smartShuffle, _taIdSet(), curId, minTracks, adv ? adv.inner : 'track');
     return { queue: out, qi: curId ? Math.max(0, out.findIndex(s => s.id === curId)) : 0 };
   }
   let rest = pool;
@@ -20338,7 +20346,7 @@ function _shuffleBuild(pool, cur) {
   }
   const shuffled = _shufflePlain(rest);
   const tentative = cur ? [cur, ...shuffled] : shuffled;
-  if (S.shuffleMode === 'flow') return { queue: _applyFlowMode(tentative, _taIdSet()), qi: 0 };
+  if (albums === 'flow') return { queue: _applyFlowMode(tentative, _taIdSet(), minTracks, adv ? adv.flowDrop : true), qi: 0 };
   return { queue: tentative, qi: 0 };
 }
 
@@ -20373,6 +20381,7 @@ function _qLocateCur(arr, curSong, oldQi) {
 // the real wrap agree
 function _wrapPlanGet() {
   if (S.repeat !== 'all' || !S.shuffle || S.shuffleMode === 'chaos' || !S.queue.length) return null;
+  if (S.shuffleChoice === 'advanced' && !_advOpts().lapReshuffle) return null;
   const from = S._qActiveFrom || 0;
   const sig = S.queue.length + '|' + from + '|' + S.shuffleMode + '|' + S.smartShuffle + '|' + _qCtx().length;
   if (S._wrapPlan && S._wrapPlan.sig === sig) return S._wrapPlan;
@@ -20381,7 +20390,8 @@ function _wrapPlanGet() {
   if (!pool.length) pool = S.queue.slice(from);
   const list = _shuffleBuild(pool, null).queue;
   const lastId = S.queue[S.queue.length - 1].id;
-  if (S.shuffleMode === 'random' && list.length > 1 && list[0].id === lastId) [list[0], list[1]] = [list[1], list[0]];
+  const _split = S.shuffleMode === 'random' || (S.shuffleChoice === 'advanced' && _advOpts().albums === 'split');
+  if (_split && list.length > 1 && list[0].id === lastId) [list[0], list[1]] = [list[1], list[0]];
   S._wrapPlan = { sig, list };
   return S._wrapPlan;
 }
@@ -20398,7 +20408,7 @@ function _applyWrap() {
 }
 
 // ── apply block mode: group albums as contiguous blocks ─────────────────────
-function _applyBlockMode(songs, smart = false, taIds = null, pinId = null) {
+function _applyBlockMode(songs, smart = false, taIds = null, pinId = null, minTracks = 2, inner = 'track') {
   // group songs by album_id (only albums with ≥2 songs present)
   // if taIds set, only group transition albums - others become singles
   const albumGroups = new Map(); // albumId -> [songs in track order]
@@ -20414,14 +20424,20 @@ function _applyBlockMode(songs, smart = false, taIds = null, pinId = null) {
   }
   // demote albums with only 1 song to singles
   for (const [aid, group] of albumGroups) {
-    if (group.length < 2) {
+    if (group.length < minTracks) {
       singles.push(...group);
       albumGroups.delete(aid);
     }
   }
-  // sort each album group by track_num (never randomize within album)
+  // sort each album group by track_num, inner = 'shuffle' then shuffles the songs inside the block
   for (const group of albumGroups.values()) {
     group.sort((a, b) => (a.track_num || 0) - (b.track_num || 0));
+    if (inner === 'shuffle') {
+      for (let k = group.length - 1; k > 0; k--) {
+        const m = Math.floor(Math.random() * (k + 1));
+        [group[k], group[m]] = [group[m], group[k]];
+      }
+    }
   }
 
   // build shuffle units: one array per album block, one per single
@@ -20433,7 +20449,13 @@ function _applyBlockMode(songs, smart = false, taIds = null, pinId = null) {
   let pinned = null;
   if (pinId != null) {
     const pi = allUnits.findIndex(u => u.some(s => s.id === pinId));
-    if (pi >= 0) pinned = allUnits.splice(pi, 1)[0];
+    if (pi >= 0) {
+      pinned = allUnits.splice(pi, 1)[0];
+      if (inner === 'shuffle') {
+        const k = pinned.findIndex(s => s.id === pinId);
+        if (k > 0) pinned.unshift(...pinned.splice(k, 1));
+      }
+    }
   }
 
   // shuffle units - smart mode spreads same-artist units out, plain mode is random
@@ -20544,12 +20566,21 @@ function _chaosLeave() {
   _chaosReset();
 }
 
+// chaos knobs: plain chaos keeps the old behavior, advanced (chaos picking) can tune them
+function _chaosOpts() {
+  const a = S.shuffleChoice === 'advanced' ? _advOpts() : null;
+  return a
+    ? { smart: !!S.smartShuffle, noRepeat: a.chaosNoRepeat, artistWindow: a.chaosArtistWindow, topShare: a.chaosTopShare, stop: a.chaosStop }
+    : { smart: !!S.smartShuffle, noRepeat: 0, artistWindow: CHAOS_ARTIST_WINDOW, topShare: 0.5, stop: true };
+}
+
 function _chaosPickNext() {
   const ctx = S._chaosContext;
   if (!ctx.length) return null;
+  const co = _chaosOpts();
 
   // check stop condition: repeat off + every song played at least once
-  if (S.repeat === 'none') {
+  if (S.repeat === 'none' && co.stop) {
     const _libIds = new Set(S.library.map(s => s.id));
     const uniqueIds = new Set(ctx.map(s => s.id).filter(id => _libIds.has(id)));
     const allPlayed = uniqueIds.size > 0 && [...uniqueIds].every(id => S._chaosPlayed.has(id));
@@ -20559,18 +20590,30 @@ function _chaosPickNext() {
   // repeat:off only controls when to stop (after all played at least once)
   let pool = ctx;
 
-  if (S.smartShuffle && pool.length > 1) {
+  if (co.noRepeat > 0) {
+    // the last n songs (history, the row that is still marked as playing, the one that is about to start) sit out
+    const seq = [];
+    const push = id => { if (id != null && seq[seq.length - 1] !== id) seq.push(id); };
+    S._chaosHistory.forEach(s => push(s.id));
+    push(S.queue[S.qi] && S.queue[S.qi].id);
+    push(S._chaosNext && S._chaosNext.id);
+    const recent = new Set(seq.slice(-co.noRepeat));
+    const fresh = pool.filter(s => !recent.has(s.id));
+    if (fresh.length) pool = fresh;
+  }
+
+  if (co.smart && pool.length > 1) {
     // build candidate list weighted away from recently played artists
     // give each song a score: penalize if artist was recently heard
     const scored = pool.map(s => {
       const artist = (s.artist || '').toLowerCase().trim() || '__unknown__';
       const recency = _chaosRecentArtists.lastIndexOf(artist);
-      const penalty = recency === -1 ? 0 : Math.max(0, CHAOS_ARTIST_WINDOW - (_chaosRecentArtists.length - 1 - recency));
+      const penalty = recency === -1 ? 0 : Math.max(0, co.artistWindow - (_chaosRecentArtists.length - 1 - recency));
       return { s, score: Math.random() - penalty * 0.4 };
     });
     scored.sort((a, b) => b.score - a.score);
-    // pick from top half to keep some randomness
-    const topN = Math.max(1, Math.ceil(scored.length / 2));
+    // pick from the top share to keep some randomness
+    const topN = Math.max(1, Math.ceil(scored.length * co.topShare));
     return scored[Math.floor(Math.random() * topN)].s;
   }
 
@@ -21298,7 +21341,8 @@ function _shuffleRemaining() {
 }
 
 function setShuffleMode(mode) {
-  S.shuffleMode = mode;
+  S.shuffleChoice = mode;
+  S.shuffleMode = _effShuffleMode();
   saveSetting('shuffle_mode', mode);
   _updateShuffleBtnTitle();
   if (S.shuffle && S._chaosOn && mode !== 'chaos') _chaosLeave();
@@ -21314,23 +21358,139 @@ function setSmartShuffle(on) {
 }
 
 function _updateShuffleBtnTitle() {
-  const TITLES = { random: 'shuffle', chaos: 'shuffle: chaos', flow: 'shuffle: flow', intact: 'shuffle: intact' };
-  const t = (S.shuffle ? '' : '') + (TITLES[S.shuffleMode] || 'shuffle');
+  const TITLES = { random: 'shuffle', chaos: 'shuffle: chaos', flow: 'shuffle: flow', intact: 'shuffle: intact', advanced: 'shuffle: advanced' };
+  const t = (S.shuffle ? '' : '') + (TITLES[S.shuffleChoice] || 'shuffle');
   document.getElementById('bshuf')?.setAttribute('title', t);
   document.getElementById('mob-np-bshuf')?.setAttribute('title', t);
 }
 
+// ── advanced shuffle: the knobs of the other modes in one place ────────────
+// CFG.adv_shuffle holds these, the spacing knobs of smart shuffle live in CFG.smart_opts (see _SMART_DEFAULTS)
+const _ADV_DEFAULTS = {
+  pick: 'queue',         // 'queue' = whole queue shuffled up front (every song once per lap), 'chaos' = next song rolled every time
+  lapReshuffle: true,    // queue picking + repeat all: shuffle again when the queue wraps, off = same order again
+  albums: 'split',       // queue picking: 'split' = song by song, 'intact' = albums stay blocks, 'flow' = a landed album continues in track order
+  minTracks: 2,          // intact/flow: an album needs at least this many songs in the queue to count as a block
+  inner: 'track',        // intact: order inside a block, 'track' or 'shuffle'
+  flowDrop: true,        // flow: tracks before the landing track leave the queue, off keeps them in the shuffle
+  chaosNoRepeat: 0,      // chaos picking: the last n songs sit out, 0 = pure chaos
+  chaosArtistWindow: 4,  // chaos picking + smart: how many recent artists get pushed down
+  chaosTopShare: 0.5,    // chaos picking + smart: roll among this share of the best scored songs
+  chaosStop: true,       // chaos picking + repeat off: end once every song played at least once
+};
+function _advOpts() {
+  return Object.assign({}, _ADV_DEFAULTS, (CFG && CFG.adv_shuffle) || {});
+}
+// what the engine actually runs: advanced with chaos picking is chaos, so every chaos check keeps working
+function _effShuffleMode() {
+  const c = S.shuffleChoice || 'random';
+  return (c === 'advanced' && _advOpts().pick === 'chaos') ? 'chaos' : c;
+}
+// settings changed while advanced is the active mode: rebuild the shuffle with them
+function _advApply() {
+  const m = _effShuffleMode();
+  S.shuffleMode = m;
+  _updateShuffleBtnTitle();
+  if (S.shuffle && S._chaosOn && m !== 'chaos') _chaosLeave();
+  if (S.shuffle) _shuffleRemaining();
+  if (S.queueOpen) renderQueueSidebar();
+  if (S.shuffle) _queueNextChanged();
+}
+function _advSet(key, val) {
+  if (key.startsWith('smart.')) {
+    const o = Object.assign({}, CFG.smart_opts || {});
+    o[key.slice(6)] = val;
+    saveSetting('smart_opts', o);
+  } else {
+    const o = Object.assign({}, CFG.adv_shuffle || {});
+    o[key] = val;
+    saveSetting('adv_shuffle', o);
+  }
+  if (S.shuffleChoice === 'advanced') _advApply();
+  _advRefresh();
+}
+function _advReset() {
+  saveSetting('adv_shuffle', {});
+  saveSetting('smart_opts', {});
+  if (S.shuffleChoice === 'advanced') _advApply();
+  _advRefresh();
+}
+function _advFmt(kind, v) {
+  if (kind === 'pct') return Math.round(v * 100) + '%';
+  if (kind === 'off0') return v <= 0 ? 'off' : String(v);
+  return String(v);
+}
+function _advBodyHtml() {
+  const a = _advOpts();
+  const so = _smartOpts();
+  const smartOn = !!S.smartShuffle;
+  const queue = a.pick === 'queue';
+  const lbl = 'font:var(--type-label-medium);font-variation-settings:var(--fv-label)';
+  const sub = 'font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)';
+  const head = t => `<div style="font:var(--type-title-small);font-variation-settings:var(--fv-title);color:var(--color-primary);margin:16px 0 2px">${t}</div>`;
+  const row = (t, s, ctl, dim) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;${dim ? 'opacity:0.45;pointer-events:none;' : ''}">
+    <div style="min-width:0"><div style="${lbl}">${t}</div>${s ? `<div style="${sub}">${s}</div>` : ''}</div>
+    <div style="flex-shrink:0">${ctl}</div></div>`;
+  const chips = (key, opts, cur) => '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">' + opts.map(([v, l]) => {
+    const on = cur === v;
+    return `<button style="padding:5px 12px;font:var(--type-label-medium);font-variation-settings:var(--fv-label);border-radius:var(--radius-sm);border:1.5px solid ${on ? 'var(--color-primary)' : 'var(--color-outline-variant)'};background:${on ? 'var(--color-primary)' : 'transparent'};color:${on ? 'var(--color-on-primary)' : 'var(--color-on-surface-variant)'};cursor:pointer" onclick="_advSet('${key}','${v}')">${l}</button>`;
+  }).join('') + '</div>';
+  const sw = (onchange, on) => `<label class="switch" style="flex-shrink:0"><input type="checkbox" ${on ? 'checked' : ''} onchange="${onchange}" onclick="event.stopPropagation()"><div class="switch-track"><div class="switch-thumb"></div></div></label>`;
+  const slider = (key, min, max, step, val, kind) => `<div style="display:flex;align-items:center;gap:10px"><input type="range" class="slider" style="width:120px;max-width:120px" min="${min}" max="${max}" step="${step}" value="${val}" oninput="this.nextElementSibling.textContent=_advFmt('${kind}',parseFloat(this.value))" onchange="_advSet('${key}',parseFloat(this.value))"><span style="${sub};min-width:40px;text-align:right">${_advFmt(kind, val)}</span></div>`;
+
+  let h = head('randomizing');
+  h += row('picking', 'queue: the whole queue is shuffled up front, every song once per lap. chaos: the next song is rolled at random every time and songs can repeat', chips('pick', [['queue', 'queue'], ['chaos', 'chaos']], a.pick));
+  h += row('reshuffle every lap', 'repeat all: shuffle again when the queue wraps, off plays the same order again', sw("_advSet('lapReshuffle',this.checked)", a.lapReshuffle), !queue);
+  if (queue) {
+    h += head('albums');
+    h += row('album handling', 'split: song by song. intact: albums stay as blocks. flow: a landed album continues in track order', chips('albums', [['split', 'split'], ['intact', 'intact'], ['flow', 'flow']], a.albums));
+    h += row('min songs', 'an album needs at least this many songs in the queue to count as a block', slider('minTracks', 2, 10, 1, a.minTracks, 'int'), a.albums === 'split');
+    h += row('inside a block', 'intact: order of the songs inside an album block', chips('inner', [['track', 'track order'], ['shuffle', 'shuffled']], a.inner), a.albums !== 'intact');
+    h += row('drop earlier tracks', 'flow: tracks before the one that landed leave the queue, off keeps them in the shuffle', sw("_advSet('flowDrop',this.checked)", a.flowDrop), a.albums !== 'flow');
+  } else {
+    h += head('chaos');
+    h += row('no repeat window', 'the last n songs sit out of the roll, off = pure chaos', slider('chaosNoRepeat', 0, 50, 1, a.chaosNoRepeat, 'off0'));
+    h += row('stop after all played', 'repeat off: end once every song played at least once, off = chaos never ends', sw("_advSet('chaosStop',this.checked)", a.chaosStop));
+    h += row('artist window', 'smart shuffle: how many recent artists get pushed down', slider('chaosArtistWindow', 0, 8, 1, a.chaosArtistWindow, 'off0'), !smartOn);
+    h += row('roll among best', 'smart shuffle: roll among this share of the best scored songs', slider('chaosTopShare', 0.1, 1, 0.05, a.chaosTopShare, 'pct'), !smartOn);
+  }
+  h += head('smart shuffle');
+  h += row('smart shuffle', 'spread same-artist songs apart instead of pure random', sw('setSmartShuffle(this.checked);_advRefresh()', smartOn));
+  const dimSpread = !smartOn || !queue;
+  h += row('looseness', '0% = songs sit evenly spaced, 100% = anywhere inside their slot', slider('smart.jitter', 0, 1, 0.05, so.jitter, 'pct'), dimSpread);
+  h += row('min gap', 'songs between two songs of the same artist, best effort', slider('smart.minGap', 0, 5, 1, so.minGap, 'off0'), dimSpread);
+  h += row('repair reach', 'how far ahead the min gap fix looks for a swap', slider('smart.lookahead', 1, 20, 1, so.lookahead, 'int'), dimSpread);
+  h += row('artist grouping', 'primary: a collab counts as its first artist. full: the whole artist string', chips('smart.artistMode', [['primary', 'primary'], ['full', 'full']], so.artistMode), dimSpread);
+  h += row('slot offset', 'random: every artist gets its own offset. even: all artists line up', chips('smart.phase', [['random', 'random'], ['even', 'even']], so.phase), dimSpread);
+  return h;
+}
+function _advRefresh() {
+  const b = document.getElementById('mbody');
+  if (!b || !b.querySelector('[data-adv]')) return;
+  const st = b.scrollTop;
+  b.innerHTML = '<div data-adv="1">' + _advBodyHtml() + '</div>';
+  b.scrollTop = st;
+  if (window.MU) MU.init(b);
+}
+function showAdvancedShuffle() {
+  showModal('advanced shuffle', '<div data-adv="1">' + _advBodyHtml() + '</div>',
+    '<button class="btn btn-out mu-ripple" onclick="_advReset()">reset</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>');
+  if (window.MU) MU.init(document.getElementById('mbody'));
+}
+
 function showShuffleCtx(e) {
   e.preventDefault(); e.stopPropagation();
-  const mode = S.shuffleMode;
+  const mode = S.shuffleChoice;
   showCtx(e, [
     { _header: true, label: 'shuffle mode' },
     { radio: mode === 'random', group: 'mode', label: 'random', fn: () => setShuffleMode('random') },
     { radio: mode === 'chaos',  group: 'mode', label: 'chaos',  fn: () => setShuffleMode('chaos')  },
     { radio: mode === 'flow',   group: 'mode', label: 'flow',   fn: () => setShuffleMode('flow')   },
     { radio: mode === 'intact', group: 'mode', label: 'intact', fn: () => setShuffleMode('intact') },
+    { radio: mode === 'advanced', group: 'mode', label: 'advanced', fn: () => setShuffleMode('advanced') },
     { sep: true },
     { check: !!S.smartShuffle, label: 'smart shuffle', fn: (on) => setSmartShuffle(on) },
+    ...(mode === 'advanced' ? [{ sep: true }, { label: 'customize advanced shuffle', fn: () => showAdvancedShuffle() }] : []),
   ]);
 }
 
@@ -36665,7 +36825,7 @@ function _refreshCurNormGain() {
 async function loadData() {
   _statsDataCache = null; // invalidate on any library change
   // restore shuffle mode prefs
-  if (CFG.shuffle_mode) S.shuffleMode = CFG.shuffle_mode;
+  if (CFG.shuffle_mode) { S.shuffleChoice = CFG.shuffle_mode; S.shuffleMode = _effShuffleMode(); }
   if (CFG.smart_shuffle != null) S.smartShuffle = !!CFG.smart_shuffle;
   if (CFG.shuffle_on) S.shuffle = true;
   S.library = await api('GET', '/api/library') || [];
@@ -38086,13 +38246,14 @@ function renderSettings() {
       ${_backBtn}
       ${_sectionMatch('playback') ? section('playback', `
         ${(()=>{
-          const smode = S.shuffleMode || 'random';
+          const smode = S.shuffleChoice || 'random';
           const smart = S.smartShuffle || false;
           const MODES = [
             { v: 'random', label: 'random',  desc: 'every song once, randomized order' },
             { v: 'chaos',  label: 'chaos',   desc: 'fully random, songs can repeat, queue disabled' },
             { v: 'flow',   label: 'flow',    desc: 'follows album track order when a song plays' },
             { v: 'intact',  label: 'intact',   desc: 'albums shuffled as groups, not split up' },
+            { v: 'advanced', label: 'advanced', desc: 'build your own: queue or chaos picking, album handling, smart spacing' },
           ];
           const modeButtons = MODES.map(m =>
             `<button style="padding:5px 12px;font:var(--type-label-medium);font-variation-settings:var(--fv-label);border-radius:var(--radius-sm);border:1.5px solid ${smode===m.v?'var(--color-primary)':'var(--color-outline-variant)'};background:${smode===m.v?'var(--color-primary)':'transparent'};color:${smode===m.v?'var(--color-on-primary)':'var(--color-on-surface-variant)'};cursor:pointer;transition:all .15s ease"
@@ -38103,6 +38264,7 @@ function renderSettings() {
               <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${modeButtons}</div>
               <div style="font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);text-align:right">
                 ${MODES.find(m=>m.v===smode)?.desc||''}
+                ${smode === 'advanced' ? '<button class="btn btn-tonal mu-ripple" style="margin-left:8px" onclick="showAdvancedShuffle()">customize</button>' : ''}
               </div>
             </div>
           `) + row('smart shuffle', 'spaces out same-artist songs for more variety', `
@@ -39393,7 +39555,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // restore shuffle state BEFORE session restore so chaos branch can read S.shuffle/S.shuffleMode
-  if (CFG.shuffle_mode) S.shuffleMode = CFG.shuffle_mode;
+  if (CFG.shuffle_mode) { S.shuffleChoice = CFG.shuffle_mode; S.shuffleMode = _effShuffleMode(); }
   if (CFG.smart_shuffle != null) S.smartShuffle = !!CFG.smart_shuffle;
   if (CFG.shuffle_on) S.shuffle = true;
 
