@@ -195,6 +195,8 @@ _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": 
 
 _DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True, "list_show_producers": False, "list_prod_prefix": False, "list_feat_prefix": False, "search_credits_prod": False, "search_credits_writers": False, "search_credits_other": False})
 
+_DEFS.update({"write_tags_on_edit": True})
+
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
     if _SCFG.exists():
@@ -587,20 +589,22 @@ SELECT id, sync_id, title,
             ORDER BY at.id LIMIT 1),
            songs.track_num
        ) AS track_num,
-       play_count, last_played, lame_delay, genius_id,
-       loudness_lufs, trim_start, trim_end, lyrics,
+       songs.play_count + COALESCE(songs.play_offset, 0) AS play_count, last_played, lame_delay, genius_id,
+       COALESCE(songs.loudness_user, songs.loudness_lufs) AS loudness_lufs, trim_start, trim_end, lyrics,
        _disp_artist(songs.featuring_artists) AS featuring_artists,
        mv_video_id, mv_offset, queue_skip,
        songs.artist AS artist_raw,
        songs.featuring_artists AS featuring_raw,
        songs.release_date AS release_date,
+       songs.play_offset AS play_offset, songs.play_count AS play_real,
+       songs.loudness_lufs AS loudness_auto, songs.loudness_user AS loudness_user,
        (SELECT group_concat(role || char(31) || _disp_artist(name), char(30)) FROM (SELECT role, name FROM song_credits WHERE song_id = songs.id ORDER BY position)) AS credits
 FROM songs
 """
 
 def _ensure_songs_display_view(c):
     row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
-    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or '') and '_disp_artist(name)' in (row[0] or ''):
+    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or '') and '_disp_artist(name)' in (row[0] or '') and 'loudness_user' in (row[0] or ''):
         return
     c.execute("DROP VIEW IF EXISTS songs_display")
     c.execute(_SONGS_DISPLAY_SQL)
@@ -1132,6 +1136,11 @@ def init_db():
             c.execute("ALTER TABLE songs ADD COLUMN mv_offset REAL")
         if 'mv_url' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN mv_url TEXT")
+        # manual overrides from the song editor: extra plays on top of the real count, loudness that beats the auto measurement
+        if 'play_offset' not in _mv_cols:
+            c.execute("ALTER TABLE songs ADD COLUMN play_offset INTEGER DEFAULT 0")
+        if 'loudness_user' not in _mv_cols:
+            c.execute("ALTER TABLE songs ADD COLUMN loudness_user REAL")
         if 'spotify_url' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN spotify_url TEXT")
         if 'release_date' not in _mv_cols:
@@ -2017,7 +2026,7 @@ def get_meta(path):
     except Exception: pass
     return r
 
-def write_meta(path, title, artist, album, track_num=0, featuring=''):
+def write_meta(path, title, artist, album, track_num=0, featuring='', release_date=''):
     if not HAS_MUTAGEN: return
     for _attempt in range(4):
         try:
@@ -2031,6 +2040,12 @@ def write_meta(path, title, artist, album, track_num=0, featuring=''):
                 if track_num:
                     from mutagen.id3 import TRCK
                     audio.tags["TRCK"] = TRCK(encoding=3, text=str(track_num))
+                if release_date:
+                    try:
+                        from mutagen.id3 import TDRC
+                        audio.tags["TDRC"] = TDRC(encoding=3, text=str(release_date))
+                    except Exception:
+                        pass
                 audio.save()
             else:
                 f = MuFile(path, easy=True)
@@ -2039,14 +2054,19 @@ def write_meta(path, title, artist, album, track_num=0, featuring=''):
                     if artist: f['artist'] = artist
                     if album: f['album'] = album
                     if track_num: f['tracknumber'] = [str(track_num)]
+                    if release_date:
+                        try: f['date'] = [str(release_date)]
+                        except Exception: pass
                     f.save()
-            return
+            return True
         except PermissionError:
             if _attempt < 3: time.sleep(0.5 * (_attempt + 1))
-            else: _log_library.warning('write_meta err: permission denied after retries, skipping')
+            else:
+                _log_library.warning('write_meta err: permission denied after retries, skipping')
+                return False
         except Exception as e:
             _log_library.warning('write_meta err: %s', e)
-            return
+            return False
 
 
 def write_cover(sid, data):
@@ -3834,7 +3854,7 @@ _RESOLVE_PRIORITY = {
     'artist':       ('user', 'genius', 'source'),
     'featuring':    ('user', 'genius', 'source'),
     'album':        ('genius', 'source'),
-    'release_date': ('genius', 'source'),
+    'release_date': ('user', 'genius', 'source'),
 }
 _GENIUS_APPLY_MIN = 0.70
 # fields where genius is authoritative even when it has nothing: genius splits producers etc out of the feats,
@@ -3884,10 +3904,10 @@ def _save_song_source(sid, title=None, artist=None, featuring=None, album=None,
 
 def _set_song_user_edits(sid, updates):
     """manual edits live in their own json cell on the source row so resolve never loses them"""
-    m = {'title': 'title', 'artist': 'artist', 'featuring_artists': 'featuring'}
+    m = {'title': 'title', 'artist': 'artist', 'featuring_artists': 'featuring', 'release_date': 'release_date'}
     with db() as c:
-        _cr = c.execute("SELECT title,artist,featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
-    _curm = {'title': _cr[0], 'artist': _cr[1], 'featuring_artists': _cr[2]} if _cr else {}
+        _cr = c.execute("SELECT title,artist,featuring_artists,release_date FROM songs WHERE id=?", (sid,)).fetchone()
+    _curm = {'title': _cr[0], 'artist': _cr[1], 'featuring_artists': _cr[2], 'release_date': _cr[3]} if _cr else {}
     # only pin fields that actually changed, the edit form always sends all three
     ed = {m[k]: (v or '') for k, v in updates.items() if k in m and (v or '') != (_curm.get(k) or '')}
     if not ed:
@@ -3903,6 +3923,94 @@ def _set_song_user_edits(sid, updates):
             cur = {}
         cur.update(ed)
         c.execute("UPDATE song_source SET user_edits=? WHERE song_id=?", (json.dumps(cur), sid))
+
+# user layer helpers for the unified song editor. keys in user_edits: title, artist, featuring, release_date, credits
+_USER_EDIT_KEYS = {'title': 'title', 'artist': 'artist', 'featuring_artists': 'featuring',
+                   'release_date': 'release_date', 'credits': 'credits'}
+
+def _get_song_user_edits(sid):
+    with db() as c:
+        r = c.execute("SELECT user_edits FROM song_source WHERE song_id=?", (sid,)).fetchone()
+    try:
+        return json.loads(r[0]) if r and r[0] else {}
+    except Exception:
+        return {}
+
+def _put_song_user_edits(sid, ed):
+    """overwrite the whole user_edits json, the source row is created first so the layer always has a home"""
+    _save_song_source(sid)
+    with db() as c:
+        c.execute("UPDATE song_source SET user_edits=? WHERE song_id=?", (json.dumps(ed) if ed else None, sid))
+
+def _clear_song_user_edits(sid, keys):
+    """drop manual pins so resolve falls back to genius / source again. keys use the editor names"""
+    ed = _get_song_user_edits(sid)
+    names = {_USER_EDIT_KEYS[k] for k in keys if k in _USER_EDIT_KEYS}
+    if not ed or not (names & set(ed)):
+        return False
+    for n in names:
+        ed.pop(n, None)
+    _put_song_user_edits(sid, ed)
+    return True
+
+def _clean_user_credits(raw):
+    """[{role, names}] from the editor -> [{role, name}] in order. Featuring belongs to the featuring field so it is dropped"""
+    out, seen = [], set()
+    for it in (raw if isinstance(raw, list) else [])[:200]:
+        if not isinstance(it, dict):
+            continue
+        role = _canon_credit_role(str(it.get('role') or '').strip())[:60]
+        if not role or role.lower() == 'featuring':
+            continue
+        names = it.get('names')
+        if isinstance(names, str):
+            names = names.split(',')
+        elif not isinstance(names, list):
+            names = []
+        for n in names:
+            n = str(n).strip()[:120]
+            if not n or (role, n.lower()) in seen:
+                continue
+            seen.add((role, n.lower()))
+            out.append({'role': role, 'name': n})
+    return out
+
+_YT_ID_RE = re.compile(r'(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|embed/|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})')
+
+def _yt_id_from_url(s):
+    s = (s or '').strip()
+    if re.fullmatch(r'[A-Za-z0-9_-]{11}', s):
+        return s
+    m = _YT_ID_RE.search(s)
+    return m.group(1) if m else None
+
+def _genius_id_from_url(url):
+    """best effort: genius song pages carry their id in the app link meta tag"""
+    import urllib.request, urllib.parse
+    url = (url or '').strip()
+    u = urllib.parse.urlparse(url)
+    if u.scheme not in ('http', 'https') or not (u.hostname or '').lower().endswith('genius.com'):
+        return None
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'})
+    with urllib.request.urlopen(req, timeout=12) as r:
+        html = r.read(2000000).decode('utf-8', 'replace')
+    for pat in (r'genius://songs/(\d+)', r'"song_id"\s*:\s*(\d+)'):
+        m = re.search(pat, html)
+        if m:
+            return m.group(1)
+    return None
+
+def _write_song_tags(sid):
+    """push the resolved values into the audio file's tags. returns 'written', 'failed' or 'nofile'"""
+    with db() as c:
+        r = c.execute(
+            "SELECT file_path, title, artist, COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album), "
+            "COALESCE((SELECT at.track_num FROM album_tracks at WHERE at.song_id = songs.id AND at.album_id = songs.album_id ORDER BY at.id LIMIT 1), songs.track_num), "
+            "release_date FROM songs WHERE id=?", (sid,)).fetchone()
+    if not r or not r[0] or not os.path.isfile(r[0]):
+        return 'nofile'
+    ok = write_meta(r[0], r[1] or '', r[2] or '', r[3] or '', r[4] or 0, release_date=r[5] or '')
+    return 'written' if ok is True else 'failed'
 
 def _store_song_genius(sid, song_data, confidence=None, confirmed=False, skip_title=False):
     keep = {k: song_data[k] for k in _GENIUS_KEEP if k in song_data}
@@ -3989,6 +4097,19 @@ def _rebuild_song_credits(sid, data):
         add('Producer', a.get('name'), i)
     for i, a in enumerate(data.get('writer_artists') or []):
         add('Writer', a.get('name'), i)
+    _uc = _get_song_user_edits(sid).get('credits')
+    if isinstance(_uc, list):
+        # manual credits replace everything genius gave except the feats, which follow the featuring field
+        rows = [r for r in rows if r[0] == 'Featuring']
+        _useen = {(r[0], r[1].lower()) for r in rows}
+        _upos = {}
+        for it in _uc:
+            _role, _name = it.get('role'), (it.get('name') or '').strip()
+            if not _role or not _name or (_role, _name.lower()) in _useen:
+                continue
+            _useen.add((_role, _name.lower()))
+            rows.append((_role, _name, _upos.get(_role, 0)))
+            _upos[_role] = _upos.get(_role, 0) + 1
     # always clears first: a refetch with fewer credits, a changed match or an untrusted match must not leave old rows behind
     with db() as c:
         c.execute("DELETE FROM song_credits WHERE song_id=?", (sid,))
@@ -6821,13 +6942,15 @@ def api_get_song(sid):
 @app.route('/api/songs/<sid>/extra', methods=['GET'])
 def api_song_extra(sid):
     """details popup extras that dont live in songs_display: genius link/match, music video url, file info"""
-    out = {'genius': None, 'mv_url': None, 'file': None}
+    out = {'genius': None, 'mv_url': None, 'mv_offset': None, 'pins': [], 'file': None}
     with db() as c:
-        r = c.execute("SELECT mv_video_id, mv_url, file_path FROM songs WHERE id=?", (sid,)).fetchone()
+        r = c.execute("SELECT mv_video_id, mv_url, file_path, mv_offset FROM songs WHERE id=?", (sid,)).fetchone()
         g = c.execute("SELECT genius_id, confidence, confirmed, data FROM song_genius WHERE song_id=?", (sid,)).fetchone()
     if not r:
         return jsonify({'error': 'not found'}), 404
     out['mv_url'] = r[1] or (f'https://www.youtube.com/watch?v={r[0]}' if r[0] else None)
+    out['mv_offset'] = r[3]
+    out['pins'] = sorted(_get_song_user_edits(sid).keys())
     fp = r[2]
     if fp and os.path.isfile(fp):
         try:
@@ -9961,6 +10084,8 @@ def _dbx_merge_db(local_path, remote_path):
                         f'genius_id=excluded.genius_id, '
                         f'featuring_artists=excluded.featuring_artists, '
                         f'loudness_lufs=excluded.loudness_lufs, '
+                        f'{"loudness_user=excluded.loudness_user, " if "loudness_user" in cols else ""}'
+                        f'{"play_offset=COALESCE(excluded.play_offset, songs.play_offset), " if "play_offset" in cols else ""}'
                         f'album_id=excluded.album_id, track_num=excluded.track_num, '
                         f'mv_video_id=COALESCE(excluded.mv_video_id, songs.mv_video_id), mv_offset=COALESCE(excluded.mv_offset, songs.mv_offset), '\
                         f'{"spotify_url=COALESCE(excluded.spotify_url, songs.spotify_url), " if "spotify_url" in cols else ""}'\
@@ -13759,6 +13884,169 @@ def api_song_patch(sid):
             c.execute(
                 "UPDATE album_tracks SET title=? WHERE song_id=?",
                 (updates['title'], sid))
+    return jsonify({'ok': True})
+
+# ── unified song editor: one save for every editable property ──
+@app.route('/api/songs/<sid>/details', methods=['PATCH'])
+def api_song_details_patch(sid):
+    """text fields (title, artist, featuring, release_date, credits) are pinned in song_source.user_edits so resolve
+    never overwrites them. loudness_user / play_offset / mv_offset are plain override columns, reset=[...] drops an override.
+    everything is validated before the first write so a bad value never leaves a half saved song"""
+    data = request.get_json(silent=True) or {}
+    reset = {str(k) for k in (data.get('reset') or [])}
+    with db() as c:
+        row = c.execute("SELECT mv_video_id, mv_offset FROM songs WHERE id=?", (sid,)).fetchone()
+    if not row:
+        return jsonify({'error': 'not found'}), 404
+    cur_vid, cur_off = row[0], row[1]
+    now = int(time.time())
+    upd, pins = {}, {}
+    if 'title' in data:
+        t = str(data['title'] or '').strip()
+        if not t:
+            return jsonify({'error': "title can't be empty"}), 400
+        upd['title'] = pins['title'] = t
+    for k in ('artist', 'featuring_artists'):
+        if k in data:
+            upd[k] = pins[k] = str(data[k] or '').strip()
+    if 'release_date' in data:
+        rd = str(data['release_date'] or '').strip()
+        if rd and not re.fullmatch(r'\d{4}(-\d{2}(-\d{2})?)?', rd):
+            return jsonify({'error': 'release date should look like 2021, 2021-05 or 2021-05-14'}), 400
+        upd['release_date'] = pins['release_date'] = rd
+    if 'track_num' in data:
+        try:
+            upd['track_num'] = max(0, int(data['track_num'] or 0))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'track number has to be a whole number'}), 400
+    if 'play_offset' in data:
+        try:
+            upd['play_offset'] = max(0, min(int(data['play_offset'] or 0), 10000000))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'extra plays has to be a whole number'}), 400
+    if 'loudness_user' in data:
+        v = data['loudness_user']
+        if v in (None, ''):
+            upd['loudness_user'] = None
+        else:
+            try:
+                lv = float(v)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'loudness has to be a number'}), 400
+            if not -70 <= lv <= 0:
+                return jsonify({'error': 'loudness should be between -70 and 0 LUFS'}), 400
+            upd['loudness_user'] = round(lv, 2)
+    off_given = 'mv_offset' in data
+    new_off = None
+    if off_given and data['mv_offset'] not in (None, ''):
+        try:
+            new_off = float(data['mv_offset'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'music video offset has to be a number'}), 400
+        if abs(new_off) > 3600:
+            return jsonify({'error': 'music video offset is out of range'}), 400
+    mv_changed = False
+    if 'mv_url' in data:
+        mu = str(data['mv_url'] or '').strip()
+        if mu:
+            vid = _yt_id_from_url(mu)
+            if not vid:
+                return jsonify({'error': 'that is not a youtube link'}), 400
+            if vid != cur_vid:
+                mv_changed = True
+                upd['mv_video_id'] = vid
+                upd['mv_url'] = 'https://www.youtube.com/watch?v=' + vid
+                # the stored offset belongs to the old video, only keep it when the user typed a new one
+                if not off_given or new_off == cur_off:
+                    off_given, new_off = True, None
+        elif cur_vid:
+            mv_changed = True
+            upd['mv_video_id'] = None
+            upd['mv_url'] = None
+            off_given, new_off = True, None
+    if off_given:
+        upd['mv_offset'] = new_off
+    # resets: pins go back to genius / source, the plain override columns go back to their automatic value
+    if 'loudness' in reset:
+        upd['loudness_user'] = None
+    if 'play_offset' in reset:
+        upd['play_offset'] = 0
+    if 'mv_offset' in reset:
+        upd['mv_offset'] = None
+    text_reset = [k for k in reset if k in _USER_EDIT_KEYS]
+    for k in text_reset:
+        pins.pop(k, None)
+        upd.pop(k, None)
+    credits_new = None
+    if 'credits' in data and 'credits' not in reset:
+        credits_new = _clean_user_credits(data['credits'])
+    if not (upd or pins or reset or credits_new is not None or data.get('retag')):
+        return jsonify({'ok': True, 'tags': 'off'})
+    if text_reset:
+        _clear_song_user_edits(sid, text_reset)
+    if pins:
+        _set_song_user_edits(sid, pins)  # snapshots the source layer first, then pins whatever really changed
+    if upd:
+        with db() as c:
+            c.execute("UPDATE songs SET " + ', '.join(f"{k}=?" for k in upd) + ", modified_at=? WHERE id=?",
+                      (*upd.values(), now, sid))
+            if 'artist' in upd or 'featuring_artists' in upd:
+                _sa = c.execute("SELECT artist, featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+                _upsert_song_artists(c, sid, _sa[0] or '', _sa[1] or '')
+            if 'title' in upd:
+                c.execute("UPDATE album_tracks SET title=? WHERE song_id=?", (upd['title'], sid))
+    if credits_new is not None:
+        ed = _get_song_user_edits(sid)
+        ed['credits'] = credits_new
+        _put_song_user_edits(sid, ed)
+    if mv_changed:
+        with _mv_cache_lock:
+            _mv_cache.pop(sid, None)
+    if text_reset or credits_new is not None:
+        resolve_song(sid, sync_artists=True)
+        if credits_new is not None or 'credits' in text_reset:
+            with db() as c:
+                has_g = c.execute("SELECT 1 FROM song_genius WHERE song_id=?", (sid,)).fetchone()
+            if not has_g:
+                _rebuild_song_credits(sid, {})  # no genius row means resolve never touched the credits
+    tags = 'off'
+    tag_keys = {'title', 'artist', 'featuring_artists', 'track_num', 'release_date'}
+    if (tag_keys & set(data) or set(text_reset) & tag_keys or data.get('retag')) and CFG.get('write_tags_on_edit', True):
+        tags = _write_song_tags(sid)
+    return jsonify({'ok': True, 'tags': tags})
+
+@app.route('/api/songs/<sid>/genius-link', methods=['POST'])
+def api_song_genius_link(sid):
+    """paste a genius song page link, same as picking it in the search list (confirmed match)"""
+    url = str((request.get_json(silent=True) or {}).get('url') or '').strip()
+    if not url:
+        return jsonify({'error': 'link required'}), 400
+    tok = CFG.get('genius_token', '')
+    if not tok:
+        return jsonify({'error': 'no genius token configured'}), 400
+    try:
+        gid = _genius_id_from_url(url)
+    except Exception as e:
+        return jsonify({'error': 'could not open that page: ' + str(e)[:120]}), 502
+    if not gid:
+        return jsonify({'error': 'that does not look like a genius song link'}), 400
+    try:
+        _genius_enrich(sid, tok, genius_song_id=gid, confirmed=True)
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    return jsonify({'ok': True, 'genius_song_id': gid})
+
+@app.route('/api/songs/<sid>/genius-link', methods=['DELETE'])
+def api_song_genius_unlink(sid):
+    """drop the genius layer: display values fall back to manual edits / source, credits are rebuilt without genius.
+    album links and covers genius already wrote stay as they are"""
+    with db() as c:
+        if not c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone():
+            return jsonify({'error': 'not found'}), 404
+        c.execute("DELETE FROM song_genius WHERE song_id=?", (sid,))
+        c.execute("UPDATE songs SET genius_id=NULL, modified_at=? WHERE id=?", (int(time.time()), sid))
+    resolve_song(sid, sync_artists=True)
+    _rebuild_song_credits(sid, {})
     return jsonify({'ok': True})
 
 @app.route('/api/songs/<sid>/cover-upload', methods=['POST'])
@@ -26801,7 +27089,319 @@ function _lyricsResizeMouseUp() {
   if (ls && !ls.classList.contains('hidden')) saveSetting('lyrics_sidebar_width', ls.offsetWidth).catch(() => {});
 }
 
-async function showSongDetails(sid){
+// ── unified song details / edit modal: one modal with a view mode and an edit mode ──
+// "details" in the song menu opens it in view mode, "edit" opens it already in edit mode, the footer button flips between them
+const _SD_LBL = 'color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body)';
+const _SD_ROLES = ['Producer','Executive Producer','Writer','Composer','Lyricist','Mixing Engineer','Mastering Engineer','Recording Engineer','Vocals','Background Vocals','Label','Publisher','Distributor'];
+let _sdState = null;
+let _sdDraft = null;
+
+function _sdFmtD(t) { return t ? new Date(t * 1000).toLocaleDateString() : '-'; }
+function _sdLoud(v) { return v != null ? Number(v).toFixed(1) + ' LUFS' : '-'; }
+function _sdRow(l, h) {
+  return `<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--color-outline-variant)"><span style="${_SD_LBL};flex-shrink:0">${l}</span><span style="font:var(--type-body-small);font-variation-settings:var(--fv-body);text-align:right;max-width:65%;overflow-wrap:anywhere">${h}</span></div>`;
+}
+function _sdLink(u, t) { return `<a href="${esc(u)}" target="_blank" rel="noopener" style="color:var(--color-primary)">${esc(t || u)}</a>`; }
+function _sdNames(arr) { return arr.map(n => artistNameHtml(n)).join(', '); }
+function _sdCover(song, size, id) {
+  const idA = id ? `id="${id}" ` : '';
+  return song.cover_path
+    ? `<img ${idA}src="/cover/${song.id}" alt="" style="width:${size}px;height:${size}px;border-radius:var(--radius-md);object-fit:cover;flex-shrink:0">`
+    : `<div ${idA}style="width:${size}px;height:${size}px;border-radius:var(--radius-md);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size / 3)}px;flex-shrink:0">♪</div>`;
+}
+function _sdCreditRows(song) {
+  return _songCreditsGrouped(song).filter(([role]) => role !== 'Featuring').map(([role, ns]) => ({role, names: ns.join(', ')}));
+}
+function _sdCreditRowHtml(role, names) {
+  return `<div class="sd-cr" style="display:flex;gap:6px;align-items:center">
+    <input class="inp sd-cr-role" list="sd-roles" value="${esc(role)}" placeholder="role" style="flex:0 0 38%;min-width:0" autocomplete="off">
+    <input class="inp sd-cr-names" value="${esc(names)}" placeholder="name, name" style="flex:1;min-width:0" autocomplete="off">
+    <button type="button" class="btn btn-out mu-ripple" style="padding:2px 9px" onclick="this.closest('.sd-cr').remove()">×</button></div>`;
+}
+function _sdAddCredit() {
+  const box = document.getElementById('sd-credits');
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', _sdCreditRowHtml('', ''));
+  box.lastElementChild.querySelector('.sd-cr-role').focus();
+}
+function _sdReadCredits() {
+  return [...document.querySelectorAll('#sd-credits .sd-cr')].map(r => ({
+    role: r.querySelector('.sd-cr-role').value.trim(),
+    names: r.querySelector('.sd-cr-names').value.trim(),
+  })).filter(c => c.role && c.names);
+}
+function _sdShowOpt(k, focus) {
+  const blk = document.querySelector(`.sd-opt[data-opt="${k}"]`);
+  if (blk) blk.style.display = 'block';
+  document.querySelector(`[data-chip="${k}"]`)?.remove();
+  const chips = document.getElementById('sd-chips');
+  if (chips && !chips.children.length) chips.style.display = 'none';
+  if (focus && blk) blk.querySelector('input')?.focus();
+}
+function _sdReset(key) {
+  const f = document.querySelector(`.sd-f[data-f="${key}"]`);
+  if (!f) return;
+  const on = f.dataset.reset !== '1';
+  f.dataset.reset = on ? '1' : '0';
+  f.querySelectorAll('input').forEach(i => { i.disabled = on; i.style.opacity = on ? '.45' : ''; });
+  const b = f.querySelector('.sd-rs');
+  if (b) b.textContent = on ? 'undo reset' : b.dataset.t;
+}
+
+// what changed compared to when the editor opened. unchanged fields are never sent, so they never get pinned
+function _sdCollect() {
+  const st = _sdState;
+  if (!st || !document.getElementById('edit-song-title')) return null;
+  const v = id => (document.getElementById(id)?.value ?? '').trim();
+  const cur = {
+    title: v('edit-song-title'), artist: v('edit-song-artist'), featuring_artists: v('edit-song-feat'),
+    release_date: v('sd-release'), track_num: v('edit-song-tracknum') || '0', credits: _sdReadCredits(),
+    mv_url: v('sd-mv-url'), mv_offset: v('sd-mv-offset'), play_offset: v('sd-play-offset') || '0', loudness_user: v('sd-loud'),
+  };
+  const fkey = {title: 'title', artist: 'artist', featuring_artists: 'featuring_artists', release_date: 'release_date',
+                credits: 'credits', mv_offset: 'mv_offset', play_offset: 'play_offset', loudness_user: 'loudness'};
+  const out = {}, reset = [];
+  for (const k of Object.keys(cur)) {
+    const fk = fkey[k];
+    const wrap = fk && document.querySelector(`.sd-f[data-f="${fk}"]`);
+    if (wrap && wrap.dataset.reset === '1') { reset.push(fk); continue; }
+    const same = k === 'credits' ? JSON.stringify(cur[k]) === st.init.credits : cur[k] === st.init[k];
+    if (!same) out[k] = cur[k];
+  }
+  return {out, reset};
+}
+
+// leaving to a sub popup (album picker, play history) and coming back keeps what was typed
+function _sdStash(sid) {
+  const c = _sdCollect();
+  _sdDraft = c ? {sid, t: Date.now(), out: c.out, reset: c.reset} : null;
+}
+function _sdRestore(sid) {
+  const d = _sdDraft;
+  _sdDraft = null;
+  if (!d || d.sid !== sid || Date.now() - d.t > 120000) return;
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+  const o = d.out;
+  if ('title' in o) set('edit-song-title', o.title);
+  if ('artist' in o) set('edit-song-artist', o.artist);
+  if ('featuring_artists' in o) set('edit-song-feat', o.featuring_artists);
+  if ('release_date' in o) set('sd-release', o.release_date);
+  if ('track_num' in o) set('edit-song-tracknum', o.track_num);
+  if ('credits' in o) {
+    const box = document.getElementById('sd-credits');
+    if (box) box.innerHTML = o.credits.map(c => _sdCreditRowHtml(c.role, c.names)).join('');
+    _sdShowOpt('credits');
+  }
+  if ('mv_url' in o) { set('sd-mv-url', o.mv_url); _sdShowOpt('mv'); }
+  if ('mv_offset' in o) { set('sd-mv-offset', o.mv_offset); _sdShowOpt('mv'); }
+  if ('play_offset' in o) { set('sd-play-offset', o.play_offset); _sdShowOpt('plays'); }
+  if ('loudness_user' in o) { set('sd-loud', o.loudness_user); _sdShowOpt('loud'); }
+  d.reset.forEach(k => _sdReset(k));
+}
+
+async function showSongDetails(sid, editMode) {
+  const song = S.library.find(s => s.id === sid);
+  if (!song) return;
+  if (editMode === true) return _sdRenderEdit(sid, song);
+  _sdDraft = null;
+  _sdState = null;
+  const build = x => {
+    const rows = [
+      _sdRow('title', esc(song.title || 'untitled')),
+      _sdRow('artist', _sdNames((song.artist || '').split(', ').filter(Boolean)) || '-'),
+    ];
+    if (song.featuring_artists) rows.push(_sdRow('featuring', _sdNames(song.featuring_artists.split(', ').filter(Boolean))));
+    for (const [role, ns] of _songCreditsGrouped(song)) {
+      if (role === 'Featuring') continue;
+      rows.push(_sdRow(esc(role.toLowerCase()), _sdNames(ns)));
+    }
+    rows.push(_sdRow('album', esc(song.album || '-')));
+    if (song.release_date) rows.push(_sdRow('released', esc(song.release_date)));
+    rows.push(_sdRow('duration', song.duration ? fmt(song.duration) : '-'));
+    rows.push(_sdRow('source', esc((song.source || 'local').replace('_', ' '))));
+    const po = song.play_offset || 0;
+    rows.push(_sdRow('plays', String(song.play_count || 0) + (po ? ` <span style="opacity:.6">(${(song.play_count || 0) - po} played + ${po} added)</span>` : '')));
+    rows.push(_sdRow('added', _sdFmtD(song.added_at)));
+    rows.push(_sdRow('last played', _sdFmtD(song.last_played)));
+    rows.push(_sdRow('loudness', _sdLoud(song.loudness_lufs) + (song.loudness_user != null ? ` <span style="opacity:.6">(set by you, auto ${_sdLoud(song.loudness_auto)})</span>` : '')));
+    if (x) {
+      if (x.file) rows.push(_sdRow('file', esc(x.file.ext.toUpperCase() + ' · ' + (x.file.size / 1048576).toFixed(1) + ' MB')));
+      const mv = x.mv_url || (song.mv_video_id ? 'https://www.youtube.com/watch?v=' + song.mv_video_id : '');
+      if (mv) rows.push(_sdRow('music video', _sdLink(mv, 'open on youtube')));
+      const g = x.genius;
+      if (g) {
+        if (g.url) rows.push(_sdRow('genius', _sdLink(g.url, 'open on genius')));
+        rows.push(_sdRow('genius match', g.confirmed ? 'confirmed' : (g.confidence != null ? Math.round(g.confidence * 100) + '% match' : 'unconfirmed')));
+        if (g.language) rows.push(_sdRow('language', esc(g.language)));
+      }
+    }
+    return `<div style="margin-bottom:14px">${_sdCover(song, 80)}</div>${rows.join('')}`;
+  };
+  showModal('song details', build(null),
+    `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title || '')}','${escJ(song.artist || '')}')">stats</button><button class="btn btn-out mu-ripple" onclick="editSong('${escJ(sid)}')">edit</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
+  );
+  const x = await api('GET', `/api/songs/${sid}/extra`).catch(() => null);
+  const mb = document.getElementById('mbody');
+  if (mb && x && !x.error) mb.innerHTML = build(x);
+}
+
+async function editSong(sid) {
+  return showSongDetails(sid, true);
+}
+
+async function _sdRenderEdit(sid, song) {
+  // extras are fetched first so the form renders once, nothing can replace it (and wipe what was typed) afterwards
+  let x = null;
+  try { x = await api('GET', `/api/songs/${sid}/extra`); } catch (e) { x = null; }
+  if (!x || x.error) x = {};
+  const pins = new Set((x.pins || []).map(k => k === 'featuring' ? 'featuring_artists' : k));
+  const isSingle = !song.album_id;
+  const albumName = song.album_id ? ((S.albums || []).find(a => a.id === song.album_id)?.title || song.album || '') : '';
+  const credits = _sdCreditRows(song);
+  const mvUrl = x.mv_url || (song.mv_video_id ? 'https://www.youtube.com/watch?v=' + song.mv_video_id : '');
+  const lu = song.loudness_user, po = song.play_offset || 0;
+  const real = song.play_real != null ? song.play_real : Math.max(0, (song.play_count || 0) - po);
+  const init = {
+    title: song.title || '',
+    artist: song.artist_raw != null ? song.artist_raw : (song.artist || ''),
+    featuring_artists: song.featuring_raw != null ? song.featuring_raw : (song.featuring_artists || ''),
+    release_date: song.release_date || '',
+    track_num: String(song.track_num || 0),
+    credits: JSON.stringify(credits),
+    mv_url: mvUrl,
+    mv_offset: x.mv_offset == null ? '' : String(x.mv_offset),
+    play_offset: String(po),
+    loudness_user: lu == null ? '' : String(lu),
+  };
+  _sdState = {sid, init, extra: x};
+  const hint = t => `<span style="${_SD_LBL};opacity:.75">${t}</span>`;
+  const f = (key, label, inner, rs) => `<div class="sd-f" data-f="${key}" style="display:flex;flex-direction:column;gap:4px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="${_SD_LBL}">${label}</span>${rs ? `<button type="button" class="btn btn-out mu-ripple sd-rs" data-t="${esc(rs)}" style="padding:2px 8px;font-size:11px" onclick="_sdReset('${key}')">${esc(rs)}</button>` : ''}</div>${inner}</div>`;
+  const opts = [
+    {k: 'credits', label: 'credits', filled: credits.length > 0 || pins.has('credits')},
+    {k: 'mv', label: 'music video', filled: !!mvUrl},
+    {k: 'genius', label: 'genius link', filled: !!x.genius},
+    {k: 'plays', label: 'extra plays', filled: po > 0},
+    {k: 'loud', label: 'loudness override', filled: lu != null},
+  ];
+  const blk = (k, inner) => `<div class="sd-opt" data-opt="${k}" style="display:${opts.find(o => o.k === k).filled ? 'block' : 'none'}">${inner}</div>`;
+  const g = x.genius;
+  const body = `<div id="sd-err" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-error-container,rgba(186,26,26,.15));color:var(--color-on-error-container,var(--color-error,#ba1a1a));font:var(--type-body-small)"></div>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px">${_sdCover(song, 72, 'edit-song-cover-img')}
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+        <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="uploadSongCover('${sid}',this)">
+        <button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="document.getElementById('edit-song-cover-file').click()">upload cover</button>
+        ${song.genius_id ? `<button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','genius')">redownload from genius</button>` : ''}
+        <button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','ytm')">redownload from youtube music</button>
+      </div></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${f('title', 'title', `<input class="inp" id="edit-song-title" value="${esc(init.title)}" autocomplete="off">`, pins.has('title') && 'reset to auto')}
+      ${f('artist', 'artist', `<input class="inp" id="edit-song-artist" value="${esc(init.artist)}" autocomplete="off">`, pins.has('artist') && 'reset to auto')}
+      ${f('featuring_artists', 'featuring', `<input class="inp" id="edit-song-feat" value="${esc(init.featuring_artists)}" placeholder="comma separated" autocomplete="off">`, pins.has('featuring_artists') && 'reset to auto')}
+      ${f('release_date', 'release date', `<input class="inp" id="sd-release" value="${esc(init.release_date)}" placeholder="yyyy, yyyy-mm or yyyy-mm-dd" style="max-width:240px" autocomplete="off">`, pins.has('release_date') && 'reset to auto')}
+      ${f('track_num', 'track number', `<input class="inp" id="edit-song-tracknum" type="number" min="0" value="${esc(init.track_num)}" style="max-width:100px">`)}
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span style="${_SD_LBL}">album</span>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-song-single" ${isSingle ? 'checked' : ''} onchange="toggleSingleMode('${sid}',this.checked)"><span style="font:var(--type-body-small)">single (no album)</span></label>
+        <div id="edit-album-row" style="display:${isSingle ? 'none' : 'flex'};align-items:center;gap:8px">
+          <span id="edit-album-name" style="flex:1;font:var(--type-body-small);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(albumName)}</span>
+          <button type="button" class="btn btn-out mu-ripple" onclick="_sdStash('${sid}');pickAlbumForSong('${sid}')">change</button>
+        </div>
+      </div>
+      ${blk('credits', f('credits', 'credits', `<div id="sd-credits" style="display:flex;flex-direction:column;gap:6px">${credits.map(c => _sdCreditRowHtml(c.role, c.names)).join('')}</div>
+        <button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start;padding:3px 10px;font-size:12px" onclick="_sdAddCredit()">+ add credit</button>
+        <datalist id="sd-roles">${_SD_ROLES.map(r => `<option value="${esc(r)}">`).join('')}</datalist>`, pins.has('credits') && 'reset to genius'))}
+      ${blk('mv', `<div style="display:flex;flex-direction:column;gap:12px">
+        ${f('mv_url', 'music video link', `<input class="inp" id="sd-mv-url" value="${esc(mvUrl)}" placeholder="youtube link, empty removes it" autocomplete="off">`)}
+        ${f('mv_offset', 'music video sync offset (seconds)', `<input class="inp" id="sd-mv-offset" type="number" step="0.01" value="${esc(init.mv_offset)}" placeholder="auto" style="max-width:160px">${hint('empty = detected automatically. changing the link clears it')}`, init.mv_offset !== '' && 'auto-detect')}</div>`)}
+      ${blk('genius', `<div class="sd-f" style="display:flex;flex-direction:column;gap:6px">
+        <span style="${_SD_LBL}">genius link</span>
+        <div style="font:var(--type-body-small)">${g ? ((g.url ? _sdLink(g.url, 'open on genius') : 'linked') + ' · ' + (g.confirmed ? 'confirmed' : (g.confidence != null ? Math.round(g.confidence * 100) + '% match' : 'unconfirmed'))) : 'not linked'}</div>
+        <div style="display:flex;gap:6px"><input class="inp" id="sd-genius-url" placeholder="paste a genius.com song link" style="flex:1;min-width:0" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();_sdGeniusLink('${sid}')}"><button type="button" class="btn btn-out mu-ripple" onclick="_sdGeniusLink('${sid}')">link</button></div>
+        <div style="display:flex;gap:6px"><button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="showGeniusFix('${sid}')">search genius</button>${g ? `<button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="_sdGeniusUnlink('${sid}')">unlink</button>` : ''}</div>
+        <span id="sd-genius-msg" style="${_SD_LBL}"></span>
+        ${hint('linking or unlinking applies right away and rewrites names, album info and credits from genius. unsaved edits here are kept')}</div>`)}
+      ${blk('plays', f('play_offset', 'extra plays', `<input class="inp" id="sd-play-offset" type="number" min="0" step="1" value="${po}" style="max-width:140px">${hint(real + ' real plays + this. not added to play history, stats pages keep counting real plays only')}`, po > 0 && 'clear'))}
+      ${blk('loud', f('loudness', 'loudness override (LUFS)', `<input class="inp" id="sd-loud" type="number" step="0.1" min="-70" max="0" value="${lu == null ? '' : esc(String(lu))}" placeholder="${song.loudness_auto != null ? Number(song.loudness_auto).toFixed(1) : 'auto'}" style="max-width:140px">${hint('auto measured: ' + _sdLoud(song.loudness_auto) + '. empty = use the automatic value')}`, lu != null && 'reset to auto'))}
+      <div id="sd-chips" style="display:${opts.some(o => !o.filled) ? 'flex' : 'none'};flex-wrap:wrap;gap:6px;align-items:center"><span style="${_SD_LBL}">add</span>${opts.filter(o => !o.filled).map(o => `<button type="button" class="btn btn-out mu-ripple" data-chip="${o.k}" style="padding:3px 10px;font-size:12px" onclick="_sdShowOpt('${o.k}',true)">+ ${o.label}</button>`).join('')}</div>
+      <button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start" onclick="_sdStash('${sid}');openStatsLink('${sid}')">play history link</button>
+    </div>
+    <div style="margin-top:16px">
+      ${_sdRow('duration', song.duration ? fmt(song.duration) : '-')}
+      ${_sdRow('source', esc((song.source || 'local').replace('_', ' ')))}
+      ${_sdRow('added', _sdFmtD(song.added_at))}
+      ${_sdRow('last played', _sdFmtD(song.last_played))}
+      ${x.file ? _sdRow('file', esc(x.file.ext.toUpperCase() + ' · ' + (x.file.size / 1048576).toFixed(1) + ' MB')) : ''}
+    </div>`;
+  showModal('edit song', body,
+    `<button class="btn btn-out mu-ripple" onclick="showSongDetails('${escJ(sid)}')">cancel</button><button class="btn btn-fill mu-ripple" onclick="saveSongDetails('${escJ(sid)}')">save</button>`
+  );
+  _sdRestore(sid);
+}
+
+async function saveSongDetails(sid) {
+  const st = _sdState;
+  if (!st || st.sid !== sid) return;
+  const c = _sdCollect();
+  if (!c) return;
+  const {out, reset} = c;
+  const err = m => {
+    const e = document.getElementById('sd-err');
+    if (e) { e.textContent = m; e.style.display = 'block'; e.scrollIntoView({block: 'nearest'}); }
+  };
+  if ('title' in out && !out.title) { err("title can't be empty"); return; }
+  const song = S.library.find(s => s.id === sid);
+  const cb = document.getElementById('edit-song-single');
+  const wantsUnlink = cb?.dataset?.pendingUnlink === '1';
+  const pendingAlbum = song?._pendingAlbumId;
+  let albumChanged = false;
+  if (wantsUnlink && song?.album_id) {
+    const ur = await api('POST', '/api/songs/' + sid + '/unlink-album');
+    if (ur && ur.error) { err(ur.error); return; }
+    albumChanged = true;
+  } else if (pendingAlbum && pendingAlbum !== song?.album_id) {
+    const sr = await api('POST', '/api/songs/' + sid + '/set-album', {album_id: pendingAlbum});
+    if (sr && sr.error) { err(sr.error); return; }
+    albumChanged = true;
+  }
+  if (song) delete song._pendingAlbumId;
+  const payload = {...out, reset};
+  if ('track_num' in payload) payload.track_num = parseInt(payload.track_num, 10) || 0;
+  if (albumChanged) payload.retag = true;
+  let res = {ok: true};
+  if (Object.keys(out).length || reset.length || albumChanged) res = await api('PATCH', `/api/songs/${sid}/details`, payload);
+  if (res && res.error) { err(res.error); return; }
+  closeModal();
+  await loadData();
+  rerenderCurrentView();
+  if (res && res.tags === 'failed') {
+    showModal('saved', '<p>saved, but the file tags could not be written. the file may be in use or read only. the library already has your changes</p>', '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
+  }
+}
+
+async function _sdGeniusLink(sid) {
+  const url = document.getElementById('sd-genius-url')?.value?.trim();
+  const msg = document.getElementById('sd-genius-msg');
+  if (!url) return;
+  if (msg) msg.textContent = 'linking...';
+  _sdStash(sid);
+  const res = await api('POST', `/api/songs/${sid}/genius-link`, {url});
+  if (res && res.ok) { await loadData(); await editSong(sid); return; }
+  _sdDraft = null;
+  if (msg) msg.textContent = (res && res.error) || 'could not link that';
+}
+
+async function _sdGeniusUnlink(sid) {
+  const msg = document.getElementById('sd-genius-msg');
+  if (msg) msg.textContent = 'unlinking...';
+  _sdStash(sid);
+  const res = await api('DELETE', `/api/songs/${sid}/genius-link`);
+  if (res && res.ok) { await loadData(); await editSong(sid); return; }
+  _sdDraft = null;
+  if (msg) msg.textContent = (res && res.error) || 'could not unlink';
+}
+// previous details modal, unused now, safe to delete
+async function _showSongDetailsOld(sid){
   const song=S.library.find(s=>s.id===sid);
   if(!song) return;
   const lblS='color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body);flex-shrink:0';
@@ -26982,7 +27582,8 @@ async function fetchArtistImageGenius(aid) {
   else if (r && r.error) _artistErr(r.error);
 }
 
-function editSong(sid) {
+// previous edit modal, unused now, safe to delete
+function _editSongOld(sid) {
   const song = S.library.find(s => s.id === sid);
   if (!song) return;
   const isSingle = !song.album_id;
@@ -27088,12 +27689,12 @@ async function pickAlbumForSong(sid) {
   );
 }
 
-function applyAlbumPick(sid, albumId, albumTitle) {
+async function applyAlbumPick(sid, albumId, albumTitle) {
   // store selection, go back to edit modal
   const song = S.library.find(s => s.id === sid);
   if (!song) return;
   song._pendingAlbumId = albumId;
-  editSong(sid);
+  await editSong(sid);
   // re-check single toggle off since we just picked an album
   const cb = document.getElementById('edit-song-single');
   if (cb) { cb.checked = false; cb.dataset.pendingUnlink = '0'; }
@@ -37697,6 +38298,7 @@ function renderSettings() {
         ${row('use main artist name', 'always show an artist by their main name, aliases resolve to it everywhere. off = show names exactly as tagged', toggle('artist_use_main_name', CFG.artist_use_main_name !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('use genius metadata', 'show names, feats, album and release date from genius when a match exists, genius also splits producers out of the feats. off = show what youtube music or the file gave. nothing stored is changed, flip it any time', toggle('genius_override', CFG.genius_override !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
+        ${row('write edits to file tags', 'when you edit a song, also write title, artist, album, track number and release date into the audio file. off = edits only live in the library', toggle('write_tags_on_edit', CFG.write_tags_on_edit !== false))}
         ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
         ${row('reorder on long press (mobile)', 'off: long press opens the song menu and reordering only works in select mode. on: long press reorders reorderable lists and the menu opens from the 3 dot button, lists you cant reorder still open the menu on long press', toggle('mob_reorder_default', CFG.mob_reorder_default === true))}
