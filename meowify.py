@@ -25885,7 +25885,7 @@ function renderQueueSidebar() {
       _qListEl.querySelectorAll('.song-row').forEach((r, i) => {
         r.dataset.qi = i;
         const sn = r.querySelector('.snum-num');
-        if (sn && !r.classList.contains('playing')) sn.textContent = i + 1;
+        if (sn && sn.textContent) sn.textContent = i + 1;
       });
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
       _qLastQi = S.qi;
@@ -29143,14 +29143,19 @@ class VirtualList {
     return (v < d.slot ? v : v + g.length) * this.ROW_H;
   }
 
+  // number a row for the position it has during a reorder drag (rows showing an icon have no text and stay untouched)
+  _numAt(el, t) {
+    const sn = el.querySelector('.snum-num');
+    if (sn && sn.textContent) sn.textContent = Math.round(t / this.ROW_H) + 1;
+  }
+
   _relayout() {
     const d = this._drag;
     for (const [i, el] of this._nodes) {
       const t = this._top(i);
       el.style.top = t + 'px';
       if (d && t > -1000) { // numbers follow the rows while a drag reorders them (playing row keeps its icon)
-        const sn = el.querySelector('.snum-num');
-        if (sn && sn.textContent && !el.classList.contains('playing')) sn.textContent = Math.round(t / this.ROW_H) + 1;
+        this._numAt(el, t);
       }
     }
   }
@@ -29354,6 +29359,7 @@ class VirtualList {
     if (!row) return;
     const _rowW = row.style.width;
     row.style.cssText += ';position:absolute;top:' + this._top(i) + 'px;left:0;right:0;width:' + (_rowW || '100%');
+    if (this._drag) { const _t = this._top(i); if (_t > -1000) this._numAt(row, _t); }
     _regDel(old.dataset.id, old);
     old.replaceWith(row);
     this._nodes.set(i, row);
@@ -29417,6 +29423,7 @@ class VirtualList {
       if (wipe != null) row.style.background = `linear-gradient(to right,color-mix(in oklch,var(--color-primary) 18%,transparent) ${wipe}%,transparent ${wipe}%)`;
     }
 
+    if (this._drag) { const _t = this._top(i); if (_t > -1000) this._numAt(row, _t); }
     this._inner.appendChild(row);
     this._nodes.set(i, row);
     if (row.dataset.id) _regAdd(row.dataset.id, row);
@@ -32627,7 +32634,7 @@ function initReorderDrag(listEl, opts) {
   // live numbering: every row shows the number it would have if the drag dropped right now (playing row keeps its icon, same as the commit)
   function setNum(el, n) {
     const sn = el.querySelector('.snum-num');
-    if (!sn || !sn.textContent || el.classList.contains('playing')) return;
+    if (!sn || !sn.textContent) return;
     if (el._n0 === undefined) el._n0 = sn.textContent;
     if (sn.textContent !== String(n)) sn.textContent = n;
   }
@@ -33123,7 +33130,7 @@ function initVlistReorder(vl) {
   // dragged rows (anchor + every follower) show the number they get at the current slot, playing row keeps its icon
   function _sn(el, n) {
     const s = el.querySelector('.snum-num');
-    if (s && s.textContent && !el.classList.contains('playing')) s.textContent = n;
+    if (s && s.textContent) s.textContent = n;
   }
   function _numGroup(k) {
     if (ghost) _sn(ghost, k + rankFrom + 1);
@@ -33414,7 +33421,7 @@ function initDrag(pid) {
       listEl.querySelectorAll('.song-row,.song-row-mobile').forEach((r, i) => {
         r.dataset.idx = i;
         const sn = r.querySelector('.snum-num');
-        if (sn && sn.textContent && !r.classList.contains('playing')) sn.textContent = i + 1;
+        if (sn && sn.textContent) sn.textContent = i + 1;
       });
       // sync queue
       if (!S.shuffle && S.queueSource.type === 'playlist' && S.queueSource.id === pid) {
