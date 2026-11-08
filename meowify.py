@@ -15390,25 +15390,34 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
 #blyrics-src svg{display:block}
-.lye{display:flex;flex-direction:column;gap:12px;padding-bottom:24px}
+.lye{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;min-width:0;box-sizing:border-box;padding-bottom:24px}
+.lye .lye-top{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:8px;padding:4px 0 8px;background:color-mix(in srgb,var(--color-surface-container-high) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 .lye .lye-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .lye .lye-tabs{display:flex;gap:4px}
-.lye .lye-tab{padding:6px 14px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer}
+.lye .lye-tab{padding:5px 12px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer}
 .lye .lye-tab.on{background:var(--color-surface-container-high);color:inherit}
 .lye .lye-acts{display:flex;gap:6px}
-.lye .lye-ta{width:100%;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;white-space:pre;overflow:auto;box-sizing:border-box}
+.lye .lye-acts .btn,.lye .lye-tools .btn{height:34px;min-height:0;padding:0 14px}
+.lye .lye-ta{display:block;width:100%;max-width:100%;min-width:0;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;box-sizing:border-box}
 .lye .lye-hint{color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.8}
-.lye .lye-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lye .lye-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lye .lye-sw{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)}
-.lye .lye-rows{display:flex;flex-direction:column;gap:4px}
-.lye .lye-row{display:flex;align-items:center;gap:6px;padding:4px;border-radius:12px;cursor:pointer}
+.lye .lye-rows{display:flex;flex-direction:column;gap:2px;position:relative}
+.lye .lye-row{display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:10px;cursor:pointer;position:relative}
 .lye .lye-row.on{background:var(--color-surface-container-high)}
-.lye .lye-t{width:78px;flex:none;text-align:center;font-variant-numeric:tabular-nums}
+.lye .lye-row .input{height:30px;padding:0 10px;font-size:13px;border-radius:9px;box-sizing:border-box}
+.lye .lye-t{width:70px;flex:none;text-align:center;padding:0 4px!important;font-variant-numeric:tabular-nums}
 .lye .lye-x{flex:1;min-width:0}
 .lye .lye-sec .lye-x{font-weight:700}
 .lye .lye-br{flex:none;opacity:.5}
+.lye .lye-h{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:26px;opacity:.45;cursor:grab;touch-action:none}
+.lye .lye-h:hover{opacity:.9}
+.lye .lye-row.lye-drag{z-index:2;opacity:.92;box-shadow:0 6px 20px rgba(0,0,0,.35);background:var(--color-surface-container-high)}
+.lye .lye-ins-b::before,.lye .lye-ins-a::after{content:'';position:absolute;left:4px;right:4px;height:2px;border-radius:2px;background:var(--color-primary)}
+.lye .lye-ins-b::before{top:-2px}
+.lye .lye-ins-a::after{bottom:-2px}
 .lye .lye-n{display:flex;flex:none}
-.lye .lye-mini{width:26px;height:26px;border:0;border-radius:8px;background:transparent;color:var(--color-on-surface-variant);cursor:pointer;font-size:15px;line-height:1}
+.lye .lye-mini{width:22px;height:22px;border:0;border-radius:7px;background:transparent;color:var(--color-on-surface-variant);cursor:pointer;font-size:13px;line-height:1}
 .lye .lye-mini:hover{background:var(--color-surface-container-high)}
 .cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
@@ -24822,7 +24831,7 @@ function _lyrGet(sid) { return fetch('/api/songs/' + sid + '/lyrics').then(r => 
 
 const _LYR_ICO = {
   genius: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>',
-  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16"><mask id="lyr-lrc-m"><rect width="20" height="20" fill="white"/><text x="10" y="9" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="9" textLength="16.5" lengthAdjust="spacingAndGlyphs" fill="black">LRC</text><text x="10" y="17.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="9" textLength="16.5" lengthAdjust="spacingAndGlyphs" fill="black">LIB</text></mask><rect width="20" height="20" rx="4" fill="currentColor" mask="url(#lyr-lrc-m)"/></svg>',
+  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16"><mask id="lyr-lrc-m"><rect width="20" height="20" fill="white"/><g fill="black" stroke="black" stroke-width="0.9" stroke-linejoin="round" font-family="Arial Black,Arial,Helvetica,sans-serif" font-weight="900" font-size="9.5" text-anchor="middle"><text x="10" y="9.2" textLength="15.6" lengthAdjust="spacingAndGlyphs">LRC</text><text x="10" y="17.6" textLength="15.6" lengthAdjust="spacingAndGlyphs">LIB</text></g></mask><rect width="20" height="20" rx="4" fill="currentColor" mask="url(#lyr-lrc-m)"/></svg>',
   manual: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l.9-3.6L13.8 3.5a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3L7.1 15.6z"/><path d="M12.2 5.2l2.6 2.6"/></svg>'
 };
 
@@ -25299,6 +25308,7 @@ function lyrToggleCol() {
 }
 
 // ── manual lyrics editor ─────────────────────────────────────────────────────
+const _LYE_GRIP = '<svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor"><circle cx="2.5" cy="3" r="1.4"/><circle cx="7.5" cy="3" r="1.4"/><circle cx="2.5" cy="8" r="1.4"/><circle cx="7.5" cy="8" r="1.4"/><circle cx="2.5" cy="13" r="1.4"/><circle cx="7.5" cy="13" r="1.4"/></svg>';
 function _lyrEdFmt(t) {
   if (!Number.isFinite(t)) return '';
   const cs = Math.round(Math.max(0, t) * 100), m = Math.floor(cs / 6000), s = ((cs % 6000) / 100).toFixed(2).padStart(5, '0');
@@ -25391,24 +25401,25 @@ function _lyrEditRender() {
     <div class="lye-tabs"><button class="lye-tab${e.mode === 'plain' ? ' on' : ''}" onclick="lyrEditMode('plain')">text</button><button class="lye-tab${e.mode === 'synced' ? ' on' : ''}" onclick="lyrEditMode('synced')">synced</button></div>
     <div class="lye-acts"><button class="btn btn-out mu-ripple" onclick="lyrEditCancel()">cancel</button><button class="btn btn-fill mu-ripple" onclick="lyrEditDone()">done</button></div>
   </div>`;
-  let main;
+  let main = '', tools = '';
   if (e.mode === 'synced') {
+    const grip = i => `<span class="lye-h" title="drag to reorder" onpointerdown="lyrEditDragStart(event,${i})" onclick="event.stopPropagation()">${_LYE_GRIP}</span>`;
     const rows = (e.items || []).map((it, i) => it.k === 's'
-      ? `<div class="lye-row lye-sec${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditActive(${i})"><span class="lye-br">[</span><input class="input lye-x" value="${esc(it.x)}" placeholder="section name" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-br">]</span><span class="lye-n"><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">+</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`
-      : `<div class="lye-row${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditRow(${i})"><input class="input lye-t" id="lye-t-${i}" value="${esc(_lyrEdFmt(it.t))}" placeholder="--:--" onclick="event.stopPropagation()" onfocus="lyrEditActive(${i},true)" onchange="lyrEditTime(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><input class="input lye-x" value="${esc(it.x)}" placeholder="lyrics line" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="-0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},-0.1)">-</button><button class="lye-mini" title="+0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},0.1)">+</button><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">↵</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`).join('');
-    main = `<div class="lye-tools">
+      ? `<div class="lye-row lye-sec${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditActive(${i})">${grip(i)}<span class="lye-br">[</span><input class="input lye-x" value="${esc(it.x)}" placeholder="section name" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-br">]</span><span class="lye-n"><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">+</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`
+      : `<div class="lye-row${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditRow(${i})">${grip(i)}<input class="input lye-t" id="lye-t-${i}" value="${esc(_lyrEdFmt(it.t))}" placeholder="--:--" onclick="event.stopPropagation()" onfocus="lyrEditActive(${i},true)" onchange="lyrEditTime(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><input class="input lye-x" value="${esc(it.x)}" placeholder="lyrics line" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="-0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},-0.1)">-</button><button class="lye-mini" title="+0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},0.1)">+</button><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">↵</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`).join('');
+    tools = `<div class="lye-tools">
       <button class="btn btn-fill mu-ripple" onclick="lyrEditStamp()">stamp</button>
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('l')">add line</button>
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('s')">add section</button>
       <label class="lye-sw"><input type="checkbox" ${e.scrub ? 'checked' : ''} onchange="lyrEditScrub(this.checked)">hear while dragging the seekbar</label>
-    </div>
-    <div class="lye-rows" id="lye-rows">${rows}</div>
-    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, - and + nudge it by 0.1s, sections are markers that keep your chorus and verse structure</div>`;
+    </div>`;
+    main = `<div class="lye-rows" id="lye-rows">${rows}</div>
+    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, drag the handle to reorder, - and + nudge it by 0.1s, sections are markers that keep your chorus and verse structure</div>`;
   } else {
     main = `<textarea id="lyr-ed-ta" class="input lye-ta" spellcheck="false" placeholder="[Verse 1: artist]&#10;lyrics here" oninput="lyrEditInput(this.value)" oncontextmenu="lyrEditCtx(event)" onkeydown="lyrEditKey(event)">${esc(e.plain)}</textarea>
     <div class="lye-hint">[Chorus] or [Verse 1: name, name] lines group the lyrics, *italic* and **bold** style text, right click for helpers</div>`;
   }
-  body.innerHTML = `<div class="lye" oncontextmenu="event.stopPropagation()">${bar}${main}</div>`;
+  body.innerHTML = `<div class="lye" oncontextmenu="event.stopPropagation()"><div class="lye-top">${bar}${tools}</div>${main}</div>`;
   body.scrollTop = top;
 }
 
@@ -25445,6 +25456,48 @@ function lyrEditRow(i) {
   lyrEditActive(i, true);
   if (it.k === 'l') _lyrEdSeek(it.t);
 }
+function lyrEditDragStart(ev, i) {
+  const e = S.lyrEdit;
+  if (!e || !e.items) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const body = document.getElementById('lyrics-body'), wrap = document.getElementById('lye-rows');
+  const rows = wrap ? Array.from(wrap.querySelectorAll('.lye-row')) : [];
+  const src = rows[i], h = ev.currentTarget;
+  if (!src || !body) return;
+  try { h.setPointerCapture(ev.pointerId); } catch (_) {}
+  const others = rows.filter((_, k) => k !== i);
+  const startY = ev.clientY, startScroll = body.scrollTop;
+  let y = startY, to = i, raf = 0;
+  src.classList.add('lye-drag');
+  const upd = () => {
+    src.style.transform = 'translateY(' + (y - startY + body.scrollTop - startScroll) + 'px)';
+    let n = 0;
+    others.forEach(r => { const b = r.getBoundingClientRect(); if (b.top + b.height / 2 < y) n++; });
+    to = n;
+    others.forEach(r => r.classList.remove('lye-ins-b', 'lye-ins-a'));
+    if (others.length) others[Math.min(to, others.length - 1)].classList.add(to < others.length ? 'lye-ins-b' : 'lye-ins-a');
+  };
+  const tick = () => {
+    const br = body.getBoundingClientRect(), top = br.top + 100, bot = br.bottom - 40;
+    if (y < top) body.scrollTop -= Math.min(18, (top - y) / 3 + 2);
+    else if (y > bot) body.scrollTop += Math.min(18, (y - bot) / 3 + 2);
+    upd();
+    raf = requestAnimationFrame(tick);
+  };
+  const fin = ok => {
+    cancelAnimationFrame(raf);
+    h.onpointermove = h.onpointerup = h.onpointercancel = null;
+    try { h.releasePointerCapture(ev.pointerId); } catch (_) {}
+    if (ok && to !== i) { const it = e.items.splice(i, 1)[0]; e.items.splice(to, 0, it); e.active = to; }
+    _lyrEditRender();
+  };
+  h.onpointermove = m => { y = m.clientY; };
+  h.onpointerup = () => fin(true);
+  h.onpointercancel = () => fin(false);
+  upd();
+  raf = requestAnimationFrame(tick);
+}
 function lyrEditStamp() {
   const e = S.lyrEdit;
   if (!e || e.mode !== 'synced' || !e.items) return;
@@ -25456,7 +25509,10 @@ function lyrEditStamp() {
   if (inp) inp.value = _lyrEdFmt(t);
   let n = i + 1;
   while (n < e.items.length && e.items[n].k !== 'l') n++;
-  lyrEditActive(n < e.items.length ? n : i);
+  const ni = n < e.items.length ? n : i;
+  lyrEditActive(ni, true);
+  const nr = document.getElementById('lye-r-' + ni);
+  if (nr) nr.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 function lyrEditAdd(kind, after) {
   const e = S.lyrEdit;
@@ -25570,8 +25626,8 @@ function lyrEditCtx(ev) {
 
 function _lyrRestoreItems(d) {
   const av = _lyrAvail(d), out = [];
-  if (av.genius) out.push({ label: 'genius', fn: () => lyrRestore('genius') });
-  if (av.lrclib) out.push({ label: 'lrclib', fn: () => lyrRestore('lrclib') });
+  if (av.genius) out.push({ label: 'genius', icon: _LYR_ICO.genius, fn: () => lyrRestore('genius') });
+  if (av.lrclib) out.push({ label: 'lrclib', icon: _LYR_ICO.lrclib, fn: () => lyrRestore('lrclib') });
   return out.length ? [{ _header: true, label: 'restore from' }, ...out] : [];
 }
 function lyrRestore(kind) {
@@ -25672,7 +25728,7 @@ function _lyrMenuItems(song, d, full) {
   if (!d.manual) items.push({ label: 'create manual lyrics', icon: MEOW_ICONS.pencil, fn: () => lyrManualCreate() });
   else {
     items.push({ label: 'edit lyrics', icon: MEOW_ICONS.pencil, fn: () => lyrEditStart() });
-    const rs = _lyrRestoreItems(d);
+    const rs = src === 'manual' ? _lyrRestoreItems(d) : [];
     if (rs.length) { items.push({ sep: true }); rs.forEach(x => items.push(x)); items.push({ sep: true }); }
     items.push({ label: 'delete manual lyrics', icon: MEOW_ICONS.trash, err: true, fn: () => lyrManualDelete() });
   }
