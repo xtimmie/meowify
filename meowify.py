@@ -32780,6 +32780,8 @@ function initReorderDrag(listEl, opts) {
     if (e.pointerId !== pid) return;
     cancelHold();
     if (!active) return;
+    lastY = e.clientY;
+    update();
     settle(Math.abs(offset()) > MOVE_THRESH);
   });
 
@@ -33323,6 +33325,8 @@ function initVlistReorder(vl) {
     if (e.pointerId !== pid) return;
     cancelHold();
     if (!active) return;
+    lastY = e.clientY;
+    place();
     settle(Math.abs(lastY - downY) > MOVE_THRESH);
   });
 
