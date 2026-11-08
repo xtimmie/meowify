@@ -1068,6 +1068,19 @@ def init_db():
             tries INTEGER DEFAULT 0,
             next_try INTEGER
         )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS lyrics_manual (
+            song_id TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+            plain TEXT,
+            synced TEXT,
+            updated_at INTEGER
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS lyrics_pref (
+            song_id TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+            def_src TEXT,
+            def_type TEXT,
+            last_src TEXT,
+            last_type TEXT
+        )""")
         if version < 5:
             # v4 → v5: add new columns to songs + albums, create artists tables
             cols = [r[1] for r in c.execute("PRAGMA table_info(songs)").fetchall()]
@@ -3162,9 +3175,22 @@ def _lyrics_payload(sid):
             gen = {'sections': d.get('sections') or [], 'ann': d.get('ann') or {}, 'fetched_at': g[3]}
         except Exception:
             gen = None
-    has = bool(base['lrc'] or base['plain'] or gen)
+    with db() as c:
+        mr = c.execute("SELECT plain, synced, updated_at FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+        pr = c.execute("SELECT def_src, def_type, last_src, last_type FROM lyrics_pref WHERE song_id=?", (sid,)).fetchone()
+    man = None
+    if mr:
+        try:
+            m_items = json.loads(mr[1]) if mr[1] else None
+        except Exception:
+            m_items = None
+        man = {'plain': mr[0] or '', 'items': m_items, 'updated_at': mr[2]}
+    pref = {'def_src': pr[0], 'def_type': pr[1], 'last_src': pr[2], 'last_type': pr[3]} if pr else None
+    has = bool(base['lrc'] or base['plain'] or gen or man)
     ins = (not has) and ((base['source'] or '').lower() == 'instrumental' or bool(g and g[0] == 'instrumental'))
     base['genius'] = gen
+    base['manual'] = man
+    base['pref'] = pref
     base['state'] = 'instrumental' if ins else ('ok' if has else 'none')
     if ins:
         base['instrumental'] = True
@@ -3380,6 +3406,7 @@ def _shift_lrc(lrc, offset_seconds):
     shifted = [(max(0.0, t + offset_seconds), text) for t, text in lines]
     return _format_lrc(shifted)
 
+_AUTO_ALIGN_ON = False
 def _ctc_align_full(file_path, plain_text, language='en'):
     """run ctc-forced-aligner on full audio + plain text, return lrc string or None"""
     import os as _os
@@ -3447,7 +3474,7 @@ def _ctc_align_full(file_path, plain_text, language='en'):
 def _align_song(song_id):
     """alignment worker: full ctc for plain-only, duration shift for mismatched lrc"""
     with _cfg_lock:
-        if not CFG.get('auto_align_lyrics', False):
+        if not _AUTO_ALIGN_ON or not CFG.get('auto_align_lyrics', False):
             return
     try:
         with db() as c:
@@ -13608,6 +13635,78 @@ def api_clear_lyrics(sid):
         _lyrics_prefetch_set.discard(sid)
     return jsonify({'ok': True})
 
+@app.route('/api/songs/<sid>/lyrics/manual', methods=['PUT'])
+def api_lyrics_manual_put(sid):
+    data = request.get_json(silent=True) or {}
+    if 'plain' in data and data['plain'] is not None and not isinstance(data['plain'], str):
+        return jsonify({'error': 'bad plain'}), 400
+    items = data.get('items')
+    if items is not None:
+        if not isinstance(items, list):
+            return jsonify({'error': 'bad items'}), 400
+        clean = []
+        for it in items[:5000]:
+            if not isinstance(it, dict):
+                continue
+            k, x = it.get('k'), it.get('x')
+            if k not in ('l', 's') or not isinstance(x, str):
+                continue
+            if k == 'l':
+                t = it.get('t')
+                if t is not None:
+                    if isinstance(t, bool) or not isinstance(t, (int, float)) or t < 0 or t > 86400:
+                        continue
+                    t = round(float(t), 3)
+                clean.append({'k': 'l', 't': t, 'x': x[:2000]})
+            else:
+                clean.append({'k': 's', 'x': x[:2000]})
+        items = clean
+    now = int(time.time())
+    with db() as c:
+        if not c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone():
+            return jsonify({'error': 'not found'}), 404
+        row = c.execute("SELECT plain, synced FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+        plain_v = (data.get('plain') or '') if 'plain' in data else (row[0] if row else '')
+        if 'items' in data:
+            synced_v = json.dumps(items) if items is not None else None
+        else:
+            synced_v = row[1] if row else None
+        c.execute("INSERT OR REPLACE INTO lyrics_manual (song_id, plain, synced, updated_at) VALUES (?,?,?,?)",
+                  (sid, plain_v, synced_v, now))
+        if row is None:
+            c.execute("INSERT OR IGNORE INTO lyrics_pref (song_id) VALUES (?)", (sid,))
+            c.execute("UPDATE lyrics_pref SET def_src='manual', def_type=NULL WHERE song_id=?", (sid,))
+    return jsonify({'ok': True, 'updated_at': now})
+
+@app.route('/api/songs/<sid>/lyrics/manual', methods=['DELETE'])
+def api_lyrics_manual_delete(sid):
+    with db() as c:
+        c.execute("DELETE FROM lyrics_manual WHERE song_id=?", (sid,))
+        c.execute("UPDATE lyrics_pref SET def_src=NULL, def_type=NULL WHERE song_id=? AND def_src='manual'", (sid,))
+        c.execute("UPDATE lyrics_pref SET last_src=NULL, last_type=NULL WHERE song_id=? AND last_src='manual'", (sid,))
+    return jsonify({'ok': True})
+
+@app.route('/api/songs/<sid>/lyrics/pref', methods=['POST'])
+def api_lyrics_pref(sid):
+    data = request.get_json(silent=True) or {}
+    vals = {}
+    for k in ('def_src', 'def_type', 'last_src', 'last_type'):
+        if k not in data:
+            continue
+        v = data[k]
+        allowed = (None, 'lrclib', 'genius', 'manual') if k.endswith('src') else (None, 'synced', 'plain')
+        if v not in allowed:
+            return jsonify({'error': 'bad value'}), 400
+        vals[k] = v
+    if not vals:
+        return jsonify({'ok': True})
+    with db() as c:
+        if not c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone():
+            return jsonify({'error': 'not found'}), 404
+        c.execute("INSERT OR IGNORE INTO lyrics_pref (song_id) VALUES (?)", (sid,))
+        c.execute("UPDATE lyrics_pref SET " + ', '.join(k + '=?' for k in vals) + " WHERE song_id=?", (*vals.values(), sid))
+    return jsonify({'ok': True})
+
 @app.route('/api/songs/<sid>/genius-apply', methods=['POST'])
 def api_genius_apply(sid):
     genius_song_id = str((request.json or {}).get('genius_song_id',''))
@@ -14995,7 +15094,8 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .gl-annpop-body p{margin:0 0 .7em}
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
-.lyr-srcbtn{width:auto!important;padding:0 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label)}
+#blyrics-src svg{display:block}
+.cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
 .lyr-bar>i{position:absolute;top:0;bottom:0;width:35%;background:var(--color-primary);border-radius:2px;animation:lyrbar 1.1s ease-in-out infinite}
@@ -24169,26 +24269,144 @@ let _lyrOpenAid = null;
 const _lyrSleep = ms => new Promise(r => setTimeout(r, ms));
 
 function _lyrAnnOn() { return CFG.lyrics_annotations !== false; }
-function _lyrSig(d) { return d ? [d.state, d.fetched_at, d.genius && d.genius.fetched_at, d.lrc ? 1 : 0, d.plain ? 1 : 0].join('|') : ''; }
+function _lyrSig(d) { return d ? [d.state, d.fetched_at, d.genius && d.genius.fetched_at, d.lrc ? 1 : 0, d.plain ? 1 : 0, d.manual ? d.manual.updated_at : 0, d.pref ? [d.pref.def_src, d.pref.def_type].join(':') : ''].join('|') : ''; }
 function _lyrBar(on) { const b = document.getElementById('lyr-bar'); if (b) b.classList.toggle('on', !!on); }
 function _lyrScrollMark() { if (typeof _lrcScrollSuppress !== 'undefined' && _lrcScrollSuppress > 0) return; _lyrScrollAt = Date.now(); }
 function _lyrGet(sid) { return fetch('/api/songs/' + sid + '/lyrics').then(r => r.json()).catch(() => null); }
 
+const _LYR_ICO = {
+  genius: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 6.2A6.6 6.6 0 1 0 16.6 10.6H10.4"/></svg>',
+  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14M3 10h8M3 14.5h5"/><path d="M13.5 11.5l3.8 2.5-3.8 2.5z" fill="currentColor"/></svg>',
+  manual: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l.9-3.6L13.8 3.5a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3L7.1 15.6z"/><path d="M12.2 5.2l2.6 2.6"/></svg>'
+};
+
+function _lyrMdEsc(t) { return String(t).replace(/[\\*]/g, '\\$&'); }
+function _lyrMdSegs(s) {
+  const out = [];
+  let i = 0, it = false, bd = false, buf = '';
+  const flush = () => { if (buf) out.push({ t: buf, i: it, b: bd }); buf = ''; };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\' && (s[i + 1] === '*' || s[i + 1] === '\\')) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '*' && s[i + 1] === '*') { flush(); bd = !bd; i += 2; continue; }
+    if (c === '*') { flush(); it = !it; i++; continue; }
+    buf += c;
+    i++;
+  }
+  flush();
+  return out;
+}
+function _lyrStripMd(s) { return _lyrMdSegs(String(s || '')).map(x => x.t).join(''); }
+function _lyrSegsMd(segs) {
+  const m = [];
+  (segs || []).forEach(s => {
+    const l = m[m.length - 1];
+    if (l && !!l.i === !!s.i && !!l.b === !!s.b) l.t += s.t; else m.push({ t: s.t, i: !!s.i, b: !!s.b });
+  });
+  return m.map(s => { let x = _lyrMdEsc(s.t); if (s.i) x = '*' + x + '*'; if (s.b) x = '**' + x + '**'; return x; }).join('');
+}
+function _lyrGeniusToText(g) {
+  const out = [];
+  (g.sections || []).forEach(sc => {
+    if (out.length) out.push('');
+    if (sc.hs && sc.hs.length) out.push('[' + _lyrSegsMd(sc.hs) + ']');
+    else if (sc.h) out.push('[' + _lyrMdEsc(sc.h) + ']');
+    const ls = (sc.lines || []).slice();
+    while (ls.length && !ls[ls.length - 1].length) ls.pop();
+    ls.forEach(ln => out.push(ln.length ? _lyrSegsMd(ln) : ''));
+  });
+  return out.join('\n');
+}
+function _lyrParseManual(text) {
+  const secs = [];
+  let cur = null;
+  String(text || '').replace(/\r/g, '').split('\n').forEach(raw => {
+    const ln = raw.trim();
+    const hm = ln.match(/^\[(.+)\]$/);
+    if (hm) { cur = { hs: _lyrMdSegs(hm[1]), lines: [] }; secs.push(cur); return; }
+    if (!cur) { if (!ln) return; cur = { lines: [] }; secs.push(cur); }
+    cur.lines.push(ln ? _lyrMdSegs(raw.replace(/\s+$/, '')) : []);
+  });
+  secs.forEach(sc => {
+    while (sc.lines.length && !sc.lines[0].length) sc.lines.shift();
+    while (sc.lines.length && !sc.lines[sc.lines.length - 1].length) sc.lines.pop();
+  });
+  return secs;
+}
+function _lyrManualLrc(m) {
+  const ls = ((m && m.items) || []).filter(x => x.k === 'l' && Number.isFinite(x.t) && (x.x || '').trim()).sort((a, b) => a.t - b.t);
+  return ls.map(x => {
+    const cs = Math.round(Math.max(0, x.t) * 100), mm = Math.floor(cs / 6000), ss = ((cs % 6000) / 100).toFixed(2).padStart(5, '0');
+    return '[' + String(mm).padStart(2, '0') + ':' + ss + ']' + _lyrStripMd(x.x);
+  }).join('\n');
+}
+
+function _lyrManualHas(m) {
+  return !!(m && (((m.plain || '').trim()) || (m.items || []).some(x => x.k === 'l' && (x.x || '').trim())));
+}
+
 function _lyrAvail(d) {
   const gen = !!(d.genius && d.genius.sections && d.genius.sections.length);
   const lrcOk = !!d.lrc || (!!d.plain && d.source === 'lrclib');
-  return { lrclib: lrcOk, genius: gen };
+  return { lrclib: lrcOk, genius: gen, manual: _lyrManualHas(d.manual) };
+}
+const _lyrCount = av => (av.lrclib ? 1 : 0) + (av.genius ? 1 : 0) + (av.manual ? 1 : 0);
+
+function _lyrTypes(d, src) {
+  if (src === 'manual') {
+    const m = d.manual || {};
+    return { synced: (m.items || []).some(x => x.k === 'l' && Number.isFinite(x.t) && (x.x || '').trim()), plain: !!(m.plain || '').trim() };
+  }
+  if (src === 'genius') return { synced: false, plain: true };
+  return { synced: !!d.lrc, plain: !!d.plain };
 }
 
-function _lyrPickSrc(song, d) {
-  const av = _lyrAvail(d);
-  if (S.lyrSrcSid === song.id && S.lyrSrcUser && av[S.lyrSrcUser]) return S.lyrSrcUser;
+function _lyrAuto(song, d, av) {
   const songDur = song.duration || 0, srcDur = d.source_duration || 0;
   const mism = d.lrc && songDur > 0 && srcDur > 0 && Math.abs(songDur - srcDur) > 5;
-  if (d.lrc && !mism) return 'lrclib';
-  if (av.genius) return 'genius';
-  return 'lrclib';
+  const good = !!d.lrc && !mism;
+  const ps = CFG.lyrics_pref_src || 'auto', pt = CFG.lyrics_pref_type || 'auto';
+  const lrcOk = av.lrclib && (CFG.lyrics_lrc_synced_only !== true || good);
+  let src;
+  if (ps === 'genius') src = av.genius ? 'genius' : av.lrclib ? 'lrclib' : null;
+  else if (ps === 'lrclib') src = lrcOk ? 'lrclib' : av.genius ? 'genius' : av.lrclib ? 'lrclib' : null;
+  else if (pt === 'plain') src = av.genius ? 'genius' : av.lrclib ? 'lrclib' : null;
+  else src = good && lrcOk ? 'lrclib' : av.genius ? 'genius' : av.lrclib ? 'lrclib' : null;
+  return src || (av.manual ? 'manual' : 'lrclib');
 }
+
+function _lyrTypeAuto(song, d, src, ty) {
+  if (src === 'lrclib') {
+    const songDur = song.duration || 0, srcDur = d.source_duration || 0;
+    const mism = d.lrc && songDur > 0 && srcDur > 0 && Math.abs(songDur - srcDur) > 5;
+    if (ty.synced && (!srcDur || !songDur || !mism)) return 'synced';
+    return ty.plain ? 'plain' : 'synced';
+  }
+  if (src === 'manual') return ty.synced ? 'synced' : 'plain';
+  return 'plain';
+}
+
+function _lyrPick(song, d, forceSynced) {
+  const av = _lyrAvail(d), pr = d.pref || {}, mode = CFG.lyrics_pick_mode || 'auto';
+  const sess = S.lyrSrcSid === song.id ? S.lyrSrcUser : null;
+  let src = null, from = 'auto';
+  if (sess && av[sess]) { src = sess; from = 'user'; }
+  else if (pr.def_src && av[pr.def_src]) { src = pr.def_src; from = 'default'; }
+  else if (mode === 'song' && pr.last_src && av[pr.last_src]) src = pr.last_src;
+  else if (mode === 'global' && CFG.lyrics_last_src && av[CFG.lyrics_last_src]) src = CFG.lyrics_last_src;
+  if (!src) src = _lyrAuto(song, d, av);
+  const ty = _lyrTypes(d, src);
+  let want = null;
+  if (forceSynced !== undefined) want = forceSynced ? 'synced' : 'plain';
+  else if (S.lyrTypeSid === song.id && S.lyrTypeUser) want = S.lyrTypeUser;
+  else if (from === 'default' && pr.def_type) want = pr.def_type;
+  else if (mode === 'song' && pr.last_type) want = pr.last_type;
+  else if (mode === 'global' && CFG.lyrics_last_type) want = CFG.lyrics_last_type;
+  else if (CFG.lyrics_pref_type === 'synced' || CFG.lyrics_pref_type === 'plain') want = CFG.lyrics_pref_type;
+  const type = want && ty[want] ? want : _lyrTypeAuto(song, d, src, ty);
+  return { src, type, from };
+}
+function _lyrPickSrc(song, d) { return _lyrPick(song, d).src; }
 
 function _lyrSanitize(html) {
   const doc = new DOMParser().parseFromString('<div>' + (html || '') + '</div>', 'text/html');
@@ -24416,8 +24634,8 @@ function _lyrToolbar(showSwitch, src, hasAnn) {
   const ab = document.getElementById('blyrics-ann');
   if (sb) {
     sb.style.display = showSwitch ? '' : 'none';
-    sb.textContent = src;
-    sb.title = 'source: ' + src + ' - click for ' + (src === 'genius' ? 'lrclib' : 'genius');
+    sb.innerHTML = _LYR_ICO[src] || _LYR_ICO.lrclib;
+    sb.title = 'lyrics source: ' + src + ' - click to change';
   }
   if (ab) {
     ab.style.display = src === 'genius' && hasAnn ? '' : 'none';
@@ -24426,11 +24644,96 @@ function _lyrToolbar(showSwitch, src, hasAnn) {
   }
 }
 
+function _lyrRemember(song, src, type) {
+  const body = {};
+  if (src) {
+    body.last_src = src;
+    if (src !== 'manual') { CFG.lyrics_last_src = src; saveSetting('lyrics_last_src', src).catch(() => {}); }
+  }
+  if (type) {
+    body.last_type = type;
+    CFG.lyrics_last_type = type;
+    saveSetting('lyrics_last_type', type).catch(() => {});
+  }
+  const d = S.lyricsData;
+  if (d) d.pref = Object.assign({}, d.pref, body);
+  if (Object.keys(body).length) api('POST', '/api/songs/' + song.id + '/lyrics/pref', body).catch(() => {});
+}
+
 function lyrSetSrc(src) {
   if (!S.cur || !S.lyricsData) return;
   S.lyrSrcUser = src;
   S.lyrSrcSid = S.cur.id;
+  _lyrRemember(S.cur, src, null);
   _lyrDraw(S.cur, S.lyricsData);
+}
+
+function lyrSetDefault() {
+  const song = S.cur, d = S.lyricsData;
+  if (!song || !d) return;
+  const pk = _lyrPick(song, d);
+  const body = { def_src: pk.src, def_type: pk.type };
+  d.pref = Object.assign({}, d.pref, body);
+  api('POST', '/api/songs/' + song.id + '/lyrics/pref', body).catch(() => {});
+}
+
+function lyrUnsetDefault() {
+  const song = S.cur, d = S.lyricsData;
+  if (!song || !d) return;
+  const body = { def_src: null, def_type: null };
+  if (d.pref && d.pref.last_src === 'manual') { body.last_src = null; body.last_type = null; }
+  d.pref = Object.assign({}, d.pref, body);
+  api('POST', '/api/songs/' + song.id + '/lyrics/pref', body).catch(() => {});
+  S.lyrSrcSid = null;
+  S.lyrTypeSid = null;
+  _lyrDraw(song, d);
+}
+
+function lyrManualCreate() {
+  const d = S.lyricsData, song = S.cur;
+  if (!d || !song) return;
+  const av = _lyrAvail(d), opts = [];
+  if (av.genius) opts.push(['genius', 'genius lyrics', 'sections, labels and artist names']);
+  if (av.lrclib) opts.push(['lrclib', 'lrclib lyrics', d.lrc ? 'plain text and synced timings' : 'plain text']);
+  opts.push(['empty', 'start empty', 'write them from scratch']);
+  if (opts.length === 1) { _lyrManualMake('empty'); return; }
+  const rows = opts.map(([k, t, s], i) => `<label style="display:flex;align-items:center;gap:12px;padding:10px 4px;cursor:pointer"><input type="radio" name="lyr-mc" value="${k}" ${i === 0 ? 'checked' : ''} style="accent-color:var(--color-primary)"><span><span style="display:block;font:var(--type-body-medium);font-variation-settings:var(--fv-body)">${t}</span><span style="display:block;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)">${s}</span></span></label>`).join('');
+  const body = `<div style="color:var(--color-on-surface-variant);margin-bottom:6px">start from a copy of existing lyrics, the original stays untouched</div>${rows}`;
+  const acts = `<button class="btn btn-out mu-ripple" onclick="closeModal()">cancel</button><button class="btn btn-fill mu-ripple" onclick="closeModal();_lyrManualMake(document.querySelector('input[name=lyr-mc]:checked')?.value||'empty')">create</button>`;
+  showModal('create manual lyrics', body, acts);
+}
+
+async function _lyrManualMake(kind) {
+  const song = S.cur, d = S.lyricsData;
+  if (!song || !d) return;
+  let plain = '', items = null;
+  if (kind === 'genius' && d.genius) plain = _lyrGeniusToText(d.genius);
+  else if (kind === 'lrclib') {
+    const lp = d.source === 'lrclib' ? (d.plain || '') : '';
+    if (d.lrc) {
+      const ls = parseLrc(d.lrc);
+      items = ls.map(l => ({ k: 'l', t: l.time, x: l.text }));
+      plain = lp || ls.map(l => l.text).join('\n');
+    } else plain = lp;
+  }
+  const body = { plain };
+  if (items) body.items = items;
+  await api('PUT', '/api/songs/' + song.id + '/lyrics/manual', body).catch(() => {});
+  S.lyrSrcSid = null;
+  S.lyrTypeSid = null;
+  _lyrMem.delete(song.id);
+  if (S.cur && S.cur.id === song.id) renderLyricsForSong(song);
+}
+
+async function lyrManualDelete() {
+  const song = S.cur;
+  if (!song) return;
+  if (!await confirmModal('delete manual lyrics', 'this removes your own lyrics for this song, the lrclib and genius lyrics stay untouched')) return;
+  await api('DELETE', '/api/songs/' + song.id + '/lyrics/manual').catch(() => {});
+  S.lyrSrcSid = null;
+  S.lyrTypeSid = null;
+  _lyrMem.delete(song.id);
+  if (S.cur && S.cur.id === song.id) renderLyricsForSong(song);
 }
 
 function lyrToggleAnn() {
@@ -24455,23 +24758,43 @@ function lyrToggleCol() {
   if (S.cur && S.lyricsData) _lyrDraw(S.cur, S.lyricsData);
 }
 
-function lyrContext(e) {
-  const d = S.lyricsData, song = S.cur;
-  if (!d || !song || d.state !== 'ok') return;
-  e.preventDefault();
-  const av = _lyrAvail(d), src = _lyrPickSrc(song, d);
+function _lyrMenuItems(song, d, full) {
+  const av = _lyrAvail(d), pk = _lyrPick(song, d), src = pk.src, pr = d.pref || {};
   const items = [];
-  if (av.lrclib && av.genius) {
+  if (_lyrCount(av) >= 2) {
     items.push({ _header: true, label: 'source' });
-    items.push({ label: 'lrclib', radio: src === 'lrclib', group: 'lsrc', fn: () => lyrSetSrc('lrclib') });
-    items.push({ label: 'genius', radio: src === 'genius', group: 'lsrc', fn: () => lyrSetSrc('genius') });
+    ['lrclib', 'genius', 'manual'].forEach(k => {
+      if (!av[k]) return;
+      items.push({ label: k, radio: src === k, group: 'lsrc', tag: pr.def_src === k ? 'default' : '', fn: () => lyrSetSrc(k) });
+    });
+    items.push({ sep: true });
+    const isDef = pr.def_src === src && (!pr.def_type || pr.def_type === pk.type);
+    if (!isDef) items.push({ label: 'set as default for this song', icon: MEOW_ICONS.check, fn: () => lyrSetDefault() });
+    if (pr.def_src) items.push({ label: 'unset default', fn: () => lyrUnsetDefault() });
     items.push({ sep: true });
   }
+  if (!full) return items;
   if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
   if (av.genius) items.push({ label: 'pretty display', check: _lyrPrettyOn(), fn: () => lyrTogglePretty() });
   if (av.genius && _lyrPrettyOn()) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
+  if (!d.manual) items.push({ label: 'create manual lyrics', icon: MEOW_ICONS.pencil, fn: () => lyrManualCreate() });
+  else items.push({ label: 'delete manual lyrics', icon: MEOW_ICONS.trash, err: true, fn: () => lyrManualDelete() });
   items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
-  showCtx(e, items);
+  return items;
+}
+
+function lyrContext(e) {
+  const d = S.lyricsData, song = S.cur;
+  if (!d || !song || (d.state !== 'ok' && d.state !== 'none')) return;
+  e.preventDefault();
+  showCtx(e, _lyrMenuItems(song, d, true));
+}
+
+function lyrSrcMenu(e) {
+  const d = S.lyricsData, song = S.cur;
+  if (!d || !song || d.state !== 'ok') return;
+  if (e.stopPropagation) e.stopPropagation();
+  showCtx(e, _lyrMenuItems(song, d, false));
 }
 
 async function lyricsReload(sid) {
@@ -24490,10 +24813,10 @@ function _lyrWire() {
   const syncBtn = document.getElementById('blyrics-sync');
   if (box && syncBtn) {
     const src = document.createElement('button');
-    src.className = 'cbtn mu-ripple lyr-srcbtn';
+    src.className = 'cbtn mu-ripple';
     src.id = 'blyrics-src';
     src.style.display = 'none';
-    src.onclick = () => { const d = S.lyricsData; if (!S.cur || !d) return; lyrSetSrc(_lyrPickSrc(S.cur, d) === 'genius' ? 'lrclib' : 'genius'); };
+    src.onclick = e => lyrSrcMenu(e);
     const ann = document.createElement('button');
     ann.className = 'cbtn mu-ripple';
     ann.id = 'blyrics-ann';
@@ -24574,12 +24897,30 @@ function _lyrDraw(song, data, forceSynced) {
   }
 
   const av = _lyrAvail(data);
-  const src = _lyrPickSrc(song, data);
+  if (forceSynced !== undefined) {
+    const ft = forceSynced ? 'synced' : 'plain';
+    if (S.lyrTypeSid !== sid || S.lyrTypeUser !== ft) { S.lyrTypeUser = ft; S.lyrTypeSid = sid; _lyrRemember(song, null, ft); }
+  }
+  const pk = _lyrPick(song, data, forceSynced);
+  const src = pk.src;
   const hasAnn = !!(data.genius && data.genius.ann && Object.keys(data.genius.ann).length);
-  _lyrToolbar(av.lrclib && av.genius, src, hasAnn);
+  _lyrToolbar(_lyrCount(av) >= 2, src, hasAnn);
   if (S.nowPlayingOpen) tickNowPlaying();
 
-  if (src === 'genius' && data.genius) {
+  if (src === 'manual' && data.manual) {
+    const mt = _lyrTypes(data, 'manual');
+    lyrAnnClose();
+    if (pk.type === 'synced' && mt.synced) {
+      _updateLyricsSyncBtn(mt.synced && mt.plain, true, false);
+      _lrcLines = parseLrc(_lyrManualLrc(data.manual));
+      renderLrcLines(sid);
+    } else {
+      _lrcLines = [];
+      _updateLyricsSyncBtn(mt.synced && mt.plain, false, false);
+      body.innerHTML = _lyrGeniusHtml({ sections: _lyrParseManual(data.manual.plain), ann: {} });
+      keep();
+    }
+  } else if (src === 'genius' && data.genius) {
     _lrcLines = [];
     _updateLyricsSyncBtn(false, false, false);
     body.innerHTML = _lyrGeniusHtml(data.genius) + _geniusBtn(sid);
@@ -24594,7 +24935,7 @@ function _lyrDraw(song, data, forceSynced) {
     const hasUnsynced = !!data.plain;
     const noDurInfo = !srcDur || !songDur;
     const autoWantsSynced = hasSynced && (noDurInfo || !durMismatch);
-    const useSynced = hasSynced && (forceSynced !== undefined ? forceSynced : autoWantsSynced);
+    const useSynced = hasSynced && pk.type === 'synced';
     _updateLyricsSyncBtn(hasSynced, useSynced, durMismatch);
     if (useSynced) {
       _lrcLines = parseLrc(data.lrc);
@@ -32337,7 +32678,7 @@ function showCtx(e, items, opts) {
     } else {
       iconHtml = fitIcon(it.icon || '');
     }
-    div.innerHTML = `<span class="cx-icon${isToggle ? ' cx-ctl' : ''}">${iconHtml}</span>${esc(it.label)}`;
+    div.innerHTML = `<span class="cx-icon${isToggle ? ' cx-ctl' : ''}">${iconHtml}</span>${esc(it.label)}${it.tag ? '<span class="cx-tag">' + esc(it.tag) + '</span>' : ''}`;
     div.onclick = () => {
       if (isToggle) {
         const inp = div.querySelector('input');
@@ -36856,13 +37197,6 @@ function renderSettings() {
           ) + (CFG.music_video && hasMv ? row('auto-show video', 'show video automatically when available', toggle('music_video_autoplay', CFG.music_video_autoplay||false)) : '');
         })()}
         ${(()=>{
-          const has = D.ctc_forced_aligner && D.torch && D.miniaudio;
-          const note = !D.torch ? 'requires torch' : !D.ctc_forced_aligner ? 'requires ctc-forced-aligner' : !D.miniaudio ? 'requires miniaudio' : '';
-          return has
-            ? row('auto lyrics sync', 'align plain lyrics to audio timing', toggle('auto_align_lyrics', CFG.auto_align_lyrics||false))
-            : rowDisabled('auto lyrics sync', note, toggle('auto_align_lyrics', false));
-        })()}
-        ${(()=>{
           if (!D.miniaudio) return rowDisabled('mp3 correction', 'requires miniaudio', toggle('enhance_audio', false));
           return row('mp3 correction', 'fixes 128kbps encoding artifacts', `
             <label class="switch" style="flex-shrink:0">
@@ -36874,6 +37208,19 @@ function renderSettings() {
         ${row('genius annotations', 'show annotated lines in the genius lyrics view', toggle('lyrics_annotations', CFG.lyrics_annotations !== false))}
         ${row('pretty lyrics display', 'split genius lyrics into subtle sections with dimmed labels and artist colors, off shows it like on genius', toggle('lyrics_pretty', CFG.lyrics_pretty !== false))}
         ${row('artist colors', 'color code lines per artist in mixed verses of the genius lyrics view', toggle('lyrics_artist_colors', CFG.lyrics_artist_colors !== false))}
+        ${(() => {
+          const sel = (key, opts) => `
+            <div class="select-wrap" style="width:180px">
+              <select class="input" style="width:180px" onchange="saveSetting('${key}',this.value)">
+                ${opts.map(([v, n]) => `<option value="${v}" ${(CFG[key] || opts[0][0]) === v ? 'selected' : ''}>${n}</option>`).join('')}
+              </select>
+              <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>`;
+          return row('preferred lyrics source', 'which source opens first, automatic uses lrclib when it has synced lyrics and genius otherwise, a default set for a song always wins', sel('lyrics_pref_src', [['auto', 'automatic'], ['lrclib', 'prefer lrclib'], ['genius', 'prefer genius']]))
+            + row('preferred lyrics type', 'synced or plain lyrics when a source has both', sel('lyrics_pref_type', [['auto', 'automatic'], ['synced', 'prefer synced'], ['plain', 'prefer plain']]))
+            + row('lrclib only if synced', 'automatic selection skips lrclib unless it has synced lyrics', toggle('lyrics_lrc_synced_only', CFG.lyrics_lrc_synced_only === true))
+            + row('remember my choice', 'automatic uses the options above, per song reopens with what you picked last for that song, all songs uses what you picked last everywhere, so switching to synced once keeps synced for the next songs', sel('lyrics_pick_mode', [['auto', 'automatic'], ['song', 'per song'], ['global', 'all songs']]));
+        })()}
         ${row('legacy synced lyrics', 'old look and plain native scrolling for the synced lyrics sidebar', toggle('lyrics_legacy', CFG.lyrics_legacy === true, '_lyrEngRefresh()'))}
         ${row('lyrics blur', 'blur lines away from the current one, turn off for better performance', toggle('lyrics_blur', CFG.lyrics_blur !== false, '_lyrEngKick(true)'))}
         ${row('scroll smoothness', 'how scrolling by hand feels, 0 is like normal scrolling, higher glides further and overshoots at the edges', _lyrSlider('lyrics_smooth', 35, 0, 100, '%'))}
