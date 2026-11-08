@@ -20601,6 +20601,11 @@ function _chaosPickNext() {
     const recent = new Set(seq.slice(-co.noRepeat));
     const fresh = pool.filter(s => !recent.has(s.id));
     if (fresh.length) pool = fresh;
+    else {
+      const _last = seq[seq.length - 1];
+      const _alt = pool.filter(s => s.id !== _last);
+      if (_alt.length) pool = _alt;
+    }
   }
 
   if (co.smart && pool.length > 1) {
@@ -21346,7 +21351,7 @@ function setShuffleMode(mode) {
   S.shuffleMode = _effShuffleMode();
   saveSetting('shuffle_mode', mode);
   _updateShuffleBtnTitle();
-  if (S.shuffle && S._chaosOn && mode !== 'chaos') _chaosLeave();
+  if (S.shuffle && S._chaosOn && S.shuffleMode !== 'chaos') _chaosLeave();
   if (S.shuffle) _shuffleRemaining();
   if (S.queueOpen) renderQueueSidebar();
   if (S.shuffle) _queueNextChanged();
