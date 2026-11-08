@@ -15390,35 +15390,46 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
 #blyrics-src svg{display:block}
-.lye{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;min-width:0;box-sizing:border-box;padding-bottom:24px}
-.lye .lye-top{position:sticky;top:0;z-index:3;display:flex;flex-direction:column;gap:8px;padding:4px 0 8px;background:color-mix(in srgb,var(--color-surface-container-high) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.lye{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;min-width:0;box-sizing:border-box;padding-bottom:24px;accent-color:var(--color-primary)}
+.lye .lye-top{position:sticky;top:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding:6px 0 8px;background:color-mix(in oklch,var(--color-surface-container-lowest) 90%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
 .lye .lye-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .lye .lye-tabs{display:flex;gap:4px}
-.lye .lye-tab{padding:5px 12px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer}
-.lye .lye-tab.on{background:var(--color-surface-container-high);color:inherit}
+.lye .lye-tab{padding:5px 12px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer;transition:background var(--dur-2) var(--ease-out)}
+.lye .lye-tab.on{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent);color:var(--color-on-surface)}
 .lye .lye-acts{display:flex;gap:6px}
 .lye .lye-acts .btn,.lye .lye-tools .btn{height:34px;min-height:0;padding:0 14px}
-.lye .lye-ta{display:block;width:100%;max-width:100%;min-width:0;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;box-sizing:border-box}
+.lye textarea.input.lye-ta,.lye .lye-row input.input{background:color-mix(in oklch,var(--color-on-surface) 7%,transparent);border:1px solid transparent;box-shadow:none;color:var(--color-on-surface);outline:0;transition:background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out)}
+.lye textarea.input.lye-ta:focus,.lye .lye-row input.input:focus{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent);border-color:color-mix(in oklch,var(--color-primary) 55%,transparent)}
+.lye textarea.input.lye-ta{display:block;width:100%;max-width:100%;min-width:0;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;padding:10px 12px;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;box-sizing:border-box}
 .lye .lye-hint{color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.8}
 .lye .lye-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lye .lye-sw{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)}
-.lye .lye-rows{display:flex;flex-direction:column;gap:2px;position:relative}
-.lye .lye-row{display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:10px;cursor:pointer;position:relative}
-.lye .lye-row.on{background:var(--color-surface-container-high)}
-.lye .lye-row .input{height:30px;padding:0 10px;font-size:13px;border-radius:9px;box-sizing:border-box}
+.lye .lye-rows{display:flex;flex-direction:column;position:relative}
+.lye .lye-rows.lye-reordering{user-select:none;-webkit-user-select:none}
+.lye .lye-row{display:flex;align-items:center;gap:4px;padding:2px 6px 2px 4px;margin-bottom:2px;border-radius:10px;cursor:pointer;position:relative;transition:background var(--dur-2) var(--ease-out)}
+.lye .lye-rows.lye-reordering>.lye-row:not(.lye-lifted):not(.lye-drop){transition:translate .16s var(--ease-out),border-radius .2s var(--ease-out)}
+.lye .lye-row input.input{height:30px;padding:0 10px;font-size:13px;border-radius:9px;box-sizing:border-box}
 .lye .lye-t{width:70px;flex:none;text-align:center;padding:0 4px!important;font-variant-numeric:tabular-nums}
 .lye .lye-x{flex:1;min-width:0}
-.lye .lye-sec .lye-x{font-weight:700}
-.lye .lye-br{flex:none;opacity:.5}
+.lye .lye-gh,.lye .lye-gi{overflow:hidden;margin-bottom:0;border-radius:0;background:color-mix(in oklch,var(--color-primary) 6%,transparent)}
+.lye .lye-gh{margin-top:6px;border-radius:12px 12px 0 0;background:color-mix(in oklch,var(--color-primary) 13%,transparent)}
+.lye .lye-gi{padding-left:12px}
+.lye .lye-gl{border-radius:0 0 12px 12px;margin-bottom:8px}
+.lye .lye-gh.lye-gl{border-radius:12px}
+.lye .lye-gh::before,.lye .lye-gi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:color-mix(in oklch,var(--color-primary) 60%,transparent)}
+.lye .lye-row.on{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent)}
+.lye .lye-gh.on{background:color-mix(in oklch,var(--color-primary) 22%,transparent)}
+.lye .lye-gi.on{background:color-mix(in oklch,var(--color-primary) 14%,transparent)}
+.lye .lye-sec input.input{background:transparent;color:var(--color-primary);font-weight:700;letter-spacing:.2px}
+.lye .lye-sec input.input:hover{background:color-mix(in oklch,var(--color-on-surface) 7%,transparent)}
 .lye .lye-h{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:26px;opacity:.45;cursor:grab;touch-action:none}
 .lye .lye-h:hover{opacity:.9}
-.lye .lye-row.lye-drag{z-index:2;opacity:.92;box-shadow:0 6px 20px rgba(0,0,0,.35);background:var(--color-surface-container-high)}
-.lye .lye-ins-b::before,.lye .lye-ins-a::after{content:'';position:absolute;left:4px;right:4px;height:2px;border-radius:2px;background:var(--color-primary)}
-.lye .lye-ins-b::before{top:-2px}
-.lye .lye-ins-a::after{bottom:-2px}
+.lye .lye-row.lye-lifted{position:relative;z-index:5;scale:1.02;box-shadow:0 8px 32px rgba(0,0,0,.28);background:var(--color-surface-container-high)!important;cursor:grabbing;transition:scale .16s var(--ease-out),box-shadow .16s var(--ease-out)}
+.lye .lye-row.lye-drop{position:relative;z-index:5;scale:1;box-shadow:none;transition:translate .16s var(--ease-out),scale .16s var(--ease-out),box-shadow .16s var(--ease-out)}
+body.design-glassy .lye .lye-row.lye-lifted{background:color-mix(in oklch,var(--color-surface-container-highest) calc(42% * var(--glass-a,1)),transparent)!important;backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);-webkit-backdrop-filter:blur(calc(16px * var(--glass-b,1))) saturate(1.6);box-shadow:0 8px 32px rgba(0,0,0,.28),0 0 0 1px var(--glass-border-hi) inset}
 .lye .lye-n{display:flex;flex:none}
 .lye .lye-mini{width:22px;height:22px;border:0;border-radius:7px;background:transparent;color:var(--color-on-surface-variant);cursor:pointer;font-size:13px;line-height:1}
-.lye .lye-mini:hover{background:var(--color-surface-container-high)}
+.lye .lye-mini:hover{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}
 .cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
@@ -24896,6 +24907,12 @@ function _lyrManualLrc(m) {
   }).join('\n');
 }
 
+function _lyrMdHtml(s) {
+  return _lyrMdSegs(String(s || '')).map(g => { let x = esc(g.t); if (g.i) x = '<i>' + x + '</i>'; if (g.b) x = '<b>' + x + '</b>'; return x; }).join('');
+}
+function _lyrManualLines(m) {
+  return ((m && m.items) || []).filter(x => x.k === 'l' && Number.isFinite(x.t) && (x.x || '').trim()).sort((a, b) => a.t - b.t);
+}
 function _lyrManualHas(m) {
   return !!(m && (((m.plain || '').trim()) || (m.items || []).some(x => x.k === 'l' && (x.x || '').trim())));
 }
@@ -25403,10 +25420,14 @@ function _lyrEditRender() {
   </div>`;
   let main = '', tools = '';
   if (e.mode === 'synced') {
+    const items = e.items || [];
+    let inGrp = false;
+    const gc = items.map(it => it.k === 's' ? (inGrp = true, ' lye-gh') : (inGrp ? ' lye-gi' : ''));
+    gc.forEach((c, i) => { if (c && (i === items.length - 1 || items[i + 1].k === 's')) gc[i] += ' lye-gl'; });
     const grip = i => `<span class="lye-h" title="drag to reorder" onpointerdown="lyrEditDragStart(event,${i})" onclick="event.stopPropagation()">${_LYE_GRIP}</span>`;
-    const rows = (e.items || []).map((it, i) => it.k === 's'
-      ? `<div class="lye-row lye-sec${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditActive(${i})">${grip(i)}<span class="lye-br">[</span><input class="input lye-x" value="${esc(it.x)}" placeholder="section name" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-br">]</span><span class="lye-n"><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">+</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`
-      : `<div class="lye-row${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditRow(${i})">${grip(i)}<input class="input lye-t" id="lye-t-${i}" value="${esc(_lyrEdFmt(it.t))}" placeholder="--:--" onclick="event.stopPropagation()" onfocus="lyrEditActive(${i},true)" onchange="lyrEditTime(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><input class="input lye-x" value="${esc(it.x)}" placeholder="lyrics line" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="-0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},-0.1)">-</button><button class="lye-mini" title="+0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},0.1)">+</button><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">↵</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`).join('');
+    const rows = items.map((it, i) => it.k === 's'
+      ? `<div class="lye-row lye-sec${gc[i]}${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditActive(${i})">${grip(i)}<input class="input lye-x" value="${esc(it.x)}" placeholder="section name" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onkeydown="lyrEditEnter(event,${i})" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">+</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`
+      : `<div class="lye-row${gc[i]}${i === e.active ? ' on' : ''}" id="lye-r-${i}" onclick="lyrEditRow(${i})">${grip(i)}<input class="input lye-t" id="lye-t-${i}" value="${esc(_lyrEdFmt(it.t))}" placeholder="--:--" onclick="event.stopPropagation()" onfocus="lyrEditActive(${i},true)" onchange="lyrEditTime(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><input class="input lye-x" value="${esc(it.x)}" placeholder="lyrics line" oninput="lyrEditText(${i},this.value)" onfocus="lyrEditActive(${i},true)" onkeydown="lyrEditEnter(event,${i})" onclick="event.stopPropagation()"><span class="lye-n"><button class="lye-mini" title="-0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},-0.1)">-</button><button class="lye-mini" title="+0.1s" onclick="event.stopPropagation();lyrEditNudge(${i},0.1)">+</button><button class="lye-mini" title="add line below" onclick="event.stopPropagation();lyrEditAdd('l',${i})">↵</button><button class="lye-mini" title="remove" onclick="event.stopPropagation();lyrEditDel(${i})">×</button></span></div>`).join('');
     tools = `<div class="lye-tools">
       <button class="btn btn-fill mu-ripple" onclick="lyrEditStamp()">stamp</button>
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('l')">add line</button>
@@ -25414,13 +25435,15 @@ function _lyrEditRender() {
       <label class="lye-sw"><input type="checkbox" ${e.scrub ? 'checked' : ''} onchange="lyrEditScrub(this.checked)">hear while dragging the seekbar</label>
     </div>`;
     main = `<div class="lye-rows" id="lye-rows">${rows}</div>
-    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, drag the handle to reorder, - and + nudge it by 0.1s, sections are markers that keep your chorus and verse structure</div>`;
+    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, enter adds a line below, drag the handle to reorder (a header takes its whole group with it), - and + nudge a line by 0.1s</div>`;
   } else {
     main = `<textarea id="lyr-ed-ta" class="input lye-ta" spellcheck="false" placeholder="[Verse 1: artist]&#10;lyrics here" oninput="lyrEditInput(this.value)" oncontextmenu="lyrEditCtx(event)" onkeydown="lyrEditKey(event)">${esc(e.plain)}</textarea>
     <div class="lye-hint">[Chorus] or [Verse 1: name, name] lines group the lyrics, *italic* and **bold** style text, right click for helpers</div>`;
   }
   body.innerHTML = `<div class="lye" oncontextmenu="event.stopPropagation()"><div class="lye-top">${bar}${tools}</div>${main}</div>`;
+  body.style.scrollBehavior = 'auto';
   body.scrollTop = top;
+  requestAnimationFrame(() => { body.style.scrollBehavior = ''; });
 }
 
 function lyrEditInput(v) { if (S.lyrEdit) S.lyrEdit.plain = v; }
@@ -25456,41 +25479,90 @@ function lyrEditRow(i) {
   lyrEditActive(i, true);
   if (it.k === 'l') _lyrEdSeek(it.t);
 }
+function lyrEditEnter(ev, i) {
+  if (ev.key !== 'Enter' || ev.isComposing) return;
+  ev.preventDefault();
+  lyrEditAdd('l', i);
+}
 function lyrEditDragStart(ev, i) {
   const e = S.lyrEdit;
-  if (!e || !e.items) return;
+  if (!e || !e.items || (ev.button != null && ev.button > 0)) return;
+  const body = document.getElementById('lyrics-body'), wrap = document.getElementById('lye-rows');
+  if (!body || !wrap) return;
+  const rows = Array.from(wrap.querySelectorAll(':scope > .lye-row')), n = rows.length;
+  if (!rows[i]) return;
   ev.preventDefault();
   ev.stopPropagation();
-  const body = document.getElementById('lyrics-body'), wrap = document.getElementById('lye-rows');
-  const rows = wrap ? Array.from(wrap.querySelectorAll('.lye-row')) : [];
-  const src = rows[i], h = ev.currentTarget;
-  if (!src || !body) return;
+  const h = ev.currentTarget;
   try { h.setPointerCapture(ev.pointerId); } catch (_) {}
-  const others = rows.filter((_, k) => k !== i);
-  const startY = ev.clientY, startScroll = body.scrollTop;
-  let y = startY, to = i, raf = 0;
-  src.classList.add('lye-drag');
+  // a header drags its whole group, a line drags alone
+  let j = i + 1;
+  if (e.items[i].k === 's') while (j < n && e.items[j].k !== 's') j++;
+  const bt = body.getBoundingClientRect().top, sc0 = body.scrollTop;
+  const rc = rows.map(r => r.getBoundingClientRect());
+  const mb = parseFloat(getComputedStyle(rows[n - 1]).marginBottom) || 0;
+  const tops = rc.map(r => r.top - bt + sc0);
+  tops.push(rc[n - 1].bottom - bt + sc0 + mb);
+  const hts = rows.map((_, k) => tops[k + 1] - tops[k]);
+  const H = tops[j] - tops[i];
+  const others = [];
+  for (let k = 0; k < n; k++) if (k < i || k >= j) others.push(k);
+  const mids = others.map(k => tops[k] + hts[k] / 2);
+  const startY = ev.clientY, sb = body.style.scrollBehavior;
+  let y = startY, to = i, raf = 0, done = false;
+  body.style.scrollBehavior = 'auto';
+  wrap.classList.add('lye-reordering');
+  for (let k = i; k < j; k++) rows[k].classList.add('lye-lifted');
   const upd = () => {
-    src.style.transform = 'translateY(' + (y - startY + body.scrollTop - startScroll) + 'px)';
-    let n = 0;
-    others.forEach(r => { const b = r.getBoundingClientRect(); if (b.top + b.height / 2 < y) n++; });
-    to = n;
-    others.forEach(r => r.classList.remove('lye-ins-b', 'lye-ins-a'));
-    if (others.length) others[Math.min(to, others.length - 1)].classList.add(to < others.length ? 'lye-ins-b' : 'lye-ins-a');
+    const dy = (y - startY) + (body.scrollTop - sc0);
+    for (let k = i; k < j; k++) rows[k].style.translate = '0 ' + dy + 'px';
+    const yc = (y - bt) + body.scrollTop;
+    let t = 0;
+    while (t < mids.length && mids[t] < yc) t++;
+    to = t;
+    others.forEach((k, oi) => {
+      const s = (k < i && oi >= to) ? H : (k >= j && oi < to) ? -H : 0;
+      rows[k].style.translate = s ? '0 ' + s + 'px' : '';
+    });
   };
   const tick = () => {
-    const br = body.getBoundingClientRect(), top = br.top + 100, bot = br.bottom - 40;
-    if (y < top) body.scrollTop -= Math.min(18, (top - y) / 3 + 2);
-    else if (y > bot) body.scrollTop += Math.min(18, (y - bot) / 3 + 2);
+    if (done) return;
+    const hd = body.querySelector('.lye-top'), br = body.getBoundingClientRect();
+    const top = br.top + (hd ? hd.offsetHeight : 90) + 24, bot = br.bottom - 36;
+    if (y < top) body.scrollTop -= Math.min(20, (top - y) / 3 + 2);
+    else if (y > bot) body.scrollTop += Math.min(20, (y - bot) / 3 + 2);
     upd();
     raf = requestAnimationFrame(tick);
   };
   const fin = ok => {
+    if (done) return;
+    done = true;
     cancelAnimationFrame(raf);
     h.onpointermove = h.onpointerup = h.onpointercancel = null;
     try { h.releasePointerCapture(ev.pointerId); } catch (_) {}
-    if (ok && to !== i) { const it = e.items.splice(i, 1)[0]; e.items.splice(to, 0, it); e.active = to; }
-    _lyrEditRender();
+    if (!ok) {
+      rows.forEach(r => { r.style.translate = ''; r.classList.remove('lye-lifted'); });
+      wrap.classList.remove('lye-reordering');
+      body.style.scrollBehavior = sb;
+      return;
+    }
+    // settle: the block glides into its slot, then the list is rebuilt
+    let fy = 0;
+    if (to > i) others.forEach((k, oi) => { if (k >= j && oi < to) fy += hts[k]; });
+    else others.forEach((k, oi) => { if (k < i && oi >= to) fy -= hts[k]; });
+    for (let k = i; k < j; k++) {
+      rows[k].classList.remove('lye-lifted');
+      rows[k].classList.add('lye-drop');
+      rows[k].style.translate = '0 ' + fy + 'px';
+    }
+    setTimeout(() => {
+      body.style.scrollBehavior = sb;
+      if (S.lyrEdit === e) {
+        if (to !== i) { const blk = e.items.splice(i, j - i); e.items.splice(to, 0, ...blk); }
+        e.active = to;
+        _lyrEditRender();
+      }
+    }, 180);
   };
   h.onpointermove = m => { y = m.clientY; };
   h.onpointerup = () => fin(true);
@@ -25502,7 +25574,13 @@ function lyrEditStamp() {
   const e = S.lyrEdit;
   if (!e || e.mode !== 'synced' || !e.items) return;
   let i = e.active;
-  if (!e.items[i] || e.items[i].k !== 'l') { i = e.items.findIndex(x => x.k === 'l'); if (i < 0) return; }
+  if (!e.items[i] || e.items[i].k !== 'l') {
+    let f = -1;
+    for (let k = Math.max(0, i); k < e.items.length && f < 0; k++) if (e.items[k].k === 'l') f = k;
+    if (f < 0) f = e.items.findIndex(x => x.k === 'l');
+    if (f < 0) return;
+    i = f;
+  }
   const t = Math.round(Math.max(0, _lyrEdNow()) * 100) / 100;
   e.items[i].t = t;
   const inp = document.getElementById('lye-t-' + i);
@@ -25867,6 +25945,8 @@ function _lyrDraw(song, data, forceSynced) {
     if (pk.type === 'synced' && mt.synced) {
       _updateLyricsSyncBtn(mt.synced && mt.plain, true, false);
       _lrcLines = parseLrc(_lyrManualLrc(data.manual));
+      const _mls = _lyrManualLines(data.manual);
+      if (_mls.length === _lrcLines.length) _lrcLines.forEach((l, k) => { l.md = _mls[k].x; });
       renderLrcLines(sid);
     } else {
       _lrcLines = [];
@@ -26062,7 +26142,7 @@ async function _renderLyricsForSongLegacy(song, forceSynced) {
 
 function _buildWordByWordLine(l, i) {
   if (!l.words) {
-    return `<div class="lrc-line" id="lrc-${i}" data-idx="${i}" onclick="lrcLineClick(${i})">${esc(l.text)}</div>`;
+    return `<div class="lrc-line" id="lrc-${i}" data-idx="${i}" onclick="lrcLineClick(${i})">${l.md ? _lyrMdHtml(l.md) : esc(l.text)}</div>`;
   }
   const spans = l.words.map((w, wi) =>
     `<span class="lrc-word" id="lrc-${i}-w${wi}" data-widx="${wi}">${esc(w.text)}</span>`
