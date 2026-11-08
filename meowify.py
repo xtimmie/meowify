@@ -15391,7 +15391,7 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
 #blyrics-src svg{display:block}
 .lye{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;min-width:0;box-sizing:border-box;padding-bottom:24px;accent-color:var(--color-primary)}
-.lye .lye-top{position:sticky;top:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding:6px 0 8px;background:color-mix(in oklch,var(--color-surface-container-lowest) 90%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.lye .lye-top{position:sticky;top:0;z-index:6;display:flex;flex-direction:column;gap:8px;margin:0 -16px;padding:6px 16px 8px;background:color-mix(in oklch,var(--color-surface-container-lowest) 90%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
 .lye .lye-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .lye .lye-tabs{display:flex;gap:4px}
 .lye .lye-tab{padding:5px 12px;border-radius:999px;border:0;background:transparent;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);cursor:pointer;transition:background var(--dur-2) var(--ease-out)}
@@ -15430,6 +15430,10 @@ body.design-glassy .lye .lye-row.lye-lifted{background:color-mix(in oklch,var(--
 .lye .lye-n{display:flex;flex:none}
 .lye .lye-mini{width:22px;height:22px;border:0;border-radius:7px;background:transparent;color:var(--color-on-surface-variant);cursor:pointer;font-size:13px;line-height:1}
 .lye .lye-mini:hover{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}
+body.design-glassy .lye .lye-top{background:transparent}
+.lye .lye-pos{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;z-index:4}
+.lye .lye-pos::before{content:'';position:absolute;left:0;right:0;top:-1px;height:2px;border-radius:2px;background:var(--color-primary);box-shadow:0 0 8px color-mix(in oklch,var(--color-primary) 70%,transparent)}
+.lye .lye-pos::after{content:'';position:absolute;left:-3px;top:-4px;width:8px;height:8px;border-radius:50%;background:var(--color-primary)}
 .cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
@@ -20698,7 +20702,7 @@ function getNextSong() {
   return S.queue[ni];
 }
 
-function getNextId() { return getNextSong()?.id ?? null; }
+function getNextId() { if (S.lyrEdit) return null; return getNextSong()?.id ?? null; }
 
 function prefetchLyricsForSong(song) {
   if (!song) return;
@@ -20863,6 +20867,16 @@ function _prefetchMvForSongImpl(song) {
 }
 
   async function playSong(song, offset, _forcePlay) {
+    if (S.lyrEdit && song && S.lyrEdit.sid !== song.id) {
+      // another song wants to start while lyrics are being edited: put the edited song back as current,
+      // ask first, and only start the other song after save / discard
+      const e0 = S.lyrEdit, tCur = S.cur, tQi = S.qi;
+      const ix = S.queue.findIndex(s => s.id === e0.sid);
+      if (ix >= 0) { S.cur = S.queue[ix]; S.qi = ix; } else if (e0.cur) S.cur = e0.cur;
+      updatePlayerUI(S.cur); updateHighlights(); updatePlayBtn();
+      lyrEditGuard(() => _enqueueCmd(async () => { S.cur = tCur; S.qi = tQi; await playSong(song, offset, _forcePlay); }));
+      return;
+    }
     if (_playLock) { console.warn('playSong reentrance blocked - queue logic bug', song?.id); return; }
     if (!song) return;
     _playLock = true;
@@ -21052,6 +21066,15 @@ function onSongEnd(scheduledNid) {
 }
 
 async function _doOnSongEnd(scheduledNid) {
+  if (S.lyrEdit && S.cur && S.lyrEdit.sid === S.cur.id) {
+    if (_lyrEdDirty()) {
+      // song ended while editing with unsaved changes: park on the edited song (paused, seekbar at the end), ask, then advance
+      await _lyrEditPark();
+      lyrEditGuard(() => { S.isPlaying = true; onSongEnd(null); });
+      return;
+    }
+    _lyrEditExit(false, true);
+  }
   window._nextReasonStart = 'trackdone';
   const _cf = _applyContinueFrom();
   if (_cf) {
@@ -21318,6 +21341,7 @@ async function prevSong() {
 }
 
 async function nextSong() {
+  if (S.lyrEdit && S.cur && S.lyrEdit.sid === S.cur.id) { lyrEditGuard(() => nextSong()); return; }
   _enqueueCmd(async () => {
     try {
       const _skippedSong = S.cur;
@@ -25396,8 +25420,11 @@ function lyrEditStart(seed) {
     sid: song.id, plain, items, op: plain, oi: JSON.stringify(items),
     mode: !plain.trim() && items ? 'synced' : 'plain', isNew: !!seed,
     active: Math.max(0, (items || []).findIndex(x => x.k === 'l')),
-    scrub: false, scrubOrig: CFG.audio_scrub, hid: {}
+    scrub: CFG.lyrics_ed_scrub === true, pos: CFG.lyrics_ed_pos === true, scrubOrig: CFG.audio_scrub, hid: {},
+    data: d || {}, qi: S.qi, cur: S.cur
   };
+  if (S.lyrEdit.scrub) CFG.audio_scrub = true;
+  try { engine._stopNxt(); } catch (_) {}
   _lyrEditRender();
 }
 
@@ -25433,8 +25460,9 @@ function _lyrEditRender() {
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('l')">add line</button>
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('s')">add section</button>
       <label class="lye-sw"><input type="checkbox" ${e.scrub ? 'checked' : ''} onchange="lyrEditScrub(this.checked)">hear while dragging the seekbar</label>
+      <label class="lye-sw"><input type="checkbox" ${e.pos ? 'checked' : ''} onchange="lyrEditPos(this.checked)">show position</label>
     </div>`;
-    main = `<div class="lye-rows" id="lye-rows">${rows}</div>
+    main = `<div class="lye-rows" id="lye-rows">${rows}<div class="lye-pos" id="lye-pos" style="display:none"></div></div>
     <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, enter adds a line below, drag the handle to reorder (a header takes its whole group with it), - and + nudge a line by 0.1s</div>`;
   } else {
     main = `<textarea id="lyr-ed-ta" class="input lye-ta" spellcheck="false" placeholder="[Verse 1: artist]&#10;lyrics here" oninput="lyrEditInput(this.value)" oncontextmenu="lyrEditCtx(event)" onkeydown="lyrEditKey(event)">${esc(e.plain)}</textarea>
@@ -25444,6 +25472,7 @@ function _lyrEditRender() {
   body.style.scrollBehavior = 'auto';
   body.scrollTop = top;
   requestAnimationFrame(() => { body.style.scrollBehavior = ''; });
+  _lyrEdPosStart();
 }
 
 function lyrEditInput(v) { if (S.lyrEdit) S.lyrEdit.plain = v; }
@@ -25614,6 +25643,84 @@ function lyrEditScrub(on) {
   if (!e) return;
   e.scrub = !!on;
   CFG.audio_scrub = on ? true : e.scrubOrig;
+  CFG.lyrics_ed_scrub = !!on;
+  saveSetting('lyrics_ed_scrub', !!on).catch(() => {});
+}
+
+function _lyrEdData() { return (S.lyrEdit && S.lyrEdit.data) || S.lyricsData || {}; }
+async function _lyrEditPark() {
+  const e = S.lyrEdit, song = S.cur;
+  if (!e || !song || song.id !== e.sid) return;
+  const keep = S.lyricsData;
+  const dur = _getSeekDur() || song.duration || 0;
+  try { await playSong(song, Math.max(0, dur - 0.3), false); } catch (_) {}
+  if (S.lyrEdit === e) { S.lyricsData = keep; S.isPlaying = false; updatePlayBtn(); }
+}
+
+let _lyrPosRaf = 0;
+function _lyrEdPosY(e, T, dur) {
+  const items = e.items || [], lines = [];
+  items.forEach((it, i) => { if (it.k === 'l') lines.push(i); });
+  const L = lines.length;
+  if (!L) return null;
+  const at = (li, f) => {
+    li = Math.max(0, Math.min(L - 1, li));
+    const el = document.getElementById('lye-r-' + lines[li]);
+    return el ? el.offsetTop + Math.max(0, Math.min(1, f)) * el.offsetHeight : null;
+  };
+  // anchors: timed lines whose time keeps increasing, everything between them is interpolated line by line
+  const an = [];
+  let last = -1;
+  lines.forEach((i, li) => { const t = items[i].t; if (Number.isFinite(t) && t > last) { an.push({ li, t }); last = t; } });
+  if (!an.length) {
+    if (!dur) return null;
+    const f = Math.max(0, T) / dur * L, li = Math.min(L - 1, Math.floor(f));
+    return at(li, f - li);
+  }
+  if (T < an[0].t) {
+    const m = an[0].li;
+    if (m === 0) return at(0, 0);
+    const f = Math.max(0, T) / an[0].t * m, li = Math.min(m - 1, Math.floor(f));
+    return at(li, f - li);
+  }
+  for (let k = 0; k < an.length - 1; k++) {
+    if (T < an[k + 1].t) {
+      const a = an[k], b = an[k + 1], m = b.li - a.li;
+      const f = (T - a.t) / (b.t - a.t) * m, fl = Math.min(m - 1, Math.floor(f));
+      return at(a.li + fl, f - fl);
+    }
+  }
+  const a = an[an.length - 1];
+  let avg = 3.5;
+  if (an.length > 1) { const sp = (a.t - an[0].t) / Math.max(1, a.li - an[0].li); if (sp > 0) avg = Math.max(1.5, Math.min(8, sp)); }
+  const f = (T - a.t) / avg, fl = Math.floor(f);
+  if (a.li + fl >= L) return at(L - 1, 1);
+  return at(a.li + fl, f - fl);
+}
+function _lyrEdPosTick() {
+  _lyrPosRaf = 0;
+  const e = S.lyrEdit, el = document.getElementById('lye-pos');
+  if (!e || e.mode !== 'synced' || !e.pos || !el) return;
+  const y = _lyrEdPosY(e, _lyrEdNow(), _getSeekDur());
+  if (y == null) el.style.display = 'none';
+  else { el.style.display = ''; el.style.translate = '0 ' + y.toFixed(1) + 'px'; }
+  _lyrPosRaf = requestAnimationFrame(_lyrEdPosTick);
+}
+function _lyrEdPosStart() {
+  cancelAnimationFrame(_lyrPosRaf);
+  _lyrPosRaf = 0;
+  const e = S.lyrEdit;
+  if (e && e.mode === 'synced' && e.pos) _lyrPosRaf = requestAnimationFrame(_lyrEdPosTick);
+}
+function lyrEditPos(on) {
+  const e = S.lyrEdit;
+  if (!e) return;
+  e.pos = !!on;
+  CFG.lyrics_ed_pos = !!on;
+  saveSetting('lyrics_ed_pos', !!on).catch(() => {});
+  const el = document.getElementById('lye-pos');
+  if (el && !on) el.style.display = 'none';
+  _lyrEdPosStart();
 }
 
 function lyrEditMode(m) {
@@ -25621,7 +25728,7 @@ function lyrEditMode(m) {
   if (!e || e.mode === m) return;
   if (m === 'plain') { e.mode = 'plain'; _lyrEditRender(); return; }
   if (e.items && e.items.length) { e.mode = 'synced'; _lyrEditRender(); return; }
-  const d = S.lyricsData || {}, opts = [];
+  const d = _lyrEdData(), opts = [];
   if (d.lrc) opts.push(['lrclib', 'lrclib synced lyrics', 'text and timings from lrclib']);
   if ((e.plain || '').trim()) opts.push(['text', 'lines from the text tab', 'sections stay as markers, lines get a time when you stamp them']);
   opts.push(['empty', 'start empty', 'add lines yourself']);
@@ -25631,7 +25738,7 @@ function lyrEditMode(m) {
   showModal('create synced version', `<div style="color:var(--color-on-surface-variant);margin-bottom:6px">where should the synced lines come from</div>${rows}`, acts);
 }
 function _lyrEditConvert(kind) {
-  const e = S.lyrEdit, d = S.lyricsData || {};
+  const e = S.lyrEdit, d = _lyrEdData();
   if (!e) return;
   if (kind === 'lrclib' && d.lrc) e.items = parseLrc(d.lrc).map(l => ({ k: 'l', t: l.time, x: _lyrMdEsc(l.text) }));
   else if (kind === 'text') e.items = _lyrPlainToItems(e.plain);
@@ -25687,7 +25794,7 @@ function lyrEditKey(ev) {
 function lyrEditCtx(ev) {
   ev.preventDefault();
   ev.stopPropagation();
-  const d = S.lyricsData || {};
+  const d = _lyrEdData();
   const items = [
     { label: 'bold', fn: () => _lyrEdWrap('**', '**') },
     { label: 'italic', fn: () => _lyrEdWrap('*', '*') },
@@ -25709,9 +25816,9 @@ function _lyrRestoreItems(d) {
   return out.length ? [{ _header: true, label: 'restore from' }, ...out] : [];
 }
 function lyrRestore(kind) {
-  const d = S.lyricsData, song = S.cur;
+  const e0 = S.lyrEdit;
+  const d = e0 ? e0.data : S.lyricsData, song = e0 ? { id: e0.sid } : S.cur;
   if (!d || !song) return;
-  if (S.lyrEdit && S.lyrEdit.sid !== song.id) return;
   const sd = _lyrSeed(kind, d);
   _lyrAsk('restore from ' + kind, 'replaces everything in the editor with the ' + kind + ' copy, nothing is saved until you press done and the ' + kind + ' lyrics themselves stay untouched', 'restore', () => {
     if (!S.lyrEdit) lyrEditStart();
