@@ -40275,7 +40275,6 @@ async function _muPathApply(reset) {
 function openSettingsPopup() {
   if (isMobile() || CFG.settings_nav === 'tab') { setView('settings'); return; }
   window._settingsSub = null;
-  if (S.globalSearchOpen || S.globalSearch) toggleGlobalSearch(true);
   window._settingsPopupOpen = true;
   let ov = document.getElementById('set-pc-overlay');
   if (!ov) {
