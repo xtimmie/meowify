@@ -27305,14 +27305,14 @@ function _qswCover(sg) {
   return sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
 }
 function _qswListHtml(list) {
-  return '<div class="qsw-list" style="grid-column:1 / -1;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
-    + list.slice(0, 100).map(sg =>
+  return '<div class="qsw-list" onpointerdown="event.stopPropagation()" style="grid-column:1 / -1;box-sizing:border-box;max-height:260px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
+    + list.slice(0, 300).map(sg =>
       '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)" style="display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer">'
       + '<div style="width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px">' + _qswCover(sg) + '</div>'
       + '<div style="overflow:hidden"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div>'
       + '<div class="sdur">' + (sg.duration ? fmt(sg.duration) : '') + '</div></div>'
     ).join('')
-    + (list.length > 100 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 100) + ' more songs</div>' : '')
+    + (list.length > 300 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 300) + ' more songs</div>' : '')
     + '</div>';
 }
 // slides the song list of the switch row open / closed in place (no rebuild), strong ease out
