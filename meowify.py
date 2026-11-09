@@ -9270,7 +9270,8 @@ def _dbx_push_events(dbx):
     import gzip, shutil
     did = _dbx_get_device_id()
     wm = CFG.get('_dbx_ev_wm')
-    full = wm is None or int(CFG.get('_dbx_ev_n', 0)) >= 100
+    # one full push after the snapshot strip fix, so events that only ever reached peers inside the (unstripped) snapshot get into the event segments too
+    full = wm is None or int(CFG.get('_dbx_ev_n', 0)) >= 100 or not CFG.get('_dbx_ev_resync')
     with db() as c:
         top = c.execute('SELECT COALESCE(MAX(rowid), 0) FROM play_events').fetchone()[0]
         if wm is not None and top < wm:
@@ -9289,6 +9290,7 @@ def _dbx_push_events(dbx):
             CFG['_dbx_ev_wm'] = top
             if full:
                 CFG['_dbx_ev_n'] = 0
+                CFG['_dbx_ev_resync'] = True
             save_cfg(CFG)
         return False
     seg = Path(db_path()).parent / 'library_events.db'
@@ -9320,6 +9322,8 @@ def _dbx_push_events(dbx):
         CFG['_dbx_ev_wm'] = top
         CFG['_dbx_ev_seq'] = seq
         CFG['_dbx_ev_n'] = 0 if full else int(CFG.get('_dbx_ev_n', 0)) + 1
+        if full:
+            CFG['_dbx_ev_resync'] = True
         save_cfg(CFG)
     return True
 
@@ -14182,6 +14186,16 @@ def api_song_cover_upload(sid):
         c.execute("UPDATE songs SET cover_path=?, modified_at=? WHERE id=?", (cov, int(time.time()), sid))
     return jsonify({'ok': True, 'cover_path': cov})
 
+@app.route('/api/songs/<sid>/cover-from-album', methods=['POST'])
+def api_song_cover_from_album(sid):
+    """use the cover of the album the song is in (covers are content addressed files, so the song just points at the same file)"""
+    with db() as c:
+        row = c.execute("SELECT a.cover_path FROM songs s JOIN albums a ON a.id = s.album_id WHERE s.id=?", (sid,)).fetchone()
+        if not row or not row[0] or not os.path.isfile(row[0]):
+            return jsonify({'error': "this song's album has no cover"}), 400
+        c.execute("UPDATE songs SET cover_path=?, modified_at=? WHERE id=?", (row[0], int(time.time()), sid))
+    return jsonify({'ok': True})
+
 @app.route('/api/songs/<sid>/cover-remove', methods=['POST'])
 def api_song_cover_remove(sid):
     with db() as c:
@@ -17334,7 +17348,7 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
 </div>
 
 <div id="modal" onclick="closeModal()">
-  <div class="mbox ui-overlay" onclick="event.stopPropagation()">
+  <div class="mbox ui-overlay" onclick="event.stopPropagation();_ctxOutsideClose(event)">
     <div class="mtitle" id="mtitle"></div>
     <div id="mbody"></div>
     <div class="macts" id="macts"></div>
@@ -28192,12 +28206,47 @@ const _SD_ICO_GENIUS = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 
 const _SD_ICO_YT = '<svg viewBox="0 0 15 15" width="1em" height="1em"><rect width="15" height="12" y="1" rx="3" fill="currentColor"/><path fill="var(--color-surface-container-high)" d="M5.75 4.5v5l4-2.5z"/></svg>';
 const _SD_ICO_UP = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></svg>';
 // the 3 dot button on the cover opens the normal context menu
+const _SD_ICO_TRASH = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+const _SD_ICO_DISC = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></svg>';
+// cover element, always filled square (the cell it sits in is square, see _sdFitHead)
+function _sdCoverEl(song) {
+  return song.cover_path
+    ? `<img id="edit-song-cover-img" src="/cover/${song.id}?t=${Date.now()}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover!important;aspect-ratio:1/1;border-radius:var(--radius-md);display:block">`
+    : `<div id="edit-song-cover-img" style="position:absolute;inset:0;border-radius:var(--radius-md);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:32px">♪</div>`;
+}
+function _sdRepaintCover(sid) {
+  const song = S.library.find(s => s.id === sid);
+  const cell = document.getElementById('sd-cover-cell');
+  if (!song || !cell) return;
+  cell.querySelector('#edit-song-cover-img')?.remove();
+  cell.insertAdjacentHTML('afterbegin', _sdCoverEl(song));
+}
+async function _sdCoverAction(sid, fn) {
+  await fn();
+  _sdRepaintCover(sid);
+}
+async function _sdUseAlbumCover(sid) {
+  const r = await api('POST', `/api/songs/${sid}/cover-from-album`);
+  if (r && r.ok) { await loadData(); rerenderCurrentView(); _sdRepaintCover(sid); return; }
+  const e = document.getElementById('sd-err');
+  if (e) { e.textContent = (r && r.error) || 'could not use the album cover'; e.style.display = 'block'; e.scrollIntoView({block: 'nearest'}); }
+}
+// the cover cell is made exactly as tall as the title + artist fields next to it, so it is a perfect square
+function _sdFitHead() {
+  const head = document.getElementById('sd-head');
+  const col = head && head.lastElementChild;
+  const h = col ? col.offsetHeight : 0;
+  if (h > 60) head.style.gridTemplateColumns = h + 'px minmax(0,1fr)';
+}
 function _sdCoverMenu(e, sid) {
   e.stopPropagation();
   const song = S.library.find(s => s.id === sid);
+  const alb = song?.album_id ? (S.albums || []).find(a => a.id === song.album_id) : null;
   const items = [{icon: _SD_ICO_UP, label: 'upload cover', fn: () => document.getElementById('edit-song-cover-file')?.click()}];
-  if (song?.genius_id) items.push({icon: _SD_ICO_GENIUS, label: 'redownload from genius', fn: () => refreshSongCover(sid, 'genius')});
-  items.push({icon: _SD_ICO_YT, label: 'redownload from youtube music', fn: () => refreshSongCover(sid, 'ytm')});
+  if (alb?.thumbnail) items.push({icon: _SD_ICO_DISC, label: "use album's cover", fn: () => _sdUseAlbumCover(sid)});
+  if (song?.genius_id) items.push({icon: _SD_ICO_GENIUS, label: 'redownload from genius', fn: () => _sdCoverAction(sid, () => refreshSongCover(sid, 'genius'))});
+  items.push({icon: _SD_ICO_YT, label: 'redownload from youtube music', fn: () => _sdCoverAction(sid, () => refreshSongCover(sid, 'ytm'))});
+  if (song?.cover_path) items.push({icon: _SD_ICO_TRASH, label: 'remove cover', fn: () => _sdCoverAction(sid, () => removeSongCover(sid))});
   showCtx(e, items);
 }
 // optional block: input area plus, for the ones the user can drop again, an x on the right
@@ -28406,13 +28455,11 @@ async function _sdRenderEdit(sid, song) {
     : `<template data-opt="${k}">${inner}</template>`;
   const g = x.genius;
   const body = `<div id="sd-err" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-error-container,rgba(186,26,26,.15));color:var(--color-on-error-container,var(--color-error,#ba1a1a));font:var(--type-body-small)"></div>
-    <div style="display:grid;grid-template-columns:clamp(112px,28%,152px) minmax(0,1fr);gap:14px;align-items:stretch;margin-bottom:12px">
-      <div style="position:relative;min-height:112px">
-        ${song.cover_path
-          ? `<img id="edit-song-cover-img" src="/cover/${song.id}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:var(--radius-md)">`
-          : `<div id="edit-song-cover-img" style="position:absolute;inset:0;border-radius:var(--radius-md);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:32px">♪</div>`}
-        <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="uploadSongCover('${sid}',this)">
-        <button type="button" class="cbtn mu-ripple" title="cover options" style="position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)" onclick="_sdCoverMenu(event,'${sid}')"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+    <div id="sd-head" style="display:grid;grid-template-columns:clamp(112px,28%,152px) minmax(0,1fr);gap:14px;align-items:start;margin-bottom:12px">
+      <div id="sd-cover-cell" style="position:relative;width:100%;aspect-ratio:1/1">
+        ${_sdCoverEl(song)}
+        <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="_sdCoverAction('${sid}',()=>uploadSongCover('${sid}'))">
+        <button type="button" class="cbtn sd-cbtn mu-ripple" title="cover options" style="position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.5);color:#fff;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)" onclick="_sdCoverMenu(event,'${sid}')"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
         ${f('title', 'title', `<input class="inp" id="edit-song-title" value="${esc(init.title)}" autocomplete="off">`, pins.has('title') && 'reset to auto')}
@@ -28471,6 +28518,7 @@ async function _sdRenderEdit(sid, song) {
     `<button class="btn btn-out mu-ripple" onclick="_sdCancel('${escJ(sid)}')">cancel</button><button class="btn btn-fill mu-ripple" onclick="saveSongDetails('${escJ(sid)}')">save</button>`
   );
   document.querySelector('.mbox').style.maxWidth = '600px';
+  _sdFitHead();
   _sdRestore(sid);
 }
 
@@ -34911,6 +34959,14 @@ document.addEventListener('click', (e) => {
   const ctx = document.getElementById('ctx');
   if (ctx.classList.contains('on') && !ctx.contains(e.target)) hideCtx();
 });
+// popups stop click propagation (so the document listener above never sees clicks inside them), they call this instead.
+// a menu that was opened by the very press we are handling (generation changed) is left alone
+let _ctxGenAtDown = 0;
+document.addEventListener('pointerdown', () => { _ctxGenAtDown = _ctxGeneration; }, true);
+function _ctxOutsideClose(e) {
+  const ctx = document.getElementById('ctx');
+  if (ctx && ctx.classList.contains('on') && !ctx.contains(e.target) && _ctxGeneration === _ctxGenAtDown) closeCtxAnimated();
+}
 
 // ═══════════════════════════════════════════════
 // PLAYLISTS
@@ -35959,7 +36015,7 @@ function showModal(title, body, acts) {
     });
     (document.getElementById('app') || document.body).appendChild(ov);
   }
-  ov.innerHTML = `<div class="mbox ui-overlay" onclick="event.stopPropagation()">
+  ov.innerHTML = `<div class="mbox ui-overlay" onclick="event.stopPropagation();_ctxOutsideClose(event)">
     <div class="mtitle">${esc(title)}</div>
     <div id="mbody">${body}</div>
     <div class="macts" id="macts">${acts}</div>
@@ -37292,6 +37348,8 @@ function _applyDesignImpl(design) {
   }
   body.design-glassy .subnav-btn{background:var(--glass-bg)!important}
   @media (hover: hover) {body.design-glassy .subnav-btn:hover{background:var(--glass-bg-mid)!important;box-shadow:var(--glass-spec-panel)}}
+  /* cover options button of the song editor: glass specular all the time, not only on hover */
+  body.design-glassy .sd-cbtn{background:rgba(0,0,0,.42)!important;box-shadow:var(--glass-spec-panel)!important}
   body.design-glassy .subnav-btn.on{background:color-mix(in oklch,var(--color-primary) 22%,rgba(255,255,255,.06))!important}
   body.design-glassy .mbox{background:color-mix(in oklch,var(--color-surface-container) min(100%,max(calc(75% * var(--glass-a,1)),calc(100% * var(--glass-s,0)))),transparent)!important;border:1px solid var(--glass-border-hi)}
   body.design-glassy .lib-album,body.design-glassy .album-card{background:var(--glass-bg-mid)!important}
