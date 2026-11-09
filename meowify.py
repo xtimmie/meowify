@@ -28356,7 +28356,11 @@ async function _sdRenderEdit(sid, song) {
   if (sh && sh.error) sh = null;
   const pins = new Set((x.pins || []).map(k => k === 'featuring' ? 'featuring_artists' : k));
   // autoSingle: counts as a single only because the autodetect single albums setting matched its one track album, the data itself still has an album
-  const _alb0 = song.album_id ? (S.albums || []).find(a => a.id === song.album_id) : null;
+  // /api/albums only lists albums with 2+ songs, so a one track album is not in S.albums, ask the server for it
+  let _alb0 = song.album_id ? (S.albums || []).find(a => a.id === song.album_id) : null;
+  if (song.album_id && !_alb0 && !song.album && CFG.hide_single_albums !== false && !song._pendingAlbumId) {
+    try { _alb0 = await api('GET', '/api/albums/' + song.album_id); } catch (e) { _alb0 = null; }
+  }
   const autoSingle = CFG.hide_single_albums !== false && !!(_alb0 && _alb0.title) && !song.album && !song._pendingAlbumId;
   const isSingle = !song.album_id || autoSingle;
   const _aid = song._pendingAlbumId || song.album_id;
@@ -28416,7 +28420,7 @@ async function _sdRenderEdit(sid, song) {
       <div style="display:flex;flex-direction:column;gap:6px">
         <span style="${_SD_LBL}">album</span>
         <label style="display:flex;align-items:center;gap:8px;cursor:${autoSingle ? 'default' : 'pointer'};${autoSingle ? 'opacity:.55' : ''}"><input type="checkbox" id="edit-song-single" ${isSingle ? 'checked' : ''} ${autoSingle ? 'disabled' : ''} onchange="toggleSingleMode('${sid}',this.checked)"><span style="font:var(--type-body-small)">single (no album)</span></label>
-        ${autoSingle ? `<div style="display:flex;flex-direction:column;gap:8px;padding:8px 10px;border-radius:var(--radius-md);background:var(--color-surface-container-high)"><span style="${_SD_LBL}">autodetected as a single by the autodetect single albums setting, its only album is a one track album with the same name${albumName ? ' (' + esc(albumName) + ')' : ''}. the album data itself is untouched. turn the setting off to treat it as a normal album and change it here</span><button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start;padding:4px 12px;font-size:12px" onclick="_sdDisableAutoSingle('${sid}')">turn off autodetect single albums</button></div>` : ''}
+        ${autoSingle ? `<div style="display:flex;flex-direction:column;gap:8px;padding:8px 10px;border-radius:var(--radius-md);background:var(--color-surface-container-high)"><span style="${_SD_LBL}">autodetected as a single by the autodetect single albums setting, its only album is a one track album with the same name${_alb0 && _alb0.title ? ' (' + esc(_alb0.title) + ')' : ''}. the album data itself is untouched. turn the setting off to treat it as a normal album and change it here</span><button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start;padding:4px 12px;font-size:12px" onclick="_sdDisableAutoSingle('${sid}')">turn off autodetect single albums</button></div>` : ''}
         <div id="edit-album-row" style="display:${isSingle ? 'none' : 'flex'};gap:10px;align-items:center;padding:8px;border-radius:var(--radius-md);background:var(--color-surface-container-high)">
           ${albumThumb ? `<img src="${esc(albumThumb)}" alt="" onerror="this.style.display='none'" style="width:46px;height:46px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">` : ''}
           <span id="edit-album-name" style="flex:1;min-width:0;font:var(--type-body-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(albumName)}</span>
