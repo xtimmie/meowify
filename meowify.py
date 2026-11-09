@@ -15471,7 +15471,7 @@ body.design-glassy .cover-lightbox-zoom-bar span{color:rgba(255,255,255,.6);}
   box-shadow:0 4px 16px rgba(0,0,0,.28),0 1px 0 color-mix(in oklch,white 10%,transparent) inset;
   transition:background var(--dur-2),transform var(--dur-2) cubic-bezier(.34,1.56,.64,1),filter var(--dur-2);
 }
-.lyrics-resync button svg{flex-shrink:0;color:var(--color-primary)}
+.lyrics-resync button svg{flex-shrink:0}
 .lyrics-resync button:active{transform:scale(.94)}
 @media (hover: hover) {.lyrics-resync button:hover{filter:brightness(1.15)}}
 body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel)}
@@ -26582,7 +26582,7 @@ function renderLrcLines(sid, prefixHtml) {
   if (!body) return;
   const linesHtml = _lrcLines.map((l, i) => _buildWordByWordLine(l, i)).join('');
   const _lrRs = `<div class="lyrics-resync" id="lrc-resync">
-      <button onclick="lrcResync()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg>sync</button>
+      <button onclick="lrcResync()"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block"><defs><mask id="clock-mask-rs"><rect width="20" height="20" fill="white"/><rect x="9" y="3" width="2" height="8" rx="1" fill="black" style="transform-origin:10px 10px;transform:rotate(120deg)"/><rect x="9" y="2" width="2" height="8" rx="1" fill="black" style="transform-origin:10px 10px;transform:rotate(-5deg)"/></mask></defs><circle cx="10" cy="10" r="10" fill="currentColor" mask="url(#clock-mask-rs)"/></svg>sync</button>
     </div>`;
   const _lrEng = _lyrEngOn();
   body.innerHTML = _lrEng
@@ -26803,8 +26803,12 @@ function _lyrEngWire(body) {
     clearTimeout(_LE.wt);
     _LE.wt = setTimeout(() => { _LE.held = false; _lyrEngKick(); }, 160);
   }, { passive: false });
-  // the sheet drag on mobile must not grab swipes that start inside the lyrics
-  body.addEventListener('touchstart', e => { if (isMobile() && ok() && !e.target.closest('.lyrics-resync')) e.stopPropagation(); }, { passive: true });
+  // the sheet drag reads the engine as a scroller: it only takes a swipe that starts at the very top and moves down, never one the engine already scrolled
+  const vs = {
+    get scrollTop() { const L = _LE, x = L.mode === 'free' ? L.F.x : (L.S[Math.max(0, _lrcActiveIdx)] || { x: 0 }).x; return x > 2 ? x : 0; },
+    owned() { const L = _LE; return !!((L.drag && L.drag.moved) || L.tdrag); }
+  };
+  body._sheetScroller = () => ok() ? vs : null;
   body.addEventListener('pointerdown', e => {
     if (!ok() || e.button > 1 || e.target.closest('.lyrics-resync')) return;
     if (isMobile()) e.stopPropagation();
@@ -26831,6 +26835,7 @@ function _lyrEngWire(body) {
     if (!dg) return;
     if (!dg.moved) {
       if (Math.abs(e.clientY - dg.y0) <= 6) return;
+      if (e.pointerType === 'touch' && isMobile() && e.clientY > dg.y0 && !vs.scrollTop) { L.drag = null; return; }
       dg.moved = true;
       body.setPointerCapture(e.pointerId);
     }
