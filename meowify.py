@@ -1078,6 +1078,9 @@ def init_db():
             synced TEXT,
             updated_at INTEGER
         )""")
+        mcols = [r[1] for r in c.execute("PRAGMA table_info(lyrics_manual)").fetchall()]
+        if 'lyr_offset' not in mcols:
+            c.execute("ALTER TABLE lyrics_manual ADD COLUMN lyr_offset REAL DEFAULT 0")
         c.execute("""CREATE TABLE IF NOT EXISTS lyrics_pref (
             song_id TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
             def_src TEXT,
@@ -3196,7 +3199,7 @@ def _lyrics_payload(sid):
         except Exception:
             gen = None
     with db() as c:
-        mr = c.execute("SELECT plain, synced, updated_at FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+        mr = c.execute("SELECT plain, synced, updated_at, lyr_offset FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
         pr = c.execute("SELECT def_src, def_type, last_src, last_type FROM lyrics_pref WHERE song_id=?", (sid,)).fetchone()
     man = None
     if mr:
@@ -3204,7 +3207,7 @@ def _lyrics_payload(sid):
             m_items = json.loads(mr[1]) if mr[1] else None
         except Exception:
             m_items = None
-        man = {'plain': mr[0] or '', 'items': m_items, 'updated_at': mr[2]}
+        man = {'plain': mr[0] or '', 'items': m_items, 'updated_at': mr[2], 'offset': float(mr[3] or 0)}
     pref = {'def_src': pr[0], 'def_type': pr[1], 'last_src': pr[2], 'last_type': pr[3]} if pr else None
     has = bool(base['lrc'] or base['plain'] or gen or man)
     ins = (not has) and ((base['source'] or '').lower() == 'instrumental' or bool(g and g[0] == 'instrumental'))
@@ -13797,14 +13800,23 @@ def api_lyrics_manual_put(sid):
     with db() as c:
         if not c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone():
             return jsonify({'error': 'not found'}), 404
-        row = c.execute("SELECT plain, synced FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+        row = c.execute("SELECT plain, synced, lyr_offset FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+        off_v = float(row[2] or 0) if row else 0.0
+        if 'offset' in data:
+            try:
+                off_v = float(data.get('offset') or 0)
+            except (TypeError, ValueError):
+                off_v = 0.0
+            if off_v != off_v:
+                off_v = 0.0
+            off_v = round(max(-30.0, min(30.0, off_v)), 3)
         plain_v = (data.get('plain') or '') if 'plain' in data else (row[0] if row else '')
         if 'items' in data:
             synced_v = json.dumps(items) if items is not None else None
         else:
             synced_v = row[1] if row else None
-        c.execute("INSERT OR REPLACE INTO lyrics_manual (song_id, plain, synced, updated_at) VALUES (?,?,?,?)",
-                  (sid, plain_v, synced_v, now))
+        c.execute("INSERT OR REPLACE INTO lyrics_manual (song_id, plain, synced, updated_at, lyr_offset) VALUES (?,?,?,?,?)",
+                  (sid, plain_v, synced_v, now, off_v))
         if row is None:
             c.execute("INSERT OR IGNORE INTO lyrics_pref (song_id) VALUES (?)", (sid,))
             c.execute("UPDATE lyrics_pref SET def_src='manual', def_type=NULL WHERE song_id=?", (sid,))
@@ -15434,6 +15446,9 @@ body.design-glassy .lye .lye-top{background:transparent}
 .lye .lye-pos{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;z-index:4}
 .lye .lye-pos::before{content:'';position:absolute;left:0;right:0;top:-1px;height:2px;border-radius:2px;background:var(--color-primary);box-shadow:0 0 8px color-mix(in oklch,var(--color-primary) 70%,transparent)}
 .lye .lye-pos::after{content:'';position:absolute;left:-3px;top:-4px;width:8px;height:8px;border-radius:50%;background:var(--color-primary)}
+.lye input.input.lye-off{width:78px;height:30px;min-height:0;padding:0 6px;margin:0 2px 0 6px;font-size:13px;border-radius:9px;box-sizing:border-box;text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in oklch,var(--color-on-surface) 7%,transparent);border:1px solid transparent;box-shadow:none;color:var(--color-on-surface);outline:0}
+.lye input.input.lye-off:focus{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent);border-color:color-mix(in oklch,var(--color-primary) 55%,transparent)}
+.lye .lye-row.lye-tgt{background:color-mix(in oklch,var(--color-primary) 32%,transparent)!important}
 .cx-tag{margin-left:auto;padding-left:16px;font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.55}
 .lyr-bar{position:absolute;left:8px;right:8px;bottom:0;height:2px;overflow:hidden;opacity:0;transition:opacity var(--dur-3);pointer-events:none;border-radius:2px;z-index:2}
 .lyr-bar.on{opacity:1}
@@ -24923,10 +24938,12 @@ function _lyrParseManual(text) {
   });
   return secs;
 }
+function _lyrOff(m) { const v = m ? Number(m.offset) : 0; return Number.isFinite(v) ? v : 0; }
 function _lyrManualLrc(m) {
   const ls = ((m && m.items) || []).filter(x => x.k === 'l' && Number.isFinite(x.t) && (x.x || '').trim()).sort((a, b) => a.t - b.t);
+  const off = _lyrOff(m);
   return ls.map(x => {
-    const cs = Math.round(Math.max(0, x.t) * 100), mm = Math.floor(cs / 6000), ss = ((cs % 6000) / 100).toFixed(2).padStart(5, '0');
+    const cs = Math.round(Math.max(0, x.t + off) * 100), mm = Math.floor(cs / 6000), ss = ((cs % 6000) / 100).toFixed(2).padStart(5, '0');
     return '[' + String(mm).padStart(2, '0') + ':' + ss + ']' + _lyrStripMd(x.x);
   }).join('\n');
 }
@@ -25370,7 +25387,7 @@ function _lyrEdSeek(t) {
 }
 function _lyrEdDirty() {
   const e = S.lyrEdit;
-  return !!e && (e.plain !== e.op || JSON.stringify(e.items) !== e.oi);
+  return !!e && (e.plain !== e.op || JSON.stringify(e.items) !== e.oi || e.off !== e.oo);
 }
 function _lyrPlainToItems(text) {
   const out = [];
@@ -25416,8 +25433,9 @@ function lyrEditStart(seed) {
   const m = d && d.manual;
   const plain = seed ? (seed.plain || '') : (m ? (m.plain || '') : '');
   const items = seed ? (seed.items || null) : (m && m.items ? JSON.parse(JSON.stringify(m.items)) : null);
+  const off = seed ? 0 : _lyrOff(m);
   S.lyrEdit = {
-    sid: song.id, plain, items, op: plain, oi: JSON.stringify(items),
+    sid: song.id, plain, items, op: plain, oi: JSON.stringify(items), off, oo: off,
     mode: !plain.trim() && items ? 'synced' : 'plain', isNew: !!seed,
     active: Math.max(0, (items || []).findIndex(x => x.k === 'l')),
     scrub: CFG.lyrics_ed_scrub === true, pos: CFG.lyrics_ed_pos === true, scrubOrig: CFG.audio_scrub, hid: {},
@@ -25461,14 +25479,15 @@ function _lyrEditRender() {
       <button class="btn btn-out mu-ripple" onclick="lyrEditAdd('s')">add section</button>
       <label class="lye-sw"><input type="checkbox" ${e.scrub ? 'checked' : ''} onchange="lyrEditScrub(this.checked)">hear while dragging the seekbar</label>
       <label class="lye-sw"><input type="checkbox" ${e.pos ? 'checked' : ''} onchange="lyrEditPos(this.checked)">show position</label>
+      <label class="lye-sw" title="shifts every timing of this song, positive = lyrics show later">offset<input type="number" class="input lye-off" step="0.05" min="-30" max="30" value="${e.off}" onchange="lyrEditOffset(this.value)" onkeydown="if(event.key==='Enter')this.blur()">s</label>
     </div>`;
     main = `<div class="lye-rows" id="lye-rows">${rows}<div class="lye-pos" id="lye-pos" style="display:none"></div></div>
-    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, enter adds a line below, drag the handle to reorder (a header takes its whole group with it), - and + nudge a line by 0.1s</div>`;
+    <div class="lye-hint">space stamps the current playback time into the highlighted line and moves to the next one, click a line to jump to it, enter adds a line below, drag the handle to reorder (a header takes its whole group with it), - and + nudge a line by 0.1s, right click a header or a line to copy timing from another group</div>`;
   } else {
     main = `<textarea id="lyr-ed-ta" class="input lye-ta" spellcheck="false" placeholder="[Verse 1: artist]&#10;lyrics here" oninput="lyrEditInput(this.value)" oncontextmenu="lyrEditCtx(event)" onkeydown="lyrEditKey(event)">${esc(e.plain)}</textarea>
     <div class="lye-hint">[Chorus] or [Verse 1: name, name] lines group the lyrics, *italic* and **bold** style text, right click for helpers</div>`;
   }
-  body.innerHTML = `<div class="lye" oncontextmenu="event.stopPropagation()"><div class="lye-top">${bar}${tools}</div>${main}</div>`;
+  body.innerHTML = `<div class="lye" oncontextmenu="lyrEditRowCtx(event)"><div class="lye-top">${bar}${tools}</div>${main}</div>`;
   body.style.scrollBehavior = 'auto';
   body.scrollTop = top;
   requestAnimationFrame(() => { body.style.scrollBehavior = ''; });
@@ -25482,8 +25501,8 @@ function lyrEditTime(i, v) {
   if (!it) return;
   const t = _lyrEdParseT(v), inp = document.getElementById('lye-t-' + i);
   if (t === undefined) { if (inp) inp.value = _lyrEdFmt(it.t); return; }
-  it.t = t;
-  if (inp) inp.value = _lyrEdFmt(t);
+  it.t = t == null ? null : Math.min(86400, t);
+  if (inp) inp.value = _lyrEdFmt(it.t);
 }
 function lyrEditNudge(i, dt) {
   const e = S.lyrEdit, it = e && e.items && e.items[i];
@@ -25492,7 +25511,7 @@ function lyrEditNudge(i, dt) {
   const inp = document.getElementById('lye-t-' + i);
   if (inp) inp.value = _lyrEdFmt(it.t);
   lyrEditActive(i, true);
-  _lyrEdSeek(it.t);
+  _lyrEdSeek(it.t + e.off);
 }
 function lyrEditActive(i, quiet) {
   const e = S.lyrEdit;
@@ -25506,7 +25525,7 @@ function lyrEditRow(i) {
   const e = S.lyrEdit, it = e && e.items && e.items[i];
   if (!it) return;
   lyrEditActive(i, true);
-  if (it.k === 'l') _lyrEdSeek(it.t);
+  if (it.k === 'l') _lyrEdSeek(it.t + e.off);
 }
 function lyrEditEnter(ev, i) {
   if (ev.key !== 'Enter' || ev.isComposing) return;
@@ -25610,7 +25629,7 @@ function lyrEditStamp() {
     if (f < 0) return;
     i = f;
   }
-  const t = Math.round(Math.max(0, _lyrEdNow()) * 100) / 100;
+  const t = Math.round(Math.max(0, _lyrEdNow() - e.off) * 100) / 100;
   e.items[i].t = t;
   const inp = document.getElementById('lye-t-' + i);
   if (inp) inp.value = _lyrEdFmt(t);
@@ -25701,7 +25720,7 @@ function _lyrEdPosTick() {
   _lyrPosRaf = 0;
   const e = S.lyrEdit, el = document.getElementById('lye-pos');
   if (!e || e.mode !== 'synced' || !e.pos || !el) return;
-  const y = _lyrEdPosY(e, _lyrEdNow(), _getSeekDur());
+  const y = _lyrEdPosY(e, _lyrEdNow() - e.off, _getSeekDur());
   if (y == null) el.style.display = 'none';
   else { el.style.display = ''; el.style.translate = '0 ' + y.toFixed(1) + 'px'; }
   _lyrPosRaf = requestAnimationFrame(_lyrEdPosTick);
@@ -25721,6 +25740,151 @@ function lyrEditPos(on) {
   const el = document.getElementById('lye-pos');
   if (el && !on) el.style.display = 'none';
   _lyrEdPosStart();
+}
+
+function lyrEditOffset(v) {
+  const e = S.lyrEdit;
+  if (!e) return;
+  let n = parseFloat(String(v).replace(',', '.'));
+  if (!Number.isFinite(n)) n = 0;
+  n = Math.max(-30, Math.min(30, Math.round(n * 1000) / 1000));
+  e.off = n;
+  const inp = document.querySelector('#lyrics-body .lye-off');
+  if (inp) inp.value = n;
+}
+
+function _lyrInfo(title, text) {
+  showModal(title, '<p>' + esc(text) + '</p>', '<button class="btn btn-fill mu-ripple" onclick="closeModal()">ok</button>');
+}
+
+function _lyrEdGroups(items) {
+  const gs = [];
+  let cur = null;
+  (items || []).forEach((it, i) => {
+    if (it.k === 's') { cur = { h: i, name: it.x || '', rows: [] }; gs.push(cur); }
+    else {
+      if (!cur) { cur = { h: -1, name: '', rows: [] }; gs.push(cur); }
+      cur.rows.push(i);
+    }
+  });
+  return gs;
+}
+function _lyrEdGName(g) { return g.name.trim() || (g.h < 0 ? '(no header)' : '(unnamed)'); }
+function _lyrEdNorm(s) {
+  return _lyrStripMd(s).toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
+}
+function _lyrEdSim(a, b) {
+  if (a === b) return 1;
+  const n = a.length, m = b.length;
+  if (!n || !m) return 0;
+  if (Math.min(n, m) / Math.max(n, m) < 0.9) return 0;
+  let prev = Array.from({ length: m + 1 }, (_, j) => j), cur = new Array(m + 1);
+  for (let i = 1; i <= n; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= m; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1));
+    const sw = prev; prev = cur; cur = sw;
+  }
+  return 1 - prev[m] / Math.max(n, m);
+}
+function _lyrEdAlign(src, dst) {
+  const n = src.length, m = dst.length;
+  const sc = src.map(a => dst.map(b => { if (!a || !b) return 0; const s = _lyrEdSim(a, b); return s >= 0.9 ? s : 0; }));
+  const dp = Array.from({ length: n + 1 }, () => new Float64Array(m + 1));
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    const s = sc[i - 1][j - 1];
+    dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1], s ? dp[i - 1][j - 1] + s : 0);
+  }
+  const out = [];
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    const s = sc[i - 1][j - 1];
+    if (s && Math.abs(dp[i][j] - (dp[i - 1][j - 1] + s)) < 1e-9) { out.push([i - 1, j - 1]); i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) i--;
+    else j--;
+  }
+  return out.reverse();
+}
+
+function _lyrEdTgtMark(idxs) {
+  if (window._lyrTgtOff) window._lyrTgtOff();
+  idxs.forEach(r => { const el = document.getElementById('lye-r-' + r); if (el) el.classList.add('lye-tgt'); });
+  const off = () => {
+    document.querySelectorAll('#lye-rows .lye-tgt').forEach(el => el.classList.remove('lye-tgt'));
+    document.removeEventListener('pointerdown', off, true);
+    document.removeEventListener('keydown', off, true);
+    window._lyrTgtOff = null;
+  };
+  window._lyrTgtOff = off;
+  document.addEventListener('pointerdown', off, true);
+  document.addEventListener('keydown', off, true);
+}
+
+function lyrEditRowCtx(ev) {
+  ev.stopPropagation();
+  const e = S.lyrEdit, tg = ev.target, row = tg && tg.closest ? tg.closest('.lye-row') : null;
+  if (!e || e.mode !== 'synced' || !e.items || !row) return;
+  if (tg.tagName === 'INPUT' && tg.selectionStart !== tg.selectionEnd) return;
+  const i = parseInt(row.id.slice(6), 10), it = e.items[i];
+  if (!it) return;
+  ev.preventDefault();
+  lyrEditActive(i, true);
+  const gs = _lyrEdGroups(e.items), ti = gs.findIndex(g => g.h === i || g.rows.includes(i));
+  if (ti < 0) return;
+  if (gs.length < 2) { _lyrInfo('copy timing', 'there is only one group in this song, copy timing needs another group to copy from'); return; }
+  const tgt = gs[ti], txt = r => (e.items[r].x || '').trim();
+  _lyrEdTgtMark((tgt.h >= 0 ? [tgt.h] : []).concat(tgt.rows));
+  const menu = [{ _header: true, label: 'copy timing into "' + _lyrEdGName(tgt) + '"' + (it.k === 'l' ? ' (this line is the anchor)' : '') }];
+  gs.forEach((g, gi) => {
+    const lines = g.rows.filter(txt).length, timed = g.rows.filter(r => txt(r) && Number.isFinite(e.items[r].t)).length;
+    menu.push({ label: _lyrEdGName(g), tag: gi === ti ? 'target' : timed ? timed + '/' + lines + ' timed' : 'no timing', fn: () => _lyrEdCopyTiming(gi, ti, i) });
+  });
+  showCtx(ev, menu);
+}
+
+function _lyrEdCopyTiming(si, ti, clicked) {
+  const e = S.lyrEdit;
+  if (!e || !e.items) return;
+  const IT = e.items, gs = _lyrEdGroups(IT), sg = gs[si], tg = gs[ti];
+  if (!sg || !tg || !IT[clicked]) return;
+  if (si === ti) { _lyrInfo('copy timing', 'that is the group you are copying into, pick another one to copy from'); return; }
+  const has = r => Number.isFinite(IT[r].t), txt = r => (IT[r].x || '').trim();
+  const sRows = sg.rows.filter(txt), tRows = tg.rows.filter(txt);
+  if (!sRows.some(has)) { _lyrInfo('nothing to copy', 'the group you picked has no timed lines to copy from'); return; }
+  const tTimed = tRows.filter(has);
+  const isLine = IT[clicked].k === 'l';
+  if (isLine && !has(clicked)) { _lyrInfo('no anchor', 'this line has no timing yet, sync it first to make an anchor or right click the group header to use the first synced line of the group'); return; }
+  if (!isLine && !tTimed.length) { _lyrInfo('no anchor', 'this group has no synced line yet, sync one line of the group first to make an anchor and then copy the timing'); return; }
+  if (isLine && !txt(clicked)) { _lyrInfo('no anchor', 'this line is empty, pick a line with text as the anchor'); return; }
+  const pairs = _lyrEdAlign(sRows.map(r => _lyrEdNorm(IT[r].x)), tRows.map(r => _lyrEdNorm(IT[r].x)));
+  const map = new Map();
+  pairs.forEach(([a, b]) => { if (has(sRows[a])) map.set(tRows[b], sRows[a]); });
+  const anchor = isLine ? clicked : tTimed.find(r => map.has(r));
+  if (anchor == null || !map.has(anchor)) {
+    _lyrInfo('no match', isLine ? 'this line does not match any timed line of the group you copy from, try another line as the anchor' : 'none of the synced lines in this group match a timed line of the group you copy from');
+    return;
+  }
+  const base = map.get(anchor), aT = IT[anchor].t, bT = IT[base].t;
+  const jobs = [];
+  map.forEach((s, r) => {
+    if (r === anchor) return;
+    jobs.push({ r, t: Math.max(0, Math.round((aT + IT[s].t - bT) * 100) / 100), had: has(r) });
+  });
+  if (!jobs.length) { _lyrInfo('nothing to copy', 'no other lines of this group match the group you copy from'); return; }
+  const apply = over => {
+    if (S.lyrEdit !== e) return;
+    let n = 0;
+    jobs.forEach(j => { if (j.had && !over) return; IT[j.r].t = j.t; n++; });
+    _lyrEditRender();
+    if (!n) _lyrInfo('nothing changed', 'all matching lines already had a timing');
+  };
+  if (tTimed.length > 1) {
+    const miss = jobs.filter(j => !j.had).length, have = jobs.length - miss;
+    const msg = 'this group already has more than one synced line, so the timings get rebased on ' + (isLine ? 'the line you right clicked' : 'its first synced line') + ' "' + _lyrStripMd(IT[anchor].x).slice(0, 60) + '". ' + miss + ' matching line' + (miss === 1 ? ' has' : 's have') + ' no timing yet and ' + have + ' already ' + (have === 1 ? 'has' : 'have') + ' one, overwrite replaces those too and only fill missing leaves them alone';
+    window._lyrCtFn = apply;
+    showModal('rebase timing', '<p>' + esc(msg) + '</p>', '<button class="btn btn-out mu-ripple" onclick="closeModal();window._lyrCtFn=null">cancel</button><button class="btn btn-out mu-ripple" onclick="closeModal();const f=window._lyrCtFn;window._lyrCtFn=null;if(f)f(false)">only fill missing</button><button class="btn btn-fill mu-ripple" onclick="closeModal();const f=window._lyrCtFn;window._lyrCtFn=null;if(f)f(true)">overwrite</button>');
+    return;
+  }
+  apply(false);
 }
 
 function lyrEditMode(m) {
@@ -25840,7 +26004,7 @@ async function lyrEditSave() {
   if (!plain.trim() && items) plain = _lyrItemsToPlain(items);
   const has = !!plain.trim() || (items || []).some(x => x.k === 'l' && (x.x || '').trim());
   try {
-    if (has) await api('PUT', '/api/songs/' + e.sid + '/lyrics/manual', { plain, items });
+    if (has) await api('PUT', '/api/songs/' + e.sid + '/lyrics/manual', { plain, items, offset: e.off });
     else if (!e.isNew) await api('DELETE', '/api/songs/' + e.sid + '/lyrics/manual');
   } catch (err) {
     showModal('could not save', '<p>the lyrics could not be saved, your edits are still in the editor</p>', '<button class="btn btn-fill mu-ripple" onclick="closeModal()">ok</button>');
