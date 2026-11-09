@@ -9219,6 +9219,11 @@ def _dbx_snapshot_gz(src, dst):
     s = sqlite3.connect(str(src), timeout=30)
     try:
         d = sqlite3.connect(str(tmp_db), isolation_level=None)
+        # the schema's views / indexes call these, without them DROP TABLE can't re-parse the schema and the strip fails
+        d.create_function('_canonical', 1, _canonical)
+        d.create_function('_ulower', 1, _ulower, deterministic=True)
+        d.create_function('_disp_artist', 1, _disp_artist)
+        d.create_function('_disp_album', 3, _disp_album)
         try:
             s.backup(d)
             try:
