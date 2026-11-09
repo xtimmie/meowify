@@ -14350,17 +14350,211 @@ def _drag_clean_tags(path, keep_track):
     except Exception as e:
         _log_library.warning('[drag out] tag cleanup failed: %s', e)
 
+_DRAG_JUNK_ID3 = ('comm', 'tsse', 'tenc', 'rva2', 'rvad', 'rgad', 'uslt', 'sylt', 'apic', 'tpe2',
+                  'txxx:replaygain', 'txxx:purl', 'txxx:comment', 'txxx:synopsis', 'txxx:description')
+_DRAG_JUNK_VORBIS = ('comment', 'description', 'purl', 'synopsis', 'encoder', 'lyrics', 'unsyncedlyrics', 'albumartist', 'replaygain')
+_DRAG_JUNK_MP4 = ('\xa9cmt', 'desc', 'ldes', 'purl', 'catg', 'keyw', 'egid', '\xa9too', '\xa9lyr', 'aart', '----:com.apple.itunes:replaygain')
+
+def _drag_names(s):
+    return [t.strip() for t in re.split(r',\s*', str(s or '')) if t.strip()]
+
+def _drag_stem(title, artist, feat):
+    a = _drag_names(artist)[:3]
+    seen = {x.casefold() for x in a}
+    t = (title or '').casefold()
+    f = [x for x in _drag_names(feat) if x.casefold() not in seen and x.casefold() not in t][:3]
+    who = ', '.join(a)
+    if who and f:
+        who += ' ft. ' + ', '.join(f)
+    return _drag_clean(f'{title} - {who}' if (title and who) else (title or ''))
+
+def _drag_extra(sid, artist):
+    out = {'feat': '', 'tag_artist': artist or '', 'plain': '', 'lrc': ''}
+    try:
+        with db() as c:
+            fr = c.execute("SELECT featuring_artists FROM songs WHERE id=?", (sid,)).fetchone()
+            ly = c.execute("SELECT lrc, plain FROM lyrics WHERE song_id=?", (sid,)).fetchone()
+            man = c.execute("SELECT plain FROM lyrics_manual WHERE song_id=?", (sid,)).fetchone()
+            pr = c.execute("SELECT def_src FROM lyrics_pref WHERE song_id=?", (sid,)).fetchone()
+        feat = (_disp_artist(fr[0]) if fr and fr[0] else '') or ''
+        out['feat'] = feat
+        main = _drag_names(artist)
+        seen = {x.casefold() for x in main}
+        extra = [x for x in _drag_names(feat) if x.casefold() not in seen]
+        out['tag_artist'] = ', '.join(main + extra) or (artist or '')
+        lrc = (ly[0] or '') if ly else ''
+        plain = (ly[1] or '') if ly else ''
+        mp = (man[0] or '') if man else ''
+        if mp.strip() and ((pr and pr[0] == 'manual') or not (lrc.strip() or plain.strip())):
+            plain, lrc = mp, ''
+        if not plain.strip() and lrc.strip():
+            plain = '\n'.join(re.sub(r'\[[^\]]*\]', '', l).strip() for l in lrc.splitlines() if re.search(r'\[\d+:\d+', l))
+        out['plain'], out['lrc'] = plain.strip(), lrc.strip()
+    except Exception as e:
+        _log_library.warning('[drag out] extra meta failed: %s', e)
+    return out
+
+def _drag_lrc_items(lrc):
+    out = []
+    for line in (lrc or '').splitlines():
+        ts = re.findall(r'\[(\d+):(\d+(?:\.\d+)?)\]', line)
+        if not ts:
+            continue
+        txt = re.sub(r'\[[^\]]*\]', '', line).strip()
+        for mm, ss in ts:
+            out.append((txt, int(round((int(mm) * 60 + float(ss)) * 1000))))
+    out.sort(key=lambda x: x[1])
+    return out
+
+def _drag_cover_bytes(cover_path):
+    try:
+        if cover_path and os.path.isfile(cover_path):
+            with open(cover_path, 'rb') as fh:
+                data = fh.read()
+            if data:
+                return data, ('image/png' if data[:8] == b'\x89PNG\r\n\x1a\n' else 'image/jpeg')
+    except Exception:
+        pass
+    return None, None
+
+def _drag_finish(path, m):
+    """last pass on the temp copy: drops downloader junk and stale replaygain, then writes the library's cover, lyrics
+    (plain, plus synced for mp3), album artist and track handling for every format"""
+    plain, lrc, tn = m.get('plain') or '', m.get('lrc') or '', m.get('track') or 0
+    aa = (_drag_names(m.get('artist'))[:1] or [''])[0]
+    data, mime = _drag_cover_bytes(m.get('cover'))
+    try:
+        if Path(path).suffix.lower() == '.mp3':
+            from mutagen.id3 import ID3, ID3NoHeaderError, APIC, USLT, SYLT, TPE2
+            try:
+                tags = ID3(path)
+            except ID3NoHeaderError:
+                tags = ID3()
+            for k in list(tags.keys()):
+                if k.lower().startswith(_DRAG_JUNK_ID3):
+                    del tags[k]
+            if not tn:
+                tags.delall('TRCK')
+            if aa:
+                tags.add(TPE2(encoding=3, text=aa))
+            if data:
+                tags.add(APIC(encoding=3, mime=mime, type=3, desc='Cover', data=data))
+            if plain:
+                tags.add(USLT(encoding=3, lang='eng', desc='', text=plain))
+            items = _drag_lrc_items(lrc)
+            if items:
+                tags.add(SYLT(encoding=3, lang='eng', format=2, type=1, desc='', text=items))
+            tags.save(path, v2_version=3)
+            return
+        import mutagen
+        f = mutagen.File(path)
+        if f is None:
+            return
+        kind = type(f).__name__
+        if kind == 'MP4':
+            for k in list(f.keys()):
+                if k.lower().startswith(_DRAG_JUNK_MP4):
+                    del f[k]
+            if not tn and 'trkn' in f:
+                del f['trkn']
+            if aa:
+                f['aART'] = [aa]
+            if plain:
+                f['\xa9lyr'] = [plain]
+            if data:
+                from mutagen.mp4 import MP4Cover
+                f['covr'] = [MP4Cover(data, imageformat=MP4Cover.FORMAT_PNG if mime == 'image/png' else MP4Cover.FORMAT_JPEG)]
+            f.save()
+        elif kind in ('FLAC', 'OggVorbis', 'OggOpus', 'OggFLAC', 'OggSpeex'):
+            if f.tags is None:
+                f.add_tags()
+            for k in list(f.keys()):
+                kl = k.lower()
+                if kl.startswith(_DRAG_JUNK_VORBIS) or (kl in ('tracknumber', 'tracktotal') and not tn):
+                    del f[k]
+            if aa:
+                f['albumartist'] = [aa]
+            if plain:
+                f['lyrics'] = [plain]
+            if data:
+                import base64
+                from mutagen.flac import Picture
+                p = Picture()
+                p.type = 3
+                p.mime = mime
+                p.desc = 'Cover'
+                p.data = data
+                if kind == 'FLAC':
+                    f.clear_pictures()
+                    f.add_picture(p)
+                else:
+                    for k in list(f.keys()):
+                        if k.lower() == 'metadata_block_picture':
+                            del f[k]
+                    f['metadata_block_picture'] = [base64.b64encode(p.write()).decode('ascii')]
+            f.save()
+    except Exception as e:
+        _log_library.warning('[drag out] finish failed: %s', e)
+
+def _drag_sweep(max_age=20 * 60, max_bytes=300 * 1024 * 1024, keep=None):
+    """temp copies only live as long as someone could still be reading them: old folders go, and the newest ones are
+    kept only while the whole folder stays under max_bytes. max_age 0 clears everything"""
+    import tempfile, shutil
+    root = Path(tempfile.gettempdir()) / 'meowify-drag'
+    if not root.is_dir():
+        return
+    now = time.time()
+    left = []
+    for d in root.iterdir():
+        try:
+            if not d.is_dir() or (keep is not None and d == keep):
+                continue
+            st = d.stat().st_mtime
+            if max_age <= 0 or now - st > max_age:
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            left.append((st, sum(f.stat().st_size for f in d.iterdir() if f.is_file()), d))
+        except Exception:
+            pass
+    left.sort(reverse=True)
+    total = 0
+    for st, size, d in left:
+        total += size
+        if total > max_bytes:
+            shutil.rmtree(d, ignore_errors=True)
+
+def _drag_rm(paths):
+    import tempfile, shutil
+    try:
+        root = (Path(tempfile.gettempdir()) / 'meowify-drag').resolve()
+        for d in {Path(p).resolve().parent for p in paths}:
+            if d.parent == root:
+                shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+def _drag_button_down():
+    if sys.platform != 'win32':
+        return True
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        return bool((u.GetAsyncKeyState(0x01) | u.GetAsyncKeyState(0x02)) & 0x8000)
+    except Exception:
+        return True
+
+import atexit as _drag_atexit
+try:
+    _drag_sweep(0)
+except Exception:
+    pass
+_drag_atexit.register(lambda: _drag_sweep(0))
+
 def _drag_prepare(ids):
     import tempfile, shutil, uuid
     root = Path(tempfile.gettempdir()) / 'meowify-drag'
     root.mkdir(parents=True, exist_ok=True)
-    now = time.time()
-    for d in root.iterdir():  # drags from a while ago, whoever received them is long done
-        try:
-            if d.is_dir() and now - d.stat().st_mtime > 3 * 3600:
-                shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
+    _drag_sweep()
     out_dir = root / uuid.uuid4().hex[:12]
     out_dir.mkdir()
     used, files = set(), []
@@ -14373,7 +14567,8 @@ def _drag_prepare(ids):
         if not r or not r[0] or not os.path.isfile(r[0]):
             continue
         src, title, artist, album, tn, rd, cover = r
-        stem = _drag_clean(f'{title} - {artist}' if (title and artist) else (title or '')) or _drag_clean(Path(src).stem) or 'song'
+        ex = _drag_extra(sid, artist)
+        stem = _drag_stem(title, artist, ex['feat']) or _drag_clean(Path(src).stem) or 'song'
         if stem.split('.')[0].upper() in _DRAG_RESERVED:
             stem += '_'  # windows refuses CON.mp3, NUL.mp3 and friends
         ext = Path(src).suffix or '.mp3'
@@ -14385,14 +14580,14 @@ def _drag_prepare(ids):
         dst = out_dir / (name + ext)
         shutil.copyfile(src, dst)
         try:
-            write_meta(str(dst), title or '', artist or '', album or '', tn or 0, release_date=rd or '')
+            write_meta(str(dst), title or '', ex['tag_artist'], album or '', tn or 0, release_date=rd or '')
         except Exception as e:
             _log_library.warning('[drag out] tags failed: %s', e)
-        _drag_embed_cover(str(dst), cover)
-        _drag_clean_tags(str(dst), bool(tn))
+        _drag_finish(str(dst), {'artist': artist, 'track': tn, 'cover': cover, 'plain': ex['plain'], 'lrc': ex['lrc']})
         files.append(str(dst))
     if not files:
         shutil.rmtree(out_dir, ignore_errors=True)
+    _drag_sweep(keep=out_dir)
     return files
 
 def _drag_window():
@@ -14445,6 +14640,7 @@ def _drag_win_ui(hwnd, paths):
         eff = wintypes.DWORD(0)
         # no drop source passed: the shell's default one (esc cancels, button up drops). copy only, so explorer never moves the temp file
         shell32.SHDoDragDrop(hwnd, pdo, None, 1, byref(eff))
+        return int(eff.value)
     finally:
         if pdo:
             vtbl = ctypes.cast(pdo, POINTER(POINTER(c_void_p)))[0]
@@ -14458,7 +14654,8 @@ def _drag_win(native, paths):
 
     def run():
         try:
-            _drag_win_ui(hwnd, paths)
+            if not _drag_win_ui(hwnd, paths):
+                _drag_rm(paths)
         except Exception as e:
             _log_library.warning('[drag out] %s', e)
         finally:
@@ -14549,9 +14746,12 @@ def _drag_start_native(paths):
 
 @app.route('/api/drag-out', methods=['POST'])
 def api_drag_out():
-    ids = [str(i) for i in ((request.get_json(silent=True) or {}).get('ids') or []) if i]
+    body = request.get_json(silent=True) or {}
+    ids = [str(i) for i in (body.get('ids') or []) if i]
     if not ids:
         return jsonify({'error': 'no songs'}), 400
+    if body.get('held') and not _drag_button_down():
+        return jsonify({'ok': False, 'released': True})
     files = _drag_prepare(ids)
     if not files:
         return jsonify({'error': 'no files found for these songs'}), 404
@@ -28260,18 +28460,32 @@ document.addEventListener('pointerdown', e => {
   if (_DO.off || _DO.busy || e.pointerType !== 'mouse' || e.button !== 0) return;
   const row = e.target.closest && e.target.closest('.song-row, .song-row-mobile');
   if (!row || !row.dataset.id || e.target.closest('button, a, input, textarea, select')) return;
-  _DO.armed = {id: row.dataset.id, row, pid: e.pointerId};
+  _DO.armed = {id: row.dataset.id, row, host: row.parentElement, pid: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, held: true};
 }, true);
 document.addEventListener('pointerup', () => { _DO.armed = null; }, true);
-document.addEventListener('pointercancel', () => { _DO.armed = null; }, true);
+document.addEventListener('pointercancel', e => {
+  if (!e.isTrusted) return;
+  const a = _DO.armed;
+  _DO.armed = null;
+  if (a && a.moved && a.held) _doStart(a, true);
+}, true);
+window.addEventListener('blur', () => {
+  const a = _DO.armed;
+  if (!a || !a.moved || !a.held) return;
+  _DO.armed = null;
+  _doStart(a, true);
+});
 document.addEventListener('pointermove', e => {
   const a = _DO.armed;
-  if (!a || !(e.buttons & 1)) return;
+  if (!a) return;
+  a.held = !!(e.buttons & 1);
+  if (!a.held) return;
+  if (!a.moved && Math.hypot(e.clientX - a.x0, e.clientY - a.y0) > 6) a.moved = true;
   if (e.clientX >= -_DO_MARGIN_X && e.clientY >= -_DO_MARGIN_Y && e.clientX <= innerWidth + _DO_MARGIN_X && e.clientY <= innerHeight + _DO_MARGIN_Y) return;
   _DO.armed = null;
   _doStart(a);
 }, true);
-async function _doStart(a) {
+async function _doStart(a, held) {
   _DO.busy = true;
   try {
     const known = new Set(S.library.map(s => s.id));
@@ -28281,8 +28495,8 @@ async function _doStart(a) {
     ids.sort((x, y) => (ord.has(x) ? ord.get(x) : 1e9) - (ord.has(y) ? ord.get(y) : 1e9));  // same order as on screen
     if (!ids.length) return;
     // hand the pointer back: the reorder engines treat this as a cancel and put the rows where they were
-    (a.row.isConnected ? a.row : document).dispatchEvent(new PointerEvent('pointercancel', {pointerId: a.pid, bubbles: true}));
-    const r = await api('POST', '/api/drag-out', {ids});
+    (a.row.isConnected ? a.row : (a.host && a.host.isConnected ? a.host : document)).dispatchEvent(new PointerEvent('pointercancel', {pointerId: a.pid, bubbles: true}));
+    const r = await api('POST', '/api/drag-out', {ids, held: !!held});
     if (r && r.error && /only works|unsupported/.test(r.error)) _DO.off = true;
   } catch (e) {
   } finally {
