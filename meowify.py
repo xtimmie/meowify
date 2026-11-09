@@ -4542,6 +4542,9 @@ def _ytm_write_album_tracks(yt, album_id, sid, video_id, title, artist, browse_i
         return None, None
 
 
+# status strings and junk that are never a real album name
+_JUNK_ALBUM_RE = re.compile(r'^\s*(?:reinitializ\w*|downloading|untitled)\W*$', re.IGNORECASE)
+
 def _ytm_enrich(sid, video_id=None, artists_override=None):
     """Enrich a song with YTMusic metadata (no-token path).
     Resolves video_id → watch playlist → album browse_id → full tracklist."""
@@ -4552,8 +4555,12 @@ def _ytm_enrich(sid, video_id=None, artists_override=None):
         return
 
     with db() as c:
-        row = c.execute("SELECT title, artist, album, file_path FROM songs WHERE id=?", (sid,)).fetchone()
+        row = c.execute("SELECT title, artist, album, file_path, source FROM songs WHERE id=?", (sid,)).fetchone()
     if not row: return
+    # a download that is still running only has a placeholder row, its title is a status string and searching for it finds unrelated songs
+    if str(row[4] or '') == 'downloading' or re.fullmatch(r'\s*downloading\.\.\.\s*', row[0] or '', re.I):
+        _log_ytm.info('ytm_enrich: sid=%s is still a download placeholder, skipped', sid)
+        return
     title     = _strip_brackets(row[0] or '')
     artist    = _strip_brackets(row[1] or '')
     file_path = row[3]
@@ -4569,16 +4576,22 @@ def _ytm_enrich(sid, video_id=None, artists_override=None):
             q = f'{artist} {title}'.strip()
             results = yt.search(q, filter='songs', limit=5, ignore_spelling=True)
             if results:
-                best = max(results, key=lambda r: _fuzzy(
-                    re.sub(r'[^a-z0-9 ]', '', (r.get('title') or '').lower()) + ' ' +
-                    re.sub(r'[^a-z0-9 ]', '', ' '.join(a.get('name', '') for a in (r.get('artists') or [])).lower()),
-                    re.sub(r'[^a-z0-9 ]', '', f'{title} {artist}'.lower())
-                ))
-                resolved_vid = best.get('videoId') or None
-                ytm_title  = best.get('title') or title
-                _search_artists = best.get('artists') or []
-                ytm_artist = ', '.join(a.get('name', '') for a in _search_artists) or artist
-                _ytm_artist_dicts = [{'name': a.get('name',''), 'id': a.get('id','')} for a in _search_artists if a.get('name')]
+                _qn = re.sub(r'[^a-z0-9 ]', '', f'{title} {artist}'.lower())
+                def _cand_score(r):
+                    return _fuzzy(
+                        re.sub(r'[^a-z0-9 ]', '', (r.get('title') or '').lower()) + ' ' +
+                        re.sub(r'[^a-z0-9 ]', '', ' '.join(a.get('name', '') for a in (r.get('artists') or [])).lower()),
+                        _qn)
+                best = max(results, key=_cand_score)
+                # the closest of five results is not a match by itself: weak or a different version (live, slowed, part 2) is left alone
+                if _cand_score(best) < 0.6 or not _same_markers(best.get('title') or '', title):
+                    _log_ytm.info('ytm_enrich: sid=%s no confident match for %r (closest %r), left as is', sid, f'{artist} {title}', best.get('title'))
+                else:
+                    resolved_vid = best.get('videoId') or None
+                    ytm_title  = best.get('title') or title
+                    _search_artists = best.get('artists') or []
+                    ytm_artist = ', '.join(a.get('name', '') for a in _search_artists) or artist
+                    _ytm_artist_dicts = [{'name': a.get('name',''), 'id': a.get('id','')} for a in _search_artists if a.get('name')]
         except Exception as _e:
             _log_ytm.warning('ytm_enrich: search failed: %s', _e)
 
@@ -4597,11 +4610,17 @@ def _ytm_enrich(sid, video_id=None, artists_override=None):
         wp = yt.get_watch_playlist(videoId=resolved_vid)
         wp_tracks = wp.get('tracks') or []
         if wp_tracks:
-            alb_obj = wp_tracks[0].get('album') or {}
+            _t0 = wp_tracks[0]
+            alb_obj = _t0.get('album') or {}
             ytm_album_name = alb_obj.get('name') or ''
             ytm_browse_id = alb_obj.get('id') or None
-            _wp_artists = wp_tracks[0].get('artists') or []
-            if _wp_artists:
+            if _JUNK_ALBUM_RE.match(ytm_album_name):
+                ytm_album_name = ''
+                ytm_browse_id = None
+            # a pinned video id can be a plain upload (type beat, cover, lyric video): no album and not an audio track, so its channel is not the artist
+            _wp_official = bool(ytm_album_name) or (_t0.get('videoType') or '') in ('MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC')
+            _wp_artists = _t0.get('artists') or []
+            if _wp_artists and (_wp_official or not video_id):
                 # watch_playlist artists are more accurate than search result artists
                 _ytm_artist_dicts = [{'name': a.get('name',''), 'id': a.get('id','')} for a in _wp_artists if a.get('name')]
                 ytm_artist_from_wp = ', '.join(a.get('name', '') for a in _wp_artists)
@@ -5247,10 +5266,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                         return
                     _pf = _prefetch_genius(_gq_title, _gq_artist, tok)
                     if not _pf:
-                        try:
-                            _ytm_enrich(sid)
-                        except Exception as _mbe:
-                            _log_ytm.warning('ytm_enrich fallback err: %s', _mbe)
+                        # no genius match: the ytm step runs after the download on the finished row with the real video id
                         return
                     _sd_id = str(_pf['song_data'].get('id', ''))
                     with _dl_lock:
@@ -5315,11 +5331,14 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 _cls_m = re.search(r'(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})', q)
                 _cls_vid = _cls_m.group(1) if _cls_m else ''
             if _cls_vid:
-                try:
-                    _cls_type = (_import_ytmusic().get_song(_cls_vid).get('videoDetails') or {}).get('musicVideoType', '')
-                except Exception as _cle:
-                    _cls_type = ''
-                    _log_ytm.warning('url classify err: %s', _cle)
+                for _cls_try in range(2):
+                    try:
+                        _cls_type = (_import_ytmusic().get_song(_cls_vid).get('videoDetails') or {}).get('musicVideoType', '')
+                        break
+                    except Exception as _cle:
+                        _cls_type = ''
+                        _log_ytm.warning('url classify err (try %d): %s', _cls_try + 1, _cle)
+                        if _cls_try == 0: time.sleep(1.2)
                 if _cls_type and _cls_type not in ('MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC'):
                     is_video = True
                 _log_ytm.debug(f'url classify: {_cls_vid} -> {_cls_type or "unknown"} is_video={is_video}')
@@ -5402,9 +5421,13 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
         # only trust an album tag for real ytm songs. soundcloud and plain yt videos have no real
         # album, whatever is in that tag is uploader junk or a leftover status string
         _ie0 = (info.get('ie_key') or info.get('extractor') or '').lower()
+        if is_url and not is_video and 'youtube' in _ie0:
+            _uch0 = info.get('channel') or info.get('uploader') or ''
+            if not (_cls_type in ('MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC') or info.get('track') or info.get('album') or _uch0.endswith(' - Topic')):
+                is_video = True
         if ('soundcloud' in _ie0
                 or (is_video and not ytm_album)
-                or re.search(r'reinitializ|downloading\.\.\.|^untitled$', album, re.IGNORECASE)):
+                or _JUNK_ALBUM_RE.match(album)):
             album = ''
         # _pre_track_num comes from the Genius-matched album_tracks row when
         # available - that's the verified album-correct track order. YouTube's
@@ -5598,9 +5621,9 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 c.execute(
                     "UPDATE songs SET title=?,artist=?,album=?,duration=?,file_path=?,"
                     "cover_path=COALESCE(?,cover_path),source=?,modified_at=?,"
-                    "album_id=COALESCE(?,album_id),track_num=?,featuring_artists=COALESCE(NULLIF(?,''),(SELECT featuring_artists FROM songs WHERE id=?)) WHERE id=?",
+                    "album_id=CASE WHEN ? IS NULL AND COALESCE(genius_id,'')='' THEN NULL ELSE COALESCE(?,album_id) END,track_num=?,featuring_artists=COALESCE(NULLIF(?,''),(SELECT featuring_artists FROM songs WHERE id=?)) WHERE id=?",
                     (title, artist, album, meta['duration'], str(dest), cov,
-                     src_name, now, album_id, track_num, _yt_featuring or '', sid, sid))
+                     src_name, now, album_id, album_id, track_num, _yt_featuring or '', sid, sid))
             # store the video id we actually downloaded, overrides whatever enrichment guessed
             _dl_vid = info.get('id') or ''
             if src_name in ('youtube', 'youtube_video') and 'youtube' in _ie_key and re.fullmatch(r'[A-Za-z0-9_-]{11}', _dl_vid):
@@ -5708,6 +5731,24 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
             with _dl_lock:
                 pre_genius_id = (_dls.get(did) or {}).get('pre_genius_id') or ''
 
+        def _ytm_after_dl():
+            # the single ytm step for every download genius did not match, on the finished row with the real video id
+            if 'soundcloud' in _ie_key:
+                return
+            _evid = info.get('id') or ''
+            if not re.fullmatch(r'[A-Za-z0-9_-]{11}', _evid):
+                _evid = video_id_r if (video_id_r and re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id_r)) else ''
+            if not _evid:
+                return
+            with db() as _gc:
+                _g = _gc.execute("SELECT genius_id FROM songs WHERE id=?", (sid,)).fetchone()
+            if _g and _g[0]:
+                return
+            try:
+                _ytm_enrich(sid, video_id=_evid, artists_override=_ytm_ovr)
+            except Exception as _me:
+                _log_ytm.warning('ytm_enrich err: %s', _me)
+
         if genius_track_id:
             try:
                 with db() as c2:
@@ -5725,6 +5766,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 _log_genius.warning('genius album track enrich err: %s', _ge)
         elif tok and _auto_genius:
             _genius_done.wait(timeout=30)
+            _ytm_after_dl()
             # genius enrichment may have just rewritten this song's title/artist
             # from the original YT-search-derived guess to the corrected Genius
             # metadata. The duplicate check above only ran once, against the
@@ -5757,13 +5799,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 except Exception as _pde:
                     _log_library.warning('post-enrich dup recheck err: %s', _pde)
         elif _auto_genius:
-            with db() as _gc:
-                _ytm_ran = _gc.execute("SELECT genius_id FROM songs WHERE id=?", (sid,)).fetchone()
-            if not (_ytm_ran and _ytm_ran[0]):
-                try:
-                    _ytm_enrich(sid, video_id=info.get('id') or None, artists_override=_ytm_ovr)
-                except Exception as _me:
-                    _log_ytm.warning('ytm_enrich err: %s', _me)
+            _ytm_after_dl()
         _dl(did, status='done', progress=100, song_id=sid)
     except Exception as e:
         traceback.print_exc()
