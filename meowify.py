@@ -196,6 +196,7 @@ _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": 
 _DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True, "list_show_producers": False, "list_prod_prefix": False, "list_feat_prefix": False, "search_credits_prod": False, "search_credits_writers": False, "search_credits_other": False})
 
 _DEFS.update({"write_tags_on_edit": True})
+_DEFS.update({"seek_step": 5, "seek_btns": False})
 _DEFS.update({"single_album_mode": "dash", "single_album_suffix": False})
 
 def load_cfg():
@@ -9867,7 +9868,7 @@ _DBX_SHARED_PREFS = frozenset([
     'genius_token', 'auto_genius', 'ddg_genius',
     'volume_norm', 'target_lufs',
     'theme_hue', 'theme_sat', 'theme_bri',
-    'prev_restarts', 'dl_speed_single', 'dl_speed_batch',
+    'prev_restarts', 'dl_speed_single', 'dl_speed_batch', 'seek_step', 'seek_btns',
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
     'settings_nav', 'sidebar_layout', 'sidebar_hidden',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
@@ -16110,6 +16111,10 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 #bprev:active #prev-tri { transform: translateX(1.5px); }
 #bnext:active #next-bar { transform: translateX(2px); }
 #bnext:active #next-tri { transform: translateX(-1.5px); }
+.seek-btn{display:none!important}
+body.seek-on .seek-btn{display:flex!important}
+.seek-btn svg{overflow:visible}
+.seek-btn .seek-n{font-family:inherit;font-weight:700;stroke:none}
 
 /* ── REPEAT ──────────────────────────────────────────────────────────── */
 #rep-seg-a, #rep-seg-b, #rep-seg-c, #rep-seg-d {
@@ -17429,6 +17434,13 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
             <path id="sb-L"/><path id="sb-R"/><path id="sb-tip" fill="none"/>
           </svg>
         </button>
+        <button class="cbtn mu-ripple seek-btn" id="bseekb" onclick="seekBy(-1)" title="seek back">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+            <path d="M12 6 A7 7 0 1 1 5 13"/>
+            <polygon points="12,1.5 12,10.5 7,6" fill="currentColor"/>
+            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="7.5" fill="currentColor">-5</text>
+          </svg>
+        </button>
         <button class="cbtn mu-ripple" id="bprev" onclick="prevSong()" title="previous">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <line id="prev-bar" x1="5" y1="4" x2="5" y2="20"/>
@@ -17468,6 +17480,13 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <line id="next-bar" x1="19" y1="4" x2="19" y2="20"/>
             <polygon id="next-tri" points="5,4 15,12 5,20"/>
+          </svg>
+        </button>
+        <button class="cbtn mu-ripple seek-btn" id="bseekf" onclick="seekBy(1)" title="seek forward">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+            <path d="M12 6 A7 7 0 1 0 19 13"/>
+            <polygon points="12,1.5 12,10.5 17,6" fill="currentColor"/>
+            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="7.5" fill="currentColor">+5</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="brep" onclick="toggleRepeat()" title="repeat">
@@ -20114,6 +20133,8 @@ class AudioEngine {
       else if (c.cmd === 'next') nextSong();
       else if (c.cmd === 'prev') prevSong();
       else if (c.cmd === 'seek') _nmSeek(c.value);
+      else if (c.cmd === 'seekb') seekBy(-1);
+      else if (c.cmd === 'seekf') seekBy(1);
       else if (c.cmd === 'cfg') api('GET', '/api/settings').then(n => { Object.assign(CFG, n); renderSettings(); });
     } catch (e) { console.warn('[native] command failed', c, e); }
   }
@@ -24371,6 +24392,13 @@ function renderNowPlaying(_preArg) {
             <path id="mnp-sb-L"/><path id="mnp-sb-R"/><path id="mnp-sb-tip" fill="none"/>
           </svg>
         </button>
+        <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekb" onclick="seekBy(-1)">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 6 A7 7 0 1 1 5 13"/>
+            <polygon points="12,1.5 12,10.5 7,6" fill="currentColor"/>
+            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(-1)}</text>
+          </svg>
+        </button>
         <button class="cbtn mu-ripple" id="mob-np-bprev" onclick="prevSong()">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="5" y1="4" x2="5" y2="20"/><polygon points="19,4 9,12 19,20"/>
@@ -24409,6 +24437,13 @@ function renderNowPlaying(_preArg) {
         <button class="cbtn mu-ripple" id="mob-np-bnext" onclick="nextSong()">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="19" y1="4" x2="19" y2="20"/><polygon points="5,4 15,12 5,20"/>
+          </svg>
+        </button>
+        <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekf" onclick="seekBy(1)">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 6 A7 7 0 1 0 19 13"/>
+            <polygon points="12,1.5 12,10.5 17,6" fill="currentColor"/>
+            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(1)}</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="mob-np-brep" onclick="toggleRepeat()">
@@ -38480,6 +38515,46 @@ function updateGaplessLabel() {
   }
 }
 
+function seekStep() {
+  return Math.max(1, Math.min(120, Math.round(parseFloat(CFG.seek_step)) || 5));
+}
+
+function _seekLbl(dir) {
+  return (dir < 0 ? '-' : '+') + seekStep();
+}
+
+function _seekFs() {
+  const n = String(seekStep()).length + 1;
+  return n <= 2 ? 7.5 : n === 3 ? 6 : 5;
+}
+
+function _updateSeekBtns() {
+  document.body.classList.toggle('seek-on', CFG.seek_btns === true);
+  document.querySelectorAll('.seek-btn').forEach(b => {
+    const t = b.querySelector('.seek-n');
+    if (!t) return;
+    t.textContent = _seekLbl(b.id.endsWith('seekb') ? -1 : 1);
+    t.setAttribute('font-size', _seekFs());
+  });
+}
+
+function setSeekStep(v) {
+  const n = Math.max(1, Math.min(120, Math.round(parseFloat(v)) || 5));
+  saveSetting('seek_step', n);
+  _updateSeekBtns();
+}
+
+function seekBy(dir) {
+  const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || 0;
+  if (!dur) return;
+  const cur = engine.hasPaused ? (engine._pausedAt || 0) : engine.curTime;
+  const t = Math.max(0, Math.min(dur - 0.1, cur + dir * seekStep()));
+  if (engine.hasPaused) { engine._pausedAt = t; updateProg(t, dur); syncMediaAudio(S.cur, true, t); }
+  else { engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
+  if (typeof _lrcInvalidate === 'function') _lrcInvalidate();
+  saveSession();
+}
+
 function setCrossfade(v) {
   engine.crossfade = v;
   saveSetting('crossfade', v);
@@ -39728,6 +39803,8 @@ function renderSettings() {
           `);
         })()}
         ${row('\u23ee restarts track', 'prev restarts if >3s in, press again to go back', toggle('prev_restarts', CFG.prev_restarts !== false))}
+        ${row('seek step', 'seconds skipped by the left / right arrow keys and the seek buttons', `<input class="input" type="number" min="1" max="120" step="1" value="${seekStep()}" style="width:90px;text-align:right;padding:8px 6px" onchange="setSeekStep(this.value)">`)}
+        ${row('seek buttons', 'show -N / +N buttons around prev / next in the player, now playing and the taskbar widget', toggle('seek_btns', CFG.seek_btns === true, '_updateSeekBtns()'))}
       `) : ''}
 
       ${_sectionMatch('audio') ? section('audio', `
@@ -41095,6 +41172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // restore queue source
   if (sess?.queueSource) S.queueSource = sess.queueSource;
 
+  _updateSeekBtns();
   // paint real data
   renderTopbarSearch('library');
   renderLibrary();
@@ -41111,8 +41189,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
         { const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || 0;
           if (dur) {
-            if (engine.hasPaused) { engine._pausedAt = Math.min((engine._pausedAt||0)+5, dur-0.1); updateProg(engine._pausedAt, dur); syncMediaAudio(S.cur, true, engine._pausedAt); }
-            else { const t = Math.min(engine.curTime+5, dur-0.1); engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
+            if (engine.hasPaused) { engine._pausedAt = Math.min((engine._pausedAt||0)+seekStep(), dur-0.1); updateProg(engine._pausedAt, dur); syncMediaAudio(S.cur, true, engine._pausedAt); }
+            else { const t = Math.min(engine.curTime+seekStep(), dur-0.1); engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
             saveSession();
           } }
         break;
@@ -41120,8 +41198,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
         { const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || 0;
           if (dur) {
-            if (engine.hasPaused) { engine._pausedAt = Math.max((engine._pausedAt||0)-5, 0); updateProg(engine._pausedAt, dur); syncMediaAudio(S.cur, true, engine._pausedAt); }
-            else { const t = Math.max(engine.curTime-5, 0); engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
+            if (engine.hasPaused) { engine._pausedAt = Math.max((engine._pausedAt||0)-seekStep(), 0); updateProg(engine._pausedAt, dur); syncMediaAudio(S.cur, true, engine._pausedAt); }
+            else { const t = Math.max(engine.curTime-seekStep(), 0); engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
             saveSession();
           } }
         break;
@@ -42531,6 +42609,12 @@ def _wg_icon(sd, kind, cx, cy, isz, fill, S):
     if kind == 'play': sd.polygon(P((8, 5), (8, 19), (19, 12)), fill=fill)
     elif kind == 'pause': R(6, 5, 10, 19); R(14, 5, 18, 19)
     elif kind == 'prev': R(6, 6, 8, 18); sd.polygon(P((9.5, 12), (18, 18), (18, 6)), fill=fill)
+    elif kind == 'seekb':
+        sd.arc([ox + 4 * u, oy + 5 * u, ox + 20 * u, oy + 21 * u], 270, 180, fill=fill, width=max(1, int(round(2 * u))))
+        sd.polygon(P((12, 1.5), (12, 10.5), (7, 6)), fill=fill)
+    elif kind == 'seekf':
+        sd.arc([ox + 4 * u, oy + 5 * u, ox + 20 * u, oy + 21 * u], 0, 270, fill=fill, width=max(1, int(round(2 * u))))
+        sd.polygon(P((12, 1.5), (12, 10.5), (17, 6)), fill=fill)
     else: R(16, 6, 18, 18); sd.polygon(P((6, 18), (14.5, 12), (6, 6)), fill=fill)
 
 def _wg_render(sp, W, hover, press):
@@ -42700,6 +42784,14 @@ def _wg_vis(sp):
         if lines: out.append({'t': 'text', 'l': lines})
     return out
 
+def _wg_seek_cfg():
+    if CFG.get('seek_btns') is not True: return 0
+    try: return max(1, min(120, int(round(float(CFG.get('seek_step', 5))))))
+    except Exception: return 5
+
+def _wg_ncb(sp):
+    return 5 if sp.get('seek') else 3
+
 def _wg_m2(sp):
     sc = sp['sc']
     return {'pad': int(8 * sc), 'gap': int(8 * sc), 'cs': max(8, sp['H'] - int(8 * sc)), 'bs': int(30 * sc), 'sep': int(19 * sc),
@@ -42727,7 +42819,7 @@ def _wg_geo(sp, W):
     """(metrics, visible blocks, [(block, x, width)])"""
     m = _wg_m2(sp); vis = _wg_vis(sp)
     nat = {i: _wg_block_nat(sp, m, b) for i, b in enumerate(vis) if b['t'] == 'text'}
-    fixed = sum((m['cs'] if b['t'] == 'cover' else 3 * m['bs']) for b in vis if b['t'] != 'text')
+    fixed = sum((m['cs'] if b['t'] == 'cover' else _wg_ncb(sp) * m['bs']) for b in vis if b['t'] != 'text')
     R = max(0, W - 2 * m['pad'] - m['gap'] * max(0, len(vis) - 1) - fixed)
     tot, wd = sum(nat.values()), {}
     if nat and tot <= R:
@@ -42739,7 +42831,7 @@ def _wg_geo(sp, W):
         wd = {i: max(int(40 * sp['sc']), int(n * k)) for i, n in nat.items()}
     pos, x = [], m['pad']
     for i, b in enumerate(vis):
-        w_ = m['cs'] if b['t'] == 'cover' else 3 * m['bs'] if b['t'] == 'controls' else wd.get(i, 0)
+        w_ = m['cs'] if b['t'] == 'cover' else _wg_ncb(sp) * m['bs'] if b['t'] == 'controls' else wd.get(i, 0)
         pos.append((b, x, w_)); x += w_ + m['gap']
     return m, vis, pos
 
@@ -42747,7 +42839,7 @@ def _wg_natural(sp):
     """width the widget wants for its content (auto width)"""
     m = _wg_m2(sp); vis = _wg_vis(sp)
     w = 2 * m['pad'] + m['gap'] * max(0, len(vis) - 1)
-    for b in vis: w += m['cs'] if b['t'] == 'cover' else 3 * m['bs'] if b['t'] == 'controls' else _wg_block_nat(sp, m, b)
+    for b in vis: w += m['cs'] if b['t'] == 'cover' else _wg_ncb(sp) * m['bs'] if b['t'] == 'controls' else _wg_block_nat(sp, m, b)
     return w
 
 def _wg_render(sp, W, hover, press):
@@ -42772,13 +42864,20 @@ def _wg_render(sp, W, hover, press):
         elif t == 'controls':
             bs = m['bs']
             y0 = (H - bs) // 2
-            for i, (kind, cmd) in enumerate((('prev', 'prev'), ('pause' if sp['playing'] else 'play', 'toggle'), ('next', 'next'))):
+            ctl = [('prev', 'prev'), ('pause' if sp['playing'] else 'play', 'toggle'), ('next', 'next')]
+            if sp.get('seek'): ctl = [('seekb', 'seekb')] + ctl + [('seekf', 'seekf')]
+            for i, (kind, cmd) in enumerate(ctl):
                 x0 = x + i * bs
                 btns.append((x0, y0, x0 + bs, y0 + bs, cmd))
                 idx = len(btns) - 1
                 if idx == hover:
                     sd.ellipse([x0 * S, y0 * S, (x0 + bs) * S - 1, (y0 + bs) * S - 1], fill=(128, 128, 128, 102 if press == idx else 71))
                 _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, fg, S)
+                if kind in ('seekb', 'seekf'):
+                    lb = ('-' if kind == 'seekb' else '+') + str(sp['seek'])
+                    spx = max(6, int(round(18 * sc * (0.34 if len(lb) <= 2 else 0.28 if len(lb) == 3 else 0.23))))
+                    scy = y0 + bs / 2.0 + 18 * sc / 24.0
+                    texts.append((int(x0 + bs / 2.0 - _wg_tw(lb, spx, True) / 2.0), int(scy + spx * 0.36), lb, spx, True, fg))
         elif t == 'text' and wd > 0:
             pxs, n = _wg_px(sp, m, b), len(b['l'])
             if n == 1 and b['l'][0] == ['lyrics']:   # a lone lyrics row can wrap onto two lines
@@ -43242,6 +43341,7 @@ class _NmWidget:
               'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
         sp['lay'] = lay
+        sp['seek'] = _wg_seek_cfg()
         W = max(int(120 * sc), min(mx, _wg_natural(sp))) if cfg['auto'] else mx
         img, _btn = _wg_render(sp, W, -1, -1)
         mg = max(10, int(14 * sc))
@@ -43293,13 +43393,14 @@ class _NmWidget:
         cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
         light = self._sys_light(now)
         sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, items, cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
-               cfg['auto'], cfg['autolyr'], repr(lay), cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover))
+               cfg['auto'], cfg['autolyr'], repr(lay), cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover), _wg_seek_cfg())
         if sig != self.sig:
             self.sig = sig
             self.sp = {'H': H, 'sc': sc, 'items': list(items), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'], 'tl': cfg['tl'], 'lp': cfg['lp'],
                        'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
                        'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
             self.sp['lay'] = lay
+            self.sp['seek'] = _wg_seek_cfg()
             self.nat = _wg_natural(self.sp) if cfg['auto'] else 0
             self.dirty = True
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
