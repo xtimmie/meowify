@@ -569,7 +569,7 @@ def _disp_album(album_id, album_title, song_title):
         return album_title
 
 def _sgl_name(title):
-    return (title or '') + (' - single' if CFG.get('single_album_suffix', False) else '')
+    return (title or '') + (' - Single' if CFG.get('single_album_suffix', False) else '')
 
 def _disp_single(alb0, title, source):
     """album text for sorting / search / the album column: the real one, or for a single song (no album, or autodetected single) the fake album name when single_album_mode is fake. the fake album id is sgl_<song id>, nothing is stored"""
@@ -16451,7 +16451,7 @@ body.nav-back-on #app:not(.mobile) .set-pc-tab .set-head{display:none}
 }
 #modal.on{display:flex}
 #modal-overlay{
-  position:fixed;inset:0;z-index:80;
+  position:fixed;inset:0;z-index:1900;
   background:color-mix(in oklch,var(--color-scrim,#000) 55%,transparent);
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
   display:flex;align-items:center;justify-content:center;
@@ -39442,7 +39442,7 @@ function renderSettings() {
             </select>
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>`)}
-        ${CFG.single_album_mode === 'fake' ? row('add - single to fake album names', 'fake album names get - single after the song name', toggle('single_album_suffix', CFG.single_album_suffix === true, 'S.plSongs={};loadData().then(rerenderCurrentView)')) : ''}
+        ${CFG.single_album_mode === 'fake' ? row('add "- Single" to fake album names', 'fake album names get "- Single" after the song name', toggle('single_album_suffix', CFG.single_album_suffix === true, 'S.plSongs={};loadData().then(rerenderCurrentView)')) : ''}
         ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
         ${row('reorder on long press (mobile)', 'off: long press opens the song menu and reordering only works in select mode. on: long press reorders reorderable lists and the menu opens from the 3 dot button, lists you cant reorder still open the menu on long press', toggle('mob_reorder_default', CFG.mob_reorder_default === true))}
         ${row('"prod." label', 'write producers as "prod. name" instead of just adding them to the commas', toggle('list_prod_prefix', CFG.list_prod_prefix === true, 'rerenderCurrentView()'))}
