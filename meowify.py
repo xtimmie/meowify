@@ -23534,6 +23534,7 @@ async function renderAlbumDetail(aid, skipLoadingScreen){
 
 // queue x button: on a selected row it removes the whole selection
 function _removeQueueRowsAt(qi, id) {
+  if (id === 'qsw') { _qswCancel(); return; }
   if (S.qSelectMode && S.qSelected.has(id)) {
     const idx = [], ids = [];
     S.queue.forEach((s, k) => { if (S.qSelected.has(s.id)) { idx.push(k); ids.push(s.id); } });
@@ -27169,7 +27170,7 @@ function _qswAfter(i) {
   const p = S._continueFrom;
   if (!p || !p.row) return false;
   const k = S.queue.indexOf(p.row);
-  return k >= 0 && i > k;
+  return k >= 0 && S.qi < k && i > k;
 }
 function _qswEnsure() {
   const p = S._continueFrom;
@@ -27206,8 +27207,12 @@ function _qswCheckJump() {
   if (k < 0) { S._continueFrom = null; return; }
   if (k < S.qi) _qswDrop(true);
 }
+// cancel goes through the normal row removal, so it gets the same slide out / slide up as any queue row
 function _qswCancel(ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const p = S._continueFrom;
+  const k = p && p.row ? S.queue.indexOf(p.row) : -1;
+  if (k >= 0) { _removeQueueMany([k]); return; }
   _qswDrop(false);
   _queueNextChanged();
 }
@@ -27215,9 +27220,19 @@ function _qswToggle(ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   const p = S._continueFrom;
   if (!p) return;
-  p.expanded = !p.expanded;
+  const open = !p.expanded;
+  p.expanded = open;
   _qswSync();
-  if (S.queueOpen) renderQueueSidebar();
+  const row = S.queueOpen ? document.querySelector('#queue-inner .q-sw') : null;
+  if (!row) { if (S.queueOpen) renderQueueSidebar(); return; }
+  if (_qvlist) {
+    // big queue: the songs need the plain list, rebuild once and slide them open
+    renderQueueSidebar();
+    const r = document.querySelector('#queue-inner .q-sw');
+    if (r) _qswAnimate(r, true);
+    return;
+  }
+  _qswAnimate(row, open);
 }
 function _qswPlay(ev) { _qswGo(null, ev); }
 function _qswPlaySong(id, ev) { _qswGo(id, ev); }
@@ -27241,45 +27256,98 @@ function _qswGo(clickId, ev) {
 function _makeQswRow(s, i) {
   const p = S._continueFrom;
   const list = p ? _qswList(p) : [];
-  const big = S.queue.length > 400;
-  const open = !!(p && p.expanded) && !big;
-  const cv = sg => sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
+  const open = !!(p && p.expanded);
+  const cv = _qswCover;
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple q-sw' + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '');
+  el.className = 'song-row mu-ripple q-sw'
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.dataset.qsw = '1';
-  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
   let tiles = '';
   for (let k = Math.min(3, list.length) - 1; k >= 0; k--) {
     tiles += '<div style="position:absolute;left:' + (k * 4) + 'px;top:' + (8 - k * 4) + 'px;width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px;opacity:' + (1 - k * 0.25) + ';box-shadow:0 0 0 1.5px var(--color-surface-container-low)">' + cv(list[k]) + '</div>';
   }
   const src = p ? _qswSrcName(p) : '';
   const sub = [src, list.length + ' songs'].filter(Boolean).join(' · ');
-  const btn = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;opacity:1';
-  let items = '';
-  if (open) {
-    items = '<div class="qsw-list" style="grid-column:1 / -1;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
-      + list.slice(0, 100).map(sg =>
-        '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)" style="display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer">'
-        + '<div style="width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px">' + cv(sg) + '</div>'
-        + '<div style="overflow:hidden"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div>'
-        + '<div class="sdur">' + (sg.duration ? fmt(sg.duration) : '') + '</div></div>'
-      ).join('')
-      + (list.length > 100 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 100) + ' more songs</div>' : '')
-      + '</div>';
-  }
+  const btn = 'width:20px;height:24px;display:flex;align-items:center;justify-content:center;opacity:1';
+  const items = open ? _qswListHtml(list) : '';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center"><span class="snum-num">' + (i + 1) + '</span></div>'
     + '<div style="position:relative;width:36px;height:36px;flex-shrink:0">' + tiles + '</div>'
     + '<div class="sinfo" style="overflow:hidden"><div class="stitle">queue switch</div><div class="sartist">' + esc(sub) + '</div></div>'
-    + '<button class="qsw-btn mu-ripple" style="' + btn + '" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button>'
-    + (big ? '<span></span>' : '<button class="qsw-btn mu-ripple" style="' + btn + '" title="' + (open ? 'hide songs' : 'show songs') + '" onclick="_qswToggle(event)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block;transform:rotate(' + (open ? 180 : 0) + 'deg);transition:transform .15s"><polyline points="6 9 12 15 18 9"></polyline></svg></button>')
-    + '<button class="qsw-btn mu-ripple" style="' + btn + '" title="cancel" onclick="_qswCancel(event)">' + MEOW_ICONS.close + '</button>'
+    + '<div style="display:flex;align-items:center;gap:2px">'
+    +   '<button class="qsw-btn mu-ripple" style="' + btn + '" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button>'
+    +   '<button class="qsw-btn mu-ripple" data-qsw-exp="1" style="' + btn + '" title="' + (open ? 'hide songs' : 'show songs') + '" onclick="_qswToggle(event)"><svg class="qsw-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block;transition:transform .38s cubic-bezier(.16,1,.3,1);transform:rotate(' + (open ? 180 : 0) + 'deg)"><polyline points="6 9 12 15 18 9"></polyline></svg></button>'
+    + '</div>'
+    + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="cancel">' + MEOW_ICONS.close + '</button>'
     + _SEL_HANDLE
     + items;
-  el.addEventListener('click', e => _queueRowClick(el, e));
+  _qBindRow(el);
   return el;
+}
+// listeners every queue row gets (remove button + row click), shared by the song rows and the queue switch row
+function _qBindRow(el) {
+  el.querySelector('.smenu-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    _removeQueueRowsAt(parseInt(el.dataset.qi), el.dataset.id);
+  });
+  el.addEventListener('click', e => _queueRowClick(el, e));
+}
+function _qswOpen() {
+  const p = S._continueFrom;
+  return !!(p && p.expanded && p.row && S.queue.includes(p.row));
+}
+function _qSigNow() {
+  return S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
+}
+function _qswCover(sg) {
+  return sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
+}
+function _qswListHtml(list) {
+  return '<div class="qsw-list" style="grid-column:1 / -1;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
+    + list.slice(0, 100).map(sg =>
+      '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)" style="display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer">'
+      + '<div style="width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px">' + _qswCover(sg) + '</div>'
+      + '<div style="overflow:hidden"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div>'
+      + '<div class="sdur">' + (sg.duration ? fmt(sg.duration) : '') + '</div></div>'
+    ).join('')
+    + (list.length > 100 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 100) + ' more songs</div>' : '')
+    + '</div>';
+}
+// slides the song list of the switch row open / closed in place (no rebuild), strong ease out
+function _qswAnimate(row, open) {
+  const p = S._continueFrom;
+  const ease = 'cubic-bezier(.16,1,.3,1)';
+  const chev = row.querySelector('.qsw-chev');
+  if (chev) chev.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
+  const eb = row.querySelector('[data-qsw-exp]');
+  if (eb) eb.title = open ? 'hide songs' : 'show songs';
+  const noAnim = typeof Element.prototype.animate !== 'function';
+  let box = row.querySelector('.qsw-list');
+  if (open) {
+    if (!box && p) {
+      row.insertAdjacentHTML('beforeend', _qswListHtml(_qswList(p)));
+      box = row.querySelector('.qsw-list');
+    }
+    if (box && !noAnim) {
+      const h = box.offsetHeight;
+      box.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }], { duration: 380, easing: ease });
+    }
+    _qSig = _qSigNow();
+    return;
+  }
+  if (!box) { _qSig = _qSigNow(); return; }
+  const done = () => {
+    box.remove();
+    _qSig = _qSigNow();
+    // a big queue goes back to the virtual list once the songs are folded away
+    if (S.queue.length > 400 && !_qvlist && !_qswOpen()) { _qSig = ''; renderQueueSidebar(); }
+  };
+  if (noAnim) { done(); return; }
+  const h = box.offsetHeight;
+  const a = box.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 300, easing: ease, fill: 'forwards' });
+  a.onfinish = done;
 }
 function _makeQueueRow(s, i) {
   if (s._qsw) return _makeQswRow(s, i);
@@ -27307,11 +27375,7 @@ function _makeQueueRowBase(s, i) {
   + '<div class="sdur">' + dur + '</div>'
   + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
   + _SEL_HANDLE;
-  el.querySelector('.smenu-btn').addEventListener('click', e => {
-    e.stopPropagation();
-    _removeQueueRowsAt(parseInt(el.dataset.qi), el.dataset.id);
-  });
-  el.addEventListener('click', e => _queueRowClick(el, e));
+  _qBindRow(el);
   return el;
 }
 
@@ -27693,6 +27757,7 @@ function renderQueueSidebar() {
       inner.innerHTML = '<div class="song-list" data-chaos="1" style="padding:8px 8px 0">' + _rows.join('') + '</div>';
     }
     _qChaosRows = _rows;
+    inner.querySelectorAll('.q-sw .smenu-btn').forEach(b => { b.onclick = e => { e.stopPropagation(); _qswCancel(); }; });
     // scroll current into view
     requestAnimationFrame(() => {
       const curRow = inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])');
@@ -27728,7 +27793,7 @@ function renderQueueSidebar() {
 
   // use virtual list for any non-trivial queue
   const QUEUE_VLIST_THRESHOLD = 400;
-  if (S.queue.length > QUEUE_VLIST_THRESHOLD && !(S.qSelectMode && S.queue.length <= 400)) {
+  if (S.queue.length > QUEUE_VLIST_THRESHOLD && !_qswOpen()) {
     inner.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'width:100%;height:100%';
@@ -27748,12 +27813,7 @@ function renderQueueSidebar() {
     + '</div>';
   _snapStaticRowH();
   // re-attach event listeners for small queue (outerHTML loses them)
-  inner.querySelectorAll('.song-row').forEach((row, i) => {
-    row.querySelector('.smenu-btn')?.addEventListener('click', e => {
-      e.stopPropagation(); _removeQueueRowsAt(parseInt(row.dataset.qi), row.dataset.id);
-    });
-    row.addEventListener('click', e => _queueRowClick(row, e));
-  });
+  inner.querySelectorAll('.song-row').forEach(_qBindRow);
   _queueAfterFullRender(inner, _hadSig, _prevScroll);
   // drag-to-reorder for small queue
   const _qListEl = inner.querySelector('.song-list');
