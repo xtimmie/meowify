@@ -6968,8 +6968,11 @@ def api_song_extra(sid):
             d = {}
         yt = next((m.get('url') for m in (d.get('media') or [])
                    if isinstance(m, dict) and m.get('provider') == 'youtube' and m.get('url')), None)
+        _gpa = [(a.get('name') or '').strip() for a in (d.get('primary_artists') or [])] or [((d.get('primary_artist') or {}).get('name') or '').strip()]
         out['genius'] = {'id': g[0], 'url': d.get('url'), 'language': d.get('language'), 'youtube': yt,
-                         'confidence': g[1], 'confirmed': bool(g[2])}
+                         'confidence': g[1], 'confirmed': bool(g[2]), 'title': d.get('title'),
+                         'artists': ', '.join(n for n in _gpa if n),
+                         'cover': d.get('header_image_thumbnail_url') or d.get('song_art_image_url')}
     return jsonify(out)
 
 @app.route('/api/songs/<sid>', methods=['DELETE'])
@@ -13703,7 +13706,45 @@ def api_genius_search_route(sid):
                     'primary_artist': {'name': cand['artist']},
                     'song_art_image_thumbnail_url': cand['thumbnail'],
                     '_confidence': cand['confidence']})
-    return jsonify({'hits': merged[:8]})
+    # silent extra passes: same title searched under the artist names and every alias of them, so a listing
+    # filed under another name still turns up. these hits carry _via so the list can say where they came from
+    try:
+        _sa = [n.strip() for n in stored_artist.split(',') if n.strip()]
+        _cn = {_canonical(n) for n in _sa}
+        _names = list(_sa)
+        with db() as c:
+            _arows = c.execute("SELECT name, aliases FROM artists WHERE aliases != '[]'").fetchall()
+        for _nm, _al in _arows:
+            try:
+                _lst = [str(x) for x in json.loads(_al or '[]')]
+            except Exception:
+                _lst = []
+            _grp = [_nm] + _lst
+            if _cn & {_canonical(x) for x in _grp}:
+                _names.extend(x for x in _grp if x)
+        _tried = set()
+        for _nm in _names:
+            _k = _canonical(_nm)
+            if not _k or _k in _tried or len(_tried) >= 5:
+                continue
+            _tried.add(_k)
+            _r = _genius_resolve(stored_title, _nm, tok, limit=5)
+            if not _r:
+                continue
+            _via = _nm if _k not in _cn else _nm + ' (artist)'
+            if _r['genius_song_id'] and _r['song_data'] and _r['genius_song_id'] not in seen:
+                seen.add(_r['genius_song_id'])
+                merged.append(dict(_r['song_data'], _via=_via))
+            for cand in _r['candidates']:
+                if cand['id'] not in seen:
+                    seen.add(cand['id'])
+                    merged.append({'id': cand['id'], 'title': cand['title'],
+                                   'primary_artist': {'name': cand['artist']},
+                                   'song_art_image_thumbnail_url': cand['thumbnail'],
+                                   '_confidence': cand['confidence'], '_via': _via})
+    except Exception as e:
+        _log_library.warning('genius alias search err: %s', e)
+    return jsonify({'hits': merged[:14]})
 
 @app.route('/api/songs/<sid>/lyrics', methods=['GET'])
 def api_get_lyrics(sid):
@@ -27933,6 +27974,9 @@ function _lyricsResizeMouseUp() {
 const _SD_LBL = 'color:var(--color-on-surface-variant);font:var(--type-body-small);font-variation-settings:var(--fv-body)';
 const _SD_ROLES = ['Producer','Executive Producer','Writer','Composer','Lyricist','Mixing Engineer','Mastering Engineer','Recording Engineer','Vocals','Background Vocals','Label','Publisher','Distributor'];
 let _sdState = null;
+let _sdFromView = false;
+let _sdKeepFrom = 0;
+const _SD_OPT_LABELS = {credits: 'credits', mv: 'music video', genius: 'genius link', plays: 'extra plays', loud: 'loudness override'};
 let _sdDraft = null;
 
 function _sdFmtD(t) { return t ? new Date(t * 1000).toLocaleDateString() : '-'; }
@@ -27972,12 +28016,35 @@ function _sdReadCredits() {
 function _sdShowOpt(k, focus) {
   // unfilled optional blocks wait in a <template> and only enter the page when added
   const tpl = document.querySelector(`template[data-opt="${k}"]`);
-  if (tpl) { tpl.insertAdjacentHTML('beforebegin', `<div class="sd-opt" data-opt="${k}">${tpl.innerHTML}</div>`); tpl.remove(); }
+  if (tpl) { tpl.insertAdjacentHTML('beforebegin', _sdOptWrap(k, tpl.innerHTML)); tpl.remove(); }
   const blk = document.querySelector(`.sd-opt[data-opt="${k}"]`);
   document.querySelector(`[data-chip="${k}"]`)?.remove();
   const chips = document.getElementById('sd-chips');
-  if (chips && !chips.children.length) chips.style.display = 'none';
+  if (chips && !chips.querySelector('[data-chip]')) chips.style.display = 'none';
   if (focus && blk) blk.querySelector('input')?.focus();
+}
+function _sdCoverBtn(title, onclick, inner) {
+  return `<button type="button" title="${title}" onclick="${onclick}" style="width:30px;height:30px;padding:0;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(4px);font:700 13px/1 inherit">${inner}</button>`;
+}
+// optional block: input area plus, for the ones the user can drop again, an x on the right
+function _sdOptWrap(k, inner) {
+  const x = (k === 'plays' || k === 'loud') ? `<button type="button" class="btn btn-out mu-ripple" title="remove" style="margin-top:20px;padding:8px 12px;line-height:1" onclick="_sdCloseOpt('${k}')">×</button>` : '';
+  return `<div class="sd-opt" data-opt="${k}" style="display:flex;gap:8px;align-items:flex-start"><div class="sd-opt-in" style="flex:1;min-width:0">${inner}</div>${x}</div>`;
+}
+// x on an optional block: empties the value (so saving resets it), removes the input and puts the + chip back
+function _sdCloseOpt(k) {
+  const blk = document.querySelector(`.sd-opt[data-opt="${k}"]`);
+  if (!blk) return;
+  const inner = blk.querySelector('.sd-opt-in');
+  inner.querySelectorAll('input').forEach(i => i.setAttribute('value', k === 'plays' ? '0' : ''));
+  inner.querySelectorAll('.sd-rs').forEach(b => b.remove());
+  blk.insertAdjacentHTML('beforebegin', `<template data-opt="${k}">${inner.innerHTML}</template>`);
+  blk.remove();
+  const chips = document.getElementById('sd-chips');
+  if (chips) {
+    chips.insertAdjacentHTML('beforeend', `<button type="button" class="btn btn-out mu-ripple" data-chip="${k}" style="padding:3px 10px;font-size:12px" onclick="_sdShowOpt('${k}',true)">+ ${_SD_OPT_LABELS[k]}</button>`);
+    chips.style.display = 'flex';
+  }
 }
 function _sdReset(key) {
   const f = document.querySelector(`.sd-f[data-f="${key}"]`);
@@ -28014,6 +28081,7 @@ function _sdCollect() {
 
 // leaving to a sub popup (album picker, play history) and coming back keeps what was typed
 function _sdStash(sid) {
+  _sdKeepFrom = Date.now();
   const c = _sdCollect();
   _sdDraft = c ? {sid, t: Date.now(), out: c.out, reset: c.reset} : null;
 }
@@ -28079,7 +28147,7 @@ async function showSongDetails(sid, editMode) {
     return `<div style="margin-bottom:14px">${_sdCover(song, 80)}</div>${rows.join('')}`;
   };
   showModal('song details', build(null),
-    `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title || '')}','${escJ(song.artist || '')}')">stats</button><button class="btn btn-out mu-ripple" onclick="editSong('${escJ(sid)}')">edit</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
+    `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title || '')}','${escJ(song.artist || '')}')">stats</button><button class="btn btn-out mu-ripple" onclick="editSong('${escJ(sid)}',true)">edit</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
   );
   document.querySelector('.mbox').style.maxWidth = '600px';
   const x = await api('GET', `/api/songs/${sid}/extra`).catch(() => null);
@@ -28087,8 +28155,17 @@ async function showSongDetails(sid, editMode) {
   if (mb && x && !x.error) mb.innerHTML = build(x);
 }
 
-async function editSong(sid) {
+// fromView = opened with the edit button of the view mode, so cancel goes back there. opened from the menu, cancel just closes.
+// coming back from a sub popup (album picker, play history, genius) keeps whatever it was before
+async function editSong(sid, fromView) {
+  if (fromView === true) _sdFromView = true;
+  else if (Date.now() - _sdKeepFrom > 120000) _sdFromView = false;
+  _sdKeepFrom = 0;
   return showSongDetails(sid, true);
+}
+function _sdCancel(sid) {
+  if (_sdFromView) showSongDetails(sid);
+  else closeModal();
 }
 
 async function _sdRenderEdit(sid, song) {
@@ -28127,16 +28204,19 @@ async function _sdRenderEdit(sid, song) {
     {k: 'loud', label: 'loudness override', filled: lu != null},
   ];
   const blk = (k, inner) => opts.find(o => o.k === k).filled
-    ? `<div class="sd-opt" data-opt="${k}">${inner}</div>`
+    ? _sdOptWrap(k, inner)
     : `<template data-opt="${k}">${inner}</template>`;
   const g = x.genius;
   const body = `<div id="sd-err" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-error-container,rgba(186,26,26,.15));color:var(--color-on-error-container,var(--color-error,#ba1a1a));font:var(--type-body-small)"></div>
-    <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px">${_sdCover(song, 72, 'edit-song-cover-img')}
-      <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+    <div style="display:flex;justify-content:center;margin-bottom:18px">
+      <div style="position:relative;width:132px;height:132px">
+        ${_sdCover(song, 132, 'edit-song-cover-img')}
         <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="uploadSongCover('${sid}',this)">
-        <button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="document.getElementById('edit-song-cover-file').click()">upload cover</button>
-        ${song.genius_id ? `<button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','genius')">redownload from genius</button>` : ''}
-        <button type="button" class="btn btn-out mu-ripple" style="width:100%" onclick="refreshSongCover('${sid}','ytm')">redownload from youtube music</button>
+        <div style="position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:6px;padding:22px 6px 8px;border-radius:0 0 var(--radius-md) var(--radius-md);background:linear-gradient(transparent,rgba(0,0,0,.7))">
+          ${_sdCoverBtn('upload cover', "document.getElementById('edit-song-cover-file').click()", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></svg>')}
+          ${song.genius_id ? _sdCoverBtn('redownload from genius', `refreshSongCover('${sid}','genius')`, 'G') : ''}
+          ${_sdCoverBtn('redownload from youtube music', `refreshSongCover('${sid}','ytm')`, '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>')}
+        </div>
       </div></div>
     <div style="display:flex;flex-direction:column;gap:12px">
       ${f('title', 'title', `<input class="inp" id="edit-song-title" value="${esc(init.title)}" autocomplete="off">`, pins.has('title') && 'reset to auto')}
@@ -28156,11 +28236,15 @@ async function _sdRenderEdit(sid, song) {
         <button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start;padding:3px 10px;font-size:12px" onclick="_sdAddCredit()">+ add credit</button>
         <datalist id="sd-roles">${_SD_ROLES.map(r => `<option value="${esc(r)}">`).join('')}</datalist>`, pins.has('credits') && 'reset to genius'))}
       ${blk('mv', `<div style="display:flex;flex-direction:column;gap:12px">
-        ${f('mv_url', 'music video link', `<input class="inp" id="sd-mv-url" value="${esc(mvUrl)}" placeholder="youtube link, empty removes it" autocomplete="off">`)}
+        ${f('mv_url', 'music video link', `<div style="display:flex;gap:6px"><input class="inp" id="sd-mv-url" value="${esc(mvUrl)}" placeholder="youtube link, empty removes it" style="flex:1;min-width:0" autocomplete="off"><a class="btn btn-out mu-ripple" id="sd-mv-open" href="${esc(mvUrl)}" target="_blank" rel="noopener" style="text-decoration:none;white-space:nowrap" onclick="const v=document.getElementById('sd-mv-url').value.trim();if(!v)return false;this.href=v.startsWith('http')?v:'https://www.youtube.com/watch?v='+v">open ↗</a></div>`)}
         ${f('mv_offset', 'music video sync offset (seconds)', `<input class="inp" id="sd-mv-offset" type="number" step="0.01" value="${esc(init.mv_offset)}" placeholder="auto" style="max-width:160px">${hint('empty = detected automatically. changing the link clears it')}`, init.mv_offset !== '' && 'auto-detect')}</div>`)}
       ${blk('genius', `<div class="sd-f" style="display:flex;flex-direction:column;gap:6px">
         <span style="${_SD_LBL}">genius link</span>
-        <div style="font:var(--type-body-small)">${g ? ((g.url ? _sdLink(g.url, 'open on genius') : 'linked') + ' · ' + (g.confirmed ? 'confirmed' : (g.confidence != null ? Math.round(g.confidence * 100) + '% match' : 'unconfirmed'))) : 'not linked'}</div>
+        ${g ? `<a href="${esc(g.url || '#')}" target="_blank" rel="noopener" title="open the genius page" style="display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit;padding:8px;border-radius:var(--radius-md);background:var(--color-surface-container-high)">
+          ${g.cover ? `<img src="${esc(g.cover)}" alt="" onerror="this.style.display='none'" style="width:46px;height:46px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">` : ''}
+          <div style="min-width:0;flex:1"><div style="font:var(--type-body-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.title || 'genius page')}</div><div style="${_SD_LBL};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.artists || '')}</div></div>
+          <span style="${_SD_LBL};white-space:nowrap">open ↗</span></a>
+        <div style="${_SD_LBL}">${g.confirmed ? 'confirmed match' : (g.confidence != null ? Math.round(g.confidence * 100) + '% match' : 'unconfirmed match')}</div>` : `<div style="font:var(--type-body-small)">not linked</div>`}
         <div style="display:flex;gap:6px"><input class="inp" id="sd-genius-url" placeholder="paste a genius.com song link" style="flex:1;min-width:0" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();_sdGeniusLink('${sid}')}"><button type="button" class="btn btn-out mu-ripple" onclick="_sdGeniusLink('${sid}')">link</button></div>
         <div style="display:flex;gap:6px"><button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="showGeniusFix('${sid}')">search genius</button>${g ? `<button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="_sdGeniusUnlink('${sid}')">unlink</button>` : ''}</div>
         <span id="sd-genius-msg" style="${_SD_LBL}"></span>
@@ -28178,7 +28262,7 @@ async function _sdRenderEdit(sid, song) {
       ${x.file ? _sdRow('file', esc(x.file.ext.toUpperCase() + ' · ' + (x.file.size / 1048576).toFixed(1) + ' MB')) : ''}
     </div>`;
   showModal('edit song', body,
-    `<button class="btn btn-out mu-ripple" onclick="showSongDetails('${escJ(sid)}')">cancel</button><button class="btn btn-fill mu-ripple" onclick="saveSongDetails('${escJ(sid)}')">save</button>`
+    `<button class="btn btn-out mu-ripple" onclick="_sdCancel('${escJ(sid)}')">cancel</button><button class="btn btn-fill mu-ripple" onclick="saveSongDetails('${escJ(sid)}')">save</button>`
   );
   document.querySelector('.mbox').style.maxWidth = '600px';
   _sdRestore(sid);
@@ -28722,7 +28806,7 @@ async function doGeniusSearch(sid) {
            onerror="this.style.display='none'" alt="">
       <div class="search-track-info" style="min-width:0">
         <div class="search-track-title">${esc(h.title||'')}</div>
-        <div class="search-track-artist">${esc((h.primary_artist||{}).name||'')}${h.album?' \u00b7 '+esc(h.album.name||''):''}</div>
+        <div class="search-track-artist">${esc((h.primary_artist||{}).name||'')}${h.album?' \u00b7 '+esc(h.album.name||''):''}${h._via?' \u00b7 via '+esc(h._via):''}</div>
       </div>
       <button class="btn btn-fill mu-ripple" style="padding:6px 12px;flex-shrink:0"
         onclick="applyGeniusFix('${sid}',${h.id})">apply</button>
