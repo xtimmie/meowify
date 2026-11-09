@@ -15505,7 +15505,7 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 @media (hover: hover) {.gl-a:hover{background:color-mix(in oklch,var(--color-primary) 20%,transparent)}}
 .gl-a.open{background:color-mix(in oklch,var(--color-primary) 28%,transparent);color:var(--color-on-surface)}
 .gl-a.gl-pend{background:none;border-radius:0;border-bottom:1px dotted color-mix(in oklch,var(--color-primary) 55%,transparent)}
-.gl-annpop{position:fixed;left:var(--ap-l,8px);width:var(--ap-w,300px);bottom:var(--ap-b,8px);max-height:var(--ap-h,58vh);box-sizing:border-box;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid rgba(255,255,255,0.13);border-radius:14px;corner-shape:squircle;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:900;overflow:hidden;transform-origin:50% 100%}
+.gl-annpop{position:fixed;left:var(--ap-l,8px);width:var(--ap-w,300px);top:var(--ap-t,8px);max-height:var(--ap-h,58vh);box-sizing:border-box;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid rgba(255,255,255,0.13);border-radius:14px;corner-shape:squircle;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:900;overflow:hidden;transform-origin:50% 0}
 .gl-annpop.on{display:flex;animation:ctx-pop var(--dur-5) var(--ease-spring) both}
 .gl-annpop-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 0 14px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)}
 .gl-annpop-body{padding:4px 14px 10px;overflow-y:auto;font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);line-height:1.6}
@@ -25040,6 +25040,7 @@ let _lyrTok = 0;
 let _lyrShownSid = null;
 let _lyrScrollAt = 0;
 let _lyrOpenAid = null;
+let _lyrAnnEl = null;
 const _lyrSleep = ms => new Promise(r => setTimeout(r, ms));
 
 function _lyrAnnOn() { return CFG.lyrics_annotations !== false; }
@@ -25398,23 +25399,34 @@ function _lyrGeniusHtmlOld(g) {
 function lyrAnnClick(e) {
   const a = e.target.closest && e.target.closest('.gl-a');
   if (!a) { lyrAnnClose(); return; }
-  lyrAnnOpen(a.dataset.aid);
+  lyrAnnOpen(a.dataset.aid, a);
 }
 
 function _lyrAnnPlace() {
-  const pop = document.getElementById('gl-annpop'), sb = document.getElementById('lyrics-sidebar');
-  if (!pop || !sb || !pop.classList.contains('on')) return;
+  const pop = document.getElementById('gl-annpop'), sb = document.getElementById('lyrics-sidebar'), body = document.getElementById('lyrics-body');
+  if (!pop || !sb || !body || !pop.classList.contains('on')) return;
   const r = sb.getBoundingClientRect();
   if (sb.classList.contains('hidden') || r.width < 60) { lyrAnnClose(); return; }
-  const pl = document.getElementById('player'), pr = pl ? pl.getBoundingClientRect() : null;
-  const bot = Math.min(pr && pr.height ? pr.top : r.bottom, r.bottom);
+  if (!_lyrAnnEl || !_lyrAnnEl.isConnected) _lyrAnnEl = body.querySelector('.gl-a[data-aid="' + _lyrOpenAid + '"]');
+  const rects = _lyrAnnEl ? _lyrAnnEl.getClientRects() : [];
   pop.style.setProperty('--ap-l', (r.left + 8) + 'px');
   pop.style.setProperty('--ap-w', Math.max(120, r.width - 16) + 'px');
-  pop.style.setProperty('--ap-b', (window.innerHeight - bot + 8) + 'px');
-  pop.style.setProperty('--ap-h', Math.max(120, (bot - r.top) * 0.58) + 'px');
+  if (!rects.length) { pop.style.visibility = 'hidden'; return; }
+  const pl = document.getElementById('player'), pr = pl ? pl.getBoundingClientRect() : null;
+  const br = body.getBoundingClientRect();
+  const lim = Math.min(pr && pr.height ? pr.top : r.bottom, r.bottom) - 8;
+  const aT = rects[0].top, aB = rects[rects.length - 1].bottom;
+  if (aB < br.top + 2 || aT > lim) { pop.style.visibility = 'hidden'; return; }
+  pop.style.visibility = '';
+  const below = lim - (aB + 6), above = aT - 6 - (br.top + 4);
+  const useBelow = below >= 160 || below >= above;
+  const room = Math.max(120, Math.min(useBelow ? below : above, (lim - br.top) * 0.7));
+  pop.style.setProperty('--ap-h', room + 'px');
+  const h = pop.offsetHeight;
+  pop.style.setProperty('--ap-t', (useBelow ? aB + 6 : aT - 6 - h) + 'px');
 }
 
-function lyrAnnOpen(aid) {
+function lyrAnnOpen(aid, el) {
   const g = S.lyricsData && S.lyricsData.genius;
   const a = g && g.ann && g.ann[aid];
   const host = document.getElementById('lyrics-sidebar');
@@ -25423,6 +25435,7 @@ function lyrAnnOpen(aid) {
   if (!pop) {
     pop = document.createElement('div'); pop.id = 'gl-annpop'; pop.className = 'gl-annpop'; document.body.appendChild(pop);
     if (window.ResizeObserver) new ResizeObserver(_lyrAnnPlace).observe(host);
+    document.getElementById('lyrics-body').addEventListener('scroll', _lyrAnnPlace, { passive: true });
     window.addEventListener('resize', _lyrAnnPlace);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop.classList.contains('on')) lyrAnnClose(); });
   }
@@ -25434,14 +25447,16 @@ function lyrAnnOpen(aid) {
     + '<div class="gl-annpop-body">' + _lyrSanitize(a.h) + '</div>'
     + '<div class="gl-annpop-meta"><span>' + meta.join(' | ') + '</span><a href="https://genius.com/' + esc(aid) + '" target="_blank" rel="noopener">open on genius</a></div>';
   pop.classList.add('on');
-  _lyrAnnPlace();
+  _lyrAnnEl = el || null;
   _lyrOpenAid = aid;
+  _lyrAnnPlace();
   document.querySelectorAll('#lyrics-body .gl-a.open').forEach(el => el.classList.remove('open'));
   document.querySelectorAll('#lyrics-body .gl-a[data-aid="' + aid + '"]').forEach(el => el.classList.add('open'));
 }
 
 function lyrAnnClose() {
   _lyrOpenAid = null;
+  _lyrAnnEl = null;
   const pop = document.getElementById('gl-annpop');
   if (pop) pop.classList.remove('on');
   document.querySelectorAll('#lyrics-body .gl-a.open').forEach(el => el.classList.remove('open'));
