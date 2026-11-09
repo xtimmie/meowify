@@ -2877,7 +2877,7 @@ def _gl_sections(lines):
         txt = ''.join(s['t'] for s in ln).strip()
         if not txt:
             ln = []
-        if txt and _GL_HEAD_RE.fullmatch(txt):
+        if txt and _GL_HEAD_RE.fullmatch(txt) and re.search(r'[^\W_]', txt[1:-1]):
             flush()
             cur = {'h': txt[1:-1].strip(), 'ha': next((s['a'] for s in ln if s.get('a')), None), 'hs': _gl_head_segs(ln), 'lines': []}
             continue
@@ -18104,7 +18104,7 @@ function buildHeaderCells(cols){
     }
     const sf=SORT_COL_MAP[key];
     const canSort=sf&&S.view==='library';
-    const isSorted=canSort&&S.libSort===sf;
+    const isSorted=canSort&&S.libSort===sf&&!(S.libSearch||'').trim();
     const arrow=isSorted?(S.libSortDir==='asc'?'▲':'▼'):'';
     const nextKey=cols[cols.indexOf(key)+1]??'';
     // skip handle if next col is fixed (e.g. menu) or there is no next col
@@ -22821,7 +22821,7 @@ function updateHighlights() {
       r.classList.remove('playing', 'paused');
       const btn = r.querySelector('.snum-play');
       if (btn) {
-        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg>';
+        btn.innerHTML = _snumIcon(false);
         const _rid = r.dataset.id;
         const _i = parseInt(r.dataset.idx ?? '-1');
         btn.onclick = (e) => { e.stopPropagation(); if (_i >= 0) playFromList(S.viewSongs, _i); };
@@ -22836,9 +22836,7 @@ function updateHighlights() {
       r.classList.toggle('paused', !playing);
       const btn = r.querySelector('.snum-play');
       if (btn) {
-        btn.innerHTML = playing
-          ? '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'
-          : '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg>';
+        btn.innerHTML = _snumIcon(playing);
         btn.onclick = (e) => { e.stopPropagation(); togglePlay(); };
       }
     }
@@ -23211,22 +23209,27 @@ function _songMatches(s, q) {
   }
   return true;
 }
-// search ranking: main artist, then featured, then producer, then writers and every other credit, then title/album only matches
+// search ranking, the column sort is suspended while a search is active: title match, main artist, featured, album, producer credit, any other credit, rest
+// inside one rank the closer match goes first (exact, starts with, word start, anywhere) and the chosen sort only breaks real ties
 const _SR_P = ['Producer', 'Executive Producer'], _SR_W = ['Writer', 'Composer', 'Lyricist'];
+const _SR_NONE = 6;
 function _searchUnits(q) {
   const terms = _parseSearch(q).filter(t => !t.neg && !t.cmp && t.v);
   const plain = terms.filter(t => !t.f);
   const units = [];
   if (plain.length) units.push({ f: null, v: plain.map(t => t.v).join(' '), parts: plain });
-  for (const t of terms) if (t.f === 'artist' || t.f === 'feat' || t.f === 'prod' || t.f === 'writer' || t.f === 'credit') units.push({ f: t.f, v: t.v });
+  for (const t of terms) if (t.f === 'title' || t.f === 'artist' || t.f === 'feat' || t.f === 'album' || t.f === 'prod' || t.f === 'writer' || t.f === 'credit') units.push({ f: t.f, v: t.v });
   return units;
 }
+function _srQual(hay, v) { return hay === v ? 0 : hay.startsWith(v) ? 1 : (' ' + hay).includes(' ' + v) ? 2 : 3; }
 function _unitLevel(h, cr, u) {
   const v = u.v, f = u.f;
-  if (!f || f === 'artist') { if (h.prim.includes(v)) return { lv: 0, ex: [] }; }
-  if (!f || f === 'artist' || f === 'feat') { if (h.feat.includes(v)) return { lv: 1, ex: [] }; }
-  if (f === 'artist' || f === 'feat') return { lv: 4, ex: [] };
-  let lv = 4;
+  if (!f || f === 'title') { if (h.title.includes(v)) return { lv: 0, q: _srQual(h.title, v), ex: [] }; }
+  if (!f || f === 'artist') { if (h.prim.includes(v)) return { lv: 1, q: _srQual(h.prim, v), ex: [] }; }
+  if (!f || f === 'artist' || f === 'feat') { if (h.feat.includes(v)) return { lv: 2, q: _srQual(h.feat, v), ex: [] }; }
+  if (!f || f === 'album') { if (h.album.includes(v)) return { lv: 3, q: _srQual(h.album, v), ex: [] }; }
+  if (f === 'title' || f === 'artist' || f === 'feat' || f === 'album') return { lv: _SR_NONE, q: 0, ex: [] };
+  let lv = _SR_NONE;
   const ex = [];
   for (const c of cr) {
     if (c.role === 'Featuring') continue;
@@ -23234,38 +23237,41 @@ function _unitLevel(h, cr, u) {
     const ok = f === 'credit' || (f === 'prod' && g === 'P') || (f === 'writer' && g === 'W')
       || (!f && ((g === 'P' && CFG.search_credits_prod === true) || (g === 'W' && CFG.search_credits_writers === true) || (g === 'O' && CFG.search_credits_other === true)));
     if (!ok || !_srchNorm(c.name).includes(v)) continue;
-    lv = Math.min(lv, g === 'P' ? 2 : 3);
+    lv = Math.min(lv, g === 'P' ? 4 : 5);
     ex.push(c);
   }
-  return { lv, ex };
+  return { lv, q: 0, ex };
 }
 function _searchInfo(s, q) {
   const units = _searchUnits(q);
-  if (!units.length) return { lv: 4, ex: [] };
+  if (!units.length) return { lv: _SR_NONE, q: 0, ex: [] };
   const h = _songHay(s), cr = _songCredits(s);
-  let lv = 0, ex = [];
+  let lv = 0, qq = 0, ex = [];
   for (const u of units) {
     let r = _unitLevel(h, cr, u);
-    if (r.lv === 4 && u.parts && u.parts.length > 1) {
-      let mx = 0, exs = [];
-      for (const p of u.parts) { const x = _unitLevel(h, cr, { f: null, v: p.v }); mx = Math.max(mx, x.lv); exs = exs.concat(x.ex); }
-      r = { lv: mx, ex: exs };
+    if (r.lv === _SR_NONE && u.parts && u.parts.length > 1) {
+      let mx = 0, mq = 0, exs = [];
+      for (const p of u.parts) {
+        const x = _unitLevel(h, cr, { f: null, v: p.v });
+        if (x.lv > mx) { mx = x.lv; mq = x.q; } else if (x.lv === mx && x.q > mq) mq = x.q;
+        exs = exs.concat(x.ex);
+      }
+      r = { lv: mx, q: mq, ex: exs };
     }
-    lv = Math.max(lv, r.lv);
+    if (r.lv > lv) { lv = r.lv; qq = r.q; } else if (r.lv === lv && r.q > qq) qq = r.q;
     ex = ex.concat(r.ex);
   }
-  if (lv < 2 || lv > 3) return { lv, ex: [] };
+  if (lv < 4 || lv > 5) return { lv, q: qq, ex: [] };
   const seen = new Set();
   ex = ex.filter(c => { const k = c.role + '|' + c.name; if (seen.has(k)) return false; seen.add(k); return true; });
   ex.sort((a, b) => (_SR_P.includes(a.role) ? 0 : 1) - (_SR_P.includes(b.role) ? 0 : 1));
-  return { lv, ex };
+  return { lv, q: qq, ex };
 }
-// stable: inside one rank the order the list already had (the chosen sort) stays
 function _searchRankSort(songs, q) {
   if (!q || !_searchUnits(q).length) return songs;
-  const keyed = songs.map((s, i) => [_searchInfo(s, q).lv, i, s]);
-  keyed.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  return keyed.map(k => k[2]);
+  const keyed = songs.map((s, i) => { const r = _searchInfo(s, q); return [r.lv, r.q, i, s]; });
+  keyed.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  return keyed.map(k => k[3]);
 }
 let _searchDebounceT = null;
 function onGlobalSearch(val) {
@@ -23311,7 +23317,7 @@ function renderLibrary(){
     ? `<span style="margin-left:auto"></span>
       <button id="lib-sort-btn" class="mob-sort-btn mu-ripple" onclick="openSortDrawer()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="9" y1="18" x2="15" y2="18"/></svg>
-        <span id="lib-sort-label">${esc(_curSortLabel)} ${_curDirSymbol}</span>
+        <span id="lib-sort-label">${S.libSearch.trim() ? 'relevance' : esc(_curSortLabel) + ' ' + _curDirSymbol}</span>
       </button>`
     : '';
   const subnav=`<div class="subnav">
@@ -25073,9 +25079,26 @@ function _lyrSegsMd(segs) {
   });
   return m.map(s => { let x = _lyrMdEsc(s.t); if (s.i) x = '*' + x + '*'; if (s.b) x = '**' + x + '**'; return x; }).join('');
 }
+function _lyrIsHead(t) { return /[\p{L}\p{N}]/u.test(String(t || '')); }
+function _lyrGSecs(g) {
+  const src = (g && g.sections) || [];
+  const txt = sc => sc.h != null ? sc.h : (sc.hs || []).map(s => s.t).join('');
+  const hasHead = sc => sc.h != null || !!(sc.hs && sc.hs.length);
+  if (!src.some(sc => hasHead(sc) && !_lyrIsHead(txt(sc)))) return src;
+  const out = [];
+  src.forEach(sc => {
+    if (!hasHead(sc) || _lyrIsHead(txt(sc))) { out.push(Object.assign({}, sc)); return; }
+    const mk = sc.hs && sc.hs.length ? [{ t: '[' }].concat(sc.hs, [{ t: ']' }]) : [sc.ha ? { t: '[' + txt(sc) + ']', a: sc.ha } : { t: '[' + txt(sc) + ']' }];
+    const rest = [mk].concat(sc.lines || []);
+    const prev = out[out.length - 1];
+    if (prev) prev.lines = (prev.lines || []).concat(rest);
+    else out.push({ lines: rest });
+  });
+  return out;
+}
 function _lyrGeniusToText(g) {
   const out = [];
-  (g.sections || []).forEach(sc => {
+  _lyrGSecs(g).forEach(sc => {
     if (out.length) out.push('');
     if (sc.hs && sc.hs.length) out.push('[' + _lyrSegsMd(sc.hs) + ']');
     else if (sc.h) out.push('[' + _lyrMdEsc(sc.h) + ']');
@@ -25090,7 +25113,7 @@ function _lyrParseManual(text) {
   let cur = null;
   String(text || '').replace(/\r/g, '').split('\n').forEach(raw => {
     const ln = raw.trim();
-    const hm = ln.match(/^\[(.+)\]$/);
+    const hm = ln.match(/^\[(.*[\p{L}\p{N}].*)\]$/u);
     if (hm) { cur = { hs: _lyrMdSegs(hm[1]), lines: [] }; secs.push(cur); return; }
     if (!cur) { if (!ln) return; cur = { lines: [] }; secs.push(cur); }
     cur.lines.push(ln ? _lyrMdSegs(raw.replace(/\s+$/, '')) : []);
@@ -25253,7 +25276,7 @@ function _lyrHeadNames(hs) {
 
 function _lyrArtistMap(g) {
   const order = [], verse = [];
-  (g.sections || []).forEach(sc => {
+  _lyrGSecs(g).forEach(sc => {
     const info = sc.hs && sc.hs.length ? _lyrHeadNames(sc.hs) : null;
     verse.push(info);
     if (info) info.names.forEach(n => { if (!order.includes(n.name)) order.push(n.name); });
@@ -25290,7 +25313,7 @@ function _lyrGeniusHtml(g) {
     if (a) h = '<a class="gl-a' + (a.cl === 'unreviewed' ? ' gl-pend' : '') + '" data-aid="' + esc(s.a) + '">' + h + '</a>';
     return h;
   };
-  const secs = (g.sections || []).map((sc, si) => {
+  const secs = _lyrGSecs(g).map((sc, si) => {
     const info = am.verse[si];
     const lines0 = sc.lines || [];
     let nameCol = null, keyCol = null, nameDef = null;
@@ -25557,7 +25580,7 @@ function _lyrPlainToItems(text) {
   String(text || '').replace(/\r/g, '').split('\n').forEach(raw => {
     const ln = raw.trim();
     if (!ln) return;
-    const hm = ln.match(/^\[(.+)\]$/);
+    const hm = ln.match(/^\[(.*[\p{L}\p{N}].*)\]$/u);
     if (hm) out.push({ k: 's', x: hm[1] });
     else out.push({ k: 'l', t: null, x: raw.replace(/\s+$/, '') });
   });
@@ -27216,6 +27239,7 @@ function _queueRowClick(row, e) {
     else if (!(S._continueFrom && S._continueFrom.expanded)) _qswToggle();
     return;
   }
+  if (!S.qSelectMode && !e.shiftKey && !e.ctrlKey && !e.metaKey && row.classList.contains('playing') && e.target.closest && e.target.closest('.snum-play')) { togglePlay(); return; }
   if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.qSelectMode) { _setQSelectMode(true); _qLastSel = null; }
   if (!S.qSelectMode) {
     const qi = parseInt(row.dataset.qi);
@@ -27481,17 +27505,13 @@ function _makeQueueRowBase(s, i) {
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
-    '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center">' +
-      '<span class=\"snum-num\">' + (isCur ? (S.isPlaying ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="3,2 21,12 3,22"/></svg>' : (i + 1)) : i + 1) + '</span>' +
-      (isCur ? '<div class=\"snum-bars\" style=\"position:absolute;display:flex;align-items:flex-end;gap:2px;width:22px;height:22px;justify-content:center;padding-bottom:2px;opacity:' + (S.isPlaying ? '1' : '0') + '\"><div class=\"snum-bar\"></div><div class=\"snum-bar\"></div><div class=\"snum-bar\"></div></div>' : '') +
-    '</div>'
+    _snumHtml(i + 1, { bars: isCur, playing: isCur && S.isPlaying })
   + '<div class="sthumb" style="width:36px;height:36px;font-size:16px;background:var(--color-surface-container-high);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">' + cov + '</div>'
   + '<div class="sinfo" style="overflow:hidden"><div class="stitle">' + esc(s.title || 'untitled') + '</div>'
   + '<div class="sartist">' + esc(s.artist || '') + '</div></div>'
   + '<div class="sdur">' + dur + '</div>'
   + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
   + _SEL_HANDLE;
-  el.querySelector('.snum').insertAdjacentHTML('beforeend', '<button class="snum-play mu-ripple" tabindex="-1"><svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg></button>');
   _qBindRow(el);
   return el;
 }
@@ -29611,6 +29631,15 @@ async function downloadAllMissing(aid) {
   }
 }
 
+const _SNUM_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg>';
+const _SNUM_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+const _snumIcon = playing => playing ? _SNUM_PAUSE : _SNUM_PLAY;
+function _snumHtml(num, o = {}) {
+  return '<div class="snum"><span class="snum-num"' + (o.numStyle ? ' style="' + o.numStyle + '"' : '') + '>' + num + '</span>'
+    + (o.bars === false ? '' : _snumBars())
+    + (o.play === false ? '' : '<button class="snum-play mu-ripple"' + (o.onclick ? ' onclick="' + o.onclick + '"' : '') + '>' + _snumIcon(!!o.playing) + '</button>')
+    + '</div>';
+}
 function _snumBars() {
   // 3 bars: low / mid / high - rendered as inline SVG driven by CSS animation
   // actual animation values are overridden by JS when analyser data is available
@@ -29681,9 +29710,7 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   const _featDisp=s.featuring_artists?(s.artist||'')+' feat. '+s.featuring_artists:(s.artist||'');
   const cell={};
 
-  cell.num=isGhost
-    ?`<div class="snum"><span class="snum-num" style="opacity:0.45">${num}</span></div>`
-    :`<div class="snum"><span class="snum-num">${num}</span>${!isDling&&!isUnavail?`${_snumBars()}<button class="snum-play mu-ripple" onclick="event.stopPropagation();playFromList(S.viewSongs,${_rowIdx})"><svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg></button>`:''}</div>`;
+  cell.num=_snumHtml(num,{numStyle:isGhost?'opacity:0.45':'',bars:!isSpecial,play:!isSpecial,onclick:'event.stopPropagation();playFromList(S.viewSongs,'+_rowIdx+')'});
 
   cell.thumb=`<div class="sthumb">${cov}</div>`;
   const _ghostTitleWrap = isGhost ? 'opacity:0.45;' : '';
@@ -39169,8 +39196,8 @@ async function renderStats() {
 function _setPrune(html) {
   const box = document.createElement('div');
   box.innerHTML = html;
-  const isRow = el => el.matches('.set-row,.set-nav');
-  const has = el => isRow(el) || !!el.querySelector('.set-row,.set-nav');
+  const isRow = el => el.matches('.set-row,.set-nav,details.set-blur');
+  const has = el => isRow(el) || !!el.querySelector('.set-row,.set-nav,details.set-blur');
   const prune = (parent) => {
     [...parent.children].forEach(k => {
       if (isRow(k)) return;
@@ -39192,13 +39219,13 @@ function _setPrune(html) {
 function renderSettings() {
   if (S.view !== 'settings' && !window._settingsPopupOpen) return;
   if (_settingsTabPc() && !_setPane()) { renderSettingsPopupShell(); return; }
-  const _sq = (S.globalSearch || '').trim().toLowerCase();
+  const _sq = _setQ().trim().toLowerCase();
   const D = window._DEPS || {};
 
   const rowDisabled = (title, reason, control) => {
     if (_sq) {
       const haystack = (title + ' ' + reason).toLowerCase();
-      if (!haystack.includes(_sq)) return '';
+      if (!_setQMatch(haystack, _sq)) return '';
     }
     return `
     <div class="set-row" style="opacity:0.45;pointer-events:none">
@@ -39218,7 +39245,7 @@ function renderSettings() {
   const row = (title, sub, control) => {
     if (_sq) {
       const haystack = (title + ' ' + (sub || '')).toLowerCase();
-      if (!haystack.includes(_sq)) return '';
+      if (!_setQMatch(haystack, _sq)) return '';
     }
     return `
     <div class="set-row">
@@ -39328,7 +39355,7 @@ function renderSettings() {
           const sto = !!CFG.shuffle_transition_only;
           const flowBlockActive = (S.shuffleMode||'random') === 'flow' || (S.shuffleMode||'random') === 'intact';
           const _taSubRow = (title, sub, control) => {
-            if (_sq) { const h=(title+' '+sub).toLowerCase(); if(!h.includes(_sq)) return ''; }
+            if (_sq) { const h=(title+' '+sub).toLowerCase(); if(!_setQMatch(h,_sq)) return ''; }
             return `<div class="set-row" style="${ta?'':'opacity:0.45;pointer-events:none'}">
               <div class="set-title-cell" style="padding-left:14px;border-left:2px solid var(--color-outline-variant)">
                 <div class="set-lbl" style="font-size:13px">${title}</div>
@@ -39558,7 +39585,7 @@ function renderSettings() {
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
         `)}
-        ${_vcmDesignOk() ? subRow('vcfade', 'list top fade', 'mobile only, songs fade out under the topbar when you scroll down', () => vcmSettingsHtml(_sq)) : ''}
+        ${_vcmDesignOk() ? subRow('vcfade', 'list top fade', 'mobile only, songs fade out under the topbar when you scroll down', () => _setSb(vcmSettingsHtml, _sq)) : ''}
         ${subRow('glass', 'glass & blur', 'panel opacity, blur strength and liquid glass refraction', () => `
         ${(CFG.ui_design||'material')==='glassy' ? row('glass', 'panel opacity · blur strength (opacity doesnt work well lol)', `
           <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
@@ -39578,10 +39605,10 @@ function renderSettings() {
             </div>
           </div>
         `) : ''}
-        ${(CFG.ui_design||'material')==='glassy' ? glassFxSettingsHtml(_sq) : ''}
-        ${(CFG.ui_design||'material')==='glassy' ? lgSettingsHtml(_sq) : ''}
-        ${(CFG.ui_design||'material')==='glassy' ? gaSettingsHtml(_sq) : ''}
-        ${blurSettingsHtml(_sq)}
+        ${(CFG.ui_design||'material')==='glassy' ? _setSb(glassFxSettingsHtml, _sq) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? _setSb(lgSettingsHtml, _sq) : ''}
+        ${(CFG.ui_design||'material')==='glassy' ? _setSb(gaSettingsHtml, _sq) : ''}
+        ${_setSb(blurSettingsHtml, _sq)}
       `)}
         ${row('full height right sidebar', 'right sidebar spans the whole window height and the topbar gets narrower (desktop only, also togglable by right clicking a sidebar)', `
           <label class="switch" style="flex-shrink:0">
@@ -39595,7 +39622,7 @@ function renderSettings() {
             <div class="switch-track"><div class="switch-thumb"></div></div>
           </label>
         `)}
-        ${bounceSettingsHtml(_sq)}
+        ${_setSb(bounceSettingsHtml, _sq)}
         ${row('keep toggle menus open', 'right click menus with checkboxes or radio buttons stay open after you pick something and get a close button in the top right instead. changes still save instantly', `
           <label class="switch" style="flex-shrink:0">
             <input type="checkbox" ${CFG.ctx_keep_open?'checked':''} onchange="saveSetting('ctx_keep_open',this.checked)" onclick="event.stopPropagation()">
@@ -39876,7 +39903,7 @@ function renderSettings() {
         ${row('motionui location', 'folder containing motionui.js, theme.css and components.css, applies instantly by reloading the page, empty = automatic lookup', `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:8px;align-items:center"><input class="input" id="mu-path-in" type="text" autocomplete="off" value="${(CFG.motionui_path_override || '').replace(/"/g, '&quot;')}" placeholder="automatic" style="width:260px;padding:10px 14px"><button class="btn btn-out mu-ripple" onclick="_muPathApply(false)">apply</button><button class="btn btn-out mu-ripple" onclick="_muPathApply(true)">reset</button></div><div id="mu-path-cur" style="font:var(--type-label-small);color:var(--color-on-surface-variant);word-break:break-all;text-align:right"></div><div id="mu-path-msg" style="font:var(--type-label-small);color:var(--color-error);text-align:right"></div></div>`)}
       `) : ''}
     </div>`;
-  if (_sq && !_SUBS.active && !/class="set-(row|nav)[ "]/.test(_setHtml)) _setHtml = _setHtml.replace(/<\/div>\s*$/, '<div class="empty" style="padding:32px 0"><div class="ei">' + MEOW_ICONS.search + '</div><p>nothing matches "' + esc(_sq) + '"</p></div></div>');
+  if (_sq && !_SUBS.active && !/class="set-(row|nav|blur)[ "]/.test(_setHtml)) _setHtml = _setHtml.replace(/<\/div>\s*$/, '<div class="empty" style="padding:32px 0"><div class="ei">' + MEOW_ICONS.search + '</div><p>nothing matches "' + esc(_sq) + '"</p></div></div>');
   if (window._settingsSub && !_SUBS.active) window._settingsSub = null;
   window._settingsSubTitle = _SUBS.active ? _SUBS.active.title : null;
   if (_SUBS.active) {
@@ -39960,7 +39987,7 @@ function openSettingsPopup() {
 
 function closeSettingsPopup() {
   window._settingsPopupOpen = false;
-  S.globalSearch = '';
+  S.setSearch = '';
   const ov = document.getElementById('set-pc-overlay');
   if (ov) { ov.classList.remove('open'); setTimeout(() => { if (!window._settingsPopupOpen) ov.innerHTML = ''; }, 320); }
   _stopDbxTabPoll();
@@ -39977,7 +40004,7 @@ function renderSettingsPopupShell() {
         <div class="set-head-title" id="set-pc-title">settings</div>
         <div class="set-pc-search">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="set-pc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="search settings..." value="${esc(S.globalSearch || '')}" oninput="onGlobalSearch(this.value)">
+          <input id="set-pc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="search settings..." value="${esc(_setQ())}" oninput="onSettingsSearch(this.value)">
         </div>
         <button class="set-pc-close" aria-label="close" onclick="closeSettingsPopup()">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
@@ -40347,6 +40374,39 @@ function _updatesHtml(row, rowDisabled) {
 // where the desktop two pane settings layout lives: the popup overlay, or the settings view itself when settings_nav is 'tab'. mobile always uses the single column page
 function _settingsTabPc() { return !isMobile() && S.view === 'settings' && !window._settingsPopupOpen; }
 function _setPc() { return !isMobile() && (!!window._settingsPopupOpen || S.view === 'settings'); }
+function _setQ() { return String((window._settingsPopupOpen && !isMobile() ? S.setSearch : S.globalSearch) || ''); }
+function onSettingsSearch(v) {
+  if (!window._settingsPopupOpen) { onGlobalSearch(v); return; }
+  S.setSearch = v;
+  clearTimeout(_searchDebounceT);
+  _searchDebounceT = setTimeout(renderSettings, 120);
+}
+function _setQMatch(h, q) {
+  h = String(h || '').toLowerCase();
+  return String(q || '').split(/\s+/).filter(Boolean).every(w => h.includes(w));
+}
+function _setSbFilter(html, q) {
+  if (!q || !html) return html;
+  const box = document.createElement('div');
+  box.innerHTML = html;
+  box.querySelectorAll('details.set-blur').forEach(d => {
+    const head = (d.querySelector('summary') || {}).textContent || '';
+    const body = d.querySelector('.sb-body');
+    if (!body) { if (!_setQMatch(head, q)) d.remove(); return; }
+    if (!_setQMatch(head, q)) {
+      let hit = 0;
+      [...body.children].forEach(k => {
+        if (k.classList.contains('sb-line') && _setQMatch(k.textContent, q)) hit++;
+        else k.remove();
+      });
+      if (!hit) { d.remove(); return; }
+    }
+    d.removeAttribute('ontoggle');
+    d.setAttribute('open', '');
+  });
+  return box.innerHTML;
+}
+function _setSb(fn, q) { let h = ''; try { h = fn(''); } catch (e) {} return q ? _setSbFilter(h, q) : h; }
 function _settingsHostEl() { return window._settingsPopupOpen ? document.getElementById('set-pc-overlay') : (_settingsTabPc() ? document.getElementById('vc') : null); }
 function _setPane() { const h = _settingsHostEl(); return h ? h.querySelector('#set-pc-content') : null; }
 function _setListHtml() {
@@ -40361,7 +40421,7 @@ function _setListHtml() {
       </div>`).join('');
 }
 function _setSyncSide() {
-  const q = !!(S.globalSearch || '').trim(), sec = window._settingsSection || SET_DEF;
+  const q = !!_setQ().trim(), sec = window._settingsSection || SET_DEF;
   document.querySelectorAll('.set-list-item[data-sec]').forEach(el => el.classList.toggle('active', !q && el.dataset.sec === sec));
   const t = document.getElementById('set-pc-title');
   if (t) {
@@ -40421,15 +40481,15 @@ function closeSettingsSub() {
 }
 
 function _setClearQ() {
-  if (S.globalSearchOpen) toggleGlobalSearch(true);
-  S.globalSearch = '';
+  if (window._settingsPopupOpen) S.setSearch = '';
+  else { if (S.globalSearchOpen) toggleGlobalSearch(true); S.globalSearch = ''; }
   const i = document.getElementById('set-pc-search-input');
   if (i) i.value = '';
 }
 
 function _setPick(id) {
   if (id === SET_DEF) id = null;
-  if ((S.globalSearch || '').trim() || S.globalSearchOpen) _setClearQ();
+  if (_setQ().trim() || (!window._settingsPopupOpen && S.globalSearchOpen)) _setClearQ();
   const cur = window._settingsSection || null;
   const ids = SET_SECTIONS.filter(_setShow).map(s => s.id);
   const dir = (id === cur || ids.indexOf(id || SET_DEF) < ids.indexOf(cur || SET_DEF)) ? -1 : 1;
