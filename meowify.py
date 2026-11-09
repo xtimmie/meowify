@@ -15528,9 +15528,20 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 .vl-static>.song-row.q-sw,.vl-inner>.song-row.q-sw{height:auto;min-height:var(--vrow-h);}
 body.design-glassy .q-sw{background:color-mix(in oklch,var(--color-surface-container-low) 40%,transparent);}
 body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-surface) 8%,transparent);}
-.q-sw .qsw-play{position:absolute;left:50%;top:50%;width:24px;height:24px;margin:-12px 0 0 -12px;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .12s;}
-@media (hover:hover){.q-sw:hover:not(:has(.qsw-list:hover)) .qsw-play{opacity:1;pointer-events:auto;}.q-sw:hover:not(:has(.qsw-list:hover)) .snum-num{opacity:0;}}
-@media (hover:none){.q-sw .qsw-play{opacity:1;pointer-events:auto;}.q-sw .snum-num{opacity:0;}}
+@media (hover:hover){.q-sw:hover:has(.qsw-list:hover) .snum-num{opacity:1;}.q-sw:hover:has(.qsw-list:hover) .snum-play{opacity:0;}}
+@media (hover:none){.q-sw .snum-play{opacity:1;}.q-sw .snum-num{opacity:0;}}
+.q-sw .qsw-list{grid-column:1 / -1;box-sizing:border-box;max-height:260px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:1px;padding:2px 0 8px 0;}
+.qsw-item{display:grid;grid-template-columns:28px 28px 1fr;gap:8px;align-items:center;padding:3px 0;border-radius:var(--radius-sm);cursor:pointer;}
+.qsw-n{text-align:center;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);}
+.qsw-cov{width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px;}
+.qsw-txt{overflow:hidden;min-width:0;}
+.q-sw .qsw-item .stitle{font-size:13px;line-height:1.25;}
+.q-sw .qsw-item .sartist{font-size:11px;line-height:1.25;}
+.q-sw .qsw-list::-webkit-scrollbar{width:6px;background:transparent;}
+.q-sw .qsw-list::-webkit-scrollbar-track,.q-sw .qsw-list::-webkit-scrollbar-corner{background:transparent;}
+.q-sw .qsw-list::-webkit-scrollbar-button{display:none;width:0;height:0;}
+.q-sw .qsw-list::-webkit-scrollbar-thumb{background:color-mix(in oklch,var(--color-on-surface) 25%,transparent);border-radius:3px;}
+@supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
 .q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
@@ -15603,10 +15614,7 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 #queue-inner img{-webkit-user-drag:none}
 .srch-credit{color:var(--color-primary);font-weight:600}
 .srch-credit .artist-link{color:inherit}
-#queue-inner .song-row:hover .snum-num{opacity:1}
-#queue-inner .song-row:hover .snum-play{opacity:0}
-#queue-inner .song-row.playing:not(.paused):hover .snum-num{opacity:0}
-#queue-inner .song-row.playing:not(.paused):hover .snum-bars{opacity:1}
+/* queue rows use the same hover play button as the normal song list */
 }
 .song-row.selected{background:color-mix(in oklch,var(--color-primary) 8%,transparent)}
 .song-row.selected .snum-num{color:var(--color-primary)}
@@ -27130,7 +27138,6 @@ function _queueRowClick(row, e) {
   if (!S.qSelectMode) {
     const qi = parseInt(row.dataset.qi);
     S.qi = qi; S.cur = S.queue[qi];
-    _qswCheckJump();
     playSong(S.cur);
     return;
   }
@@ -27164,10 +27171,13 @@ function _qswSync() {
   if (p && p.row) p.row.title = 'qsw|' + (p.expanded ? 1 : 0) + '|' + p.songs.length;
 }
 function _qswList(p) {
+  if (p._ll && p._llN === S.library.length) return p._ll;
   const inLib = new Set(S.library.map(l => l.id));
   const all = p.songs.filter(s => inLib.has(s.id));
   const k = all.findIndex(s => s.id === p.startId);
-  return k > 0 ? all.slice(k) : all;
+  p._ll = k > 0 ? all.slice(k) : all;
+  p._llN = S.library.length;
+  return p._ll;
 }
 function _qswSrcName(p) {
   const src = p.source || {};
@@ -27184,17 +27194,20 @@ function _qswAfter(i) {
 }
 function _qswEnsure() {
   const p = S._continueFrom;
-  if (!p || (S.shuffle && S.shuffleMode === 'chaos')) return;
+  if (!p || (S.shuffle && S.shuffleMode === 'chaos')) return -1;
   if (!p.row) p.row = { id: 'qsw', _qsw: true, _qa: true, title: '', artist: '', duration: 0 };
   _qswSync();
-  if (S.queue.includes(p.row)) return;
+  if (S.queue.includes(p.row)) return -1;
   const at = Math.min(S.queue.length, S.qi + 1);
   if (at < (S._qActiveFrom || 0)) S._qActiveFrom++;
   S.queue.splice(at, 0, p.row);
+  return at;
 }
+// goes through the same add path as play next, so the row slides in with the same animation
 function _qswInsert() {
-  _qswEnsure();
-  if (S.queueOpen) renderQueueSidebar();
+  const at = _qswEnsure();
+  if (at >= 0) _queueAdded(at, 1);
+  else if (S.queueOpen) renderQueueSidebar();
 }
 function _qswDrop(silent) {
   const p = S._continueFrom;
@@ -27209,14 +27222,7 @@ function _qswDrop(silent) {
   S._continueFrom = null;
   if (!silent && S.queueOpen) renderQueueSidebar();
 }
-// a click jumped past the row: the switch is cancelled
-function _qswCheckJump() {
-  const p = S._continueFrom;
-  if (!p || !p.row) return;
-  const k = S.queue.indexOf(p.row);
-  if (k < 0) { S._continueFrom = null; return; }
-  if (k < S.qi) _qswDrop(true);
-}
+// the switch is never cancelled automatically (clicking other rows, reshuffles), only by the user
 // cancel goes through the normal row removal, so it gets the same slide out / slide up as any queue row
 function _qswCancel(ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
@@ -27284,7 +27290,7 @@ function _makeQswRow(s, i) {
   const items = open ? _qswListHtml(list) : '';
   el.innerHTML =
     '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center"><span class="snum-num">' + (i + 1) + '</span>'
-    + '<button class="qsw-btn qsw-play mu-ripple" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button></div>'
+    + '<button class="snum-play mu-ripple" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg></button></div>'
     + '<div style="position:relative;width:36px;height:36px;flex-shrink:0">' + tiles + '</div>'
     + '<div class="sinfo" style="overflow:hidden"><div class="stitle">queue switch</div><div class="sartist">' + esc(sub) + '</div></div>'
     + '<div style="display:flex;align-items:center;gap:2px">'
@@ -27313,18 +27319,35 @@ function _qSigNow() {
   return S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
 }
 function _qswCover(sg) {
-  return sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
+  return sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
+}
+// the song list loads loosely: a first chunk, then more while scrolling near the bottom
+const _QSW_CHUNK = 20;
+function _qswItemsHtml(list, from, to) {
+  let h = '';
+  for (let k = from; k < to; k++) {
+    const sg = list[k];
+    h += '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)">'
+      + '<div class="qsw-n">' + (k + 1) + '</div>'
+      + '<div class="qsw-cov">' + _qswCover(sg) + '</div>'
+      + '<div class="qsw-txt"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div></div>';
+  }
+  return h;
 }
 function _qswListHtml(list) {
-  return '<div class="qsw-list" onpointerdown="event.stopPropagation()" style="grid-column:1 / -1;box-sizing:border-box;max-height:260px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
-    + list.slice(0, 300).map(sg =>
-      '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)" style="display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer">'
-      + '<div style="width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px">' + _qswCover(sg) + '</div>'
-      + '<div style="overflow:hidden"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div>'
-      + '<div class="sdur">' + (sg.duration ? fmt(sg.duration) : '') + '</div></div>'
-    ).join('')
-    + (list.length > 300 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 300) + ' more songs</div>' : '')
-    + '</div>';
+  const n = Math.min(list.length, _QSW_CHUNK);
+  return '<div class="qsw-list" data-n="' + n + '" onpointerdown="event.stopPropagation()" onscroll="_qswMore(this)">' + _qswItemsHtml(list, 0, n) + '</div>';
+}
+function _qswMore(box) {
+  const p = S._continueFrom;
+  if (!p) return;
+  const n = parseInt(box.dataset.n) || 0;
+  if (box.scrollTop + box.clientHeight < box.scrollHeight - 140) return;
+  const list = _qswList(p);
+  if (n >= list.length) return;
+  const to = Math.min(list.length, n + _QSW_CHUNK);
+  box.insertAdjacentHTML('beforeend', _qswItemsHtml(list, n, to));
+  box.dataset.n = to;
 }
 // slides the song list of the switch row open / closed in place (no rebuild), strong ease out
 function _qswAnimate(row, open) {
@@ -27386,11 +27409,12 @@ function _makeQueueRowBase(s, i) {
   + '<div class="sdur">' + dur + '</div>'
   + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
   + _SEL_HANDLE;
+  el.querySelector('.snum').insertAdjacentHTML('beforeend', '<button class="snum-play mu-ripple" tabindex="-1"><svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M8 5v14l11-7z"/></svg></button>');
   _qBindRow(el);
   return el;
 }
 
-let _qSig = null;    // signature of the queue content currently rendered (null = must rebuild)
+let _qSig = null;
 let _qEnvSig = '';   // layout/zoom/design the rendered queue was built for, a change forces one rebuild on next open
 let _qChaosRows = null; // html of the rows currently shown in the chaos view, so updates only patch what differs
 const _qEnv = () => (isMobile() ? 'm' : 'd') + '|' + (window.devicePixelRatio || 1) + '|' + (typeof _zoom === 'number' ? _zoom : 1) + '|' + (CFG.ui_design || '');
