@@ -15525,6 +15525,12 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 .q-after-sw{opacity:0.45;filter:grayscale(0.6);}
 .q-after-sw.playing,.q-after-sw.paused{opacity:1;filter:none;}
 .q-sw{background:var(--color-surface-container-low);}
+.vl-static>.song-row.q-sw,.vl-inner>.song-row.q-sw{height:auto;min-height:var(--vrow-h);}
+body.design-glassy .q-sw{background:color-mix(in oklch,var(--color-surface-container-low) 40%,transparent);}
+body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-surface) 8%,transparent);}
+.q-sw .qsw-play{position:absolute;left:50%;top:50%;width:24px;height:24px;margin:-12px 0 0 -12px;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .12s;}
+@media (hover:hover){.q-sw:hover:not(:has(.qsw-list:hover)) .qsw-play{opacity:1;pointer-events:auto;}.q-sw:hover:not(:has(.qsw-list:hover)) .snum-num{opacity:0;}}
+@media (hover:none){.q-sw .qsw-play{opacity:1;pointer-events:auto;}.q-sw .snum-num{opacity:0;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
 .q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
@@ -27115,7 +27121,11 @@ document.addEventListener('contextmenu', e => {
 
 function _queueRowClick(row, e) {
   const id = row.dataset.id;
-  if (row.dataset.qsw) { if (S.qSelectMode) _qToggleSel(id); return; }
+  if (row.dataset.qsw) {
+    if (S.qSelectMode) _qToggleSel(id);
+    else if (!(S._continueFrom && S._continueFrom.expanded)) _qswToggle();
+    return;
+  }
   if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.qSelectMode) { _setQSelectMode(true); _qLastSel = null; }
   if (!S.qSelectMode) {
     const qi = parseInt(row.dataset.qi);
@@ -27273,11 +27283,12 @@ function _makeQswRow(s, i) {
   const btn = 'width:20px;height:24px;display:flex;align-items:center;justify-content:center;opacity:1';
   const items = open ? _qswListHtml(list) : '';
   el.innerHTML =
-    '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center"><span class="snum-num">' + (i + 1) + '</span></div>'
+    '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center"><span class="snum-num">' + (i + 1) + '</span>'
+    + '<button class="qsw-btn qsw-play mu-ripple" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button></div>'
     + '<div style="position:relative;width:36px;height:36px;flex-shrink:0">' + tiles + '</div>'
     + '<div class="sinfo" style="overflow:hidden"><div class="stitle">queue switch</div><div class="sartist">' + esc(sub) + '</div></div>'
     + '<div style="display:flex;align-items:center;gap:2px">'
-    +   '<button class="qsw-btn mu-ripple" style="' + btn + '" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button>'
+    +   ''
     +   '<button class="qsw-btn mu-ripple" data-qsw-exp="1" style="' + btn + '" title="' + (open ? 'hide songs' : 'show songs') + '" onclick="_qswToggle(event)"><svg class="qsw-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block;transition:transform .38s cubic-bezier(.16,1,.3,1);transform:rotate(' + (open ? 180 : 0) + 'deg)"><polyline points="6 9 12 15 18 9"></polyline></svg></button>'
     + '</div>'
     + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="cancel">' + MEOW_ICONS.close + '</button>'
@@ -27758,6 +27769,7 @@ function renderQueueSidebar() {
     }
     _qChaosRows = _rows;
     inner.querySelectorAll('.q-sw .smenu-btn').forEach(b => { b.onclick = e => { e.stopPropagation(); _qswCancel(); }; });
+    inner.querySelectorAll('.q-sw').forEach(r => { r.onclick = e => _queueRowClick(r, e); });
     // scroll current into view
     requestAnimationFrame(() => {
       const curRow = inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])');
