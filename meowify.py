@@ -15505,8 +15505,8 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 @media (hover: hover) {.gl-a:hover{background:color-mix(in oklch,var(--color-primary) 20%,transparent)}}
 .gl-a.open{background:color-mix(in oklch,var(--color-primary) 28%,transparent);color:var(--color-on-surface)}
 .gl-a.gl-pend{background:none;border-radius:0;border-bottom:1px dotted color-mix(in oklch,var(--color-primary) 55%,transparent)}
-.gl-annpop{position:absolute;left:8px;right:8px;width:auto;min-width:0;max-width:calc(100% - 16px);box-sizing:border-box;bottom:calc(var(--bar-h,0px) + 8px);max-height:58%;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid var(--color-outline-variant);border-radius:14px;corner-shape:squircle;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:20;overflow:hidden}
-.gl-annpop.on{display:flex}
+.gl-annpop{position:fixed;left:var(--ap-l,8px);width:var(--ap-w,300px);bottom:var(--ap-b,8px);max-height:var(--ap-h,58vh);box-sizing:border-box;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid rgba(255,255,255,0.13);border-radius:14px;corner-shape:squircle;box-shadow:0 8px 32px rgba(0,0,0,.55);z-index:900;overflow:hidden;transform-origin:50% 100%}
+.gl-annpop.on{display:flex;animation:ctx-pop var(--dur-5) var(--ease-spring) both}
 .gl-annpop-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 0 14px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)}
 .gl-annpop-body{padding:4px 14px 10px;overflow-y:auto;font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);line-height:1.6}
 .gl-annpop-body p{margin:0 0 .7em}
@@ -25401,13 +25401,31 @@ function lyrAnnClick(e) {
   lyrAnnOpen(a.dataset.aid);
 }
 
+function _lyrAnnPlace() {
+  const pop = document.getElementById('gl-annpop'), sb = document.getElementById('lyrics-sidebar');
+  if (!pop || !sb || !pop.classList.contains('on')) return;
+  const r = sb.getBoundingClientRect();
+  if (sb.classList.contains('hidden') || r.width < 60) { lyrAnnClose(); return; }
+  const pl = document.getElementById('player'), pr = pl ? pl.getBoundingClientRect() : null;
+  const bot = Math.min(pr && pr.height ? pr.top : r.bottom, r.bottom);
+  pop.style.setProperty('--ap-l', (r.left + 8) + 'px');
+  pop.style.setProperty('--ap-w', Math.max(120, r.width - 16) + 'px');
+  pop.style.setProperty('--ap-b', (window.innerHeight - bot + 8) + 'px');
+  pop.style.setProperty('--ap-h', Math.max(120, (bot - r.top) * 0.58) + 'px');
+}
+
 function lyrAnnOpen(aid) {
   const g = S.lyricsData && S.lyricsData.genius;
   const a = g && g.ann && g.ann[aid];
   const host = document.getElementById('lyrics-sidebar');
   if (!a || !host) return;
   let pop = document.getElementById('gl-annpop');
-  if (!pop) { pop = document.createElement('div'); pop.id = 'gl-annpop'; pop.className = 'gl-annpop'; host.appendChild(pop); }
+  if (!pop) {
+    pop = document.createElement('div'); pop.id = 'gl-annpop'; pop.className = 'gl-annpop'; document.body.appendChild(pop);
+    if (window.ResizeObserver) new ResizeObserver(_lyrAnnPlace).observe(host);
+    window.addEventListener('resize', _lyrAnnPlace);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop.classList.contains('on')) lyrAnnClose(); });
+  }
   const meta = [];
   if (a.ver) meta.push('verified'); else if (a.cl === 'unreviewed') meta.push('unreviewed');
   if (a.by) meta.push(esc(a.by));
@@ -25416,6 +25434,7 @@ function lyrAnnOpen(aid) {
     + '<div class="gl-annpop-body">' + _lyrSanitize(a.h) + '</div>'
     + '<div class="gl-annpop-meta"><span>' + meta.join(' | ') + '</span><a href="https://genius.com/' + esc(aid) + '" target="_blank" rel="noopener">open on genius</a></div>';
   pop.classList.add('on');
+  _lyrAnnPlace();
   _lyrOpenAid = aid;
   document.querySelectorAll('#lyrics-body .gl-a.open').forEach(el => el.classList.remove('open'));
   document.querySelectorAll('#lyrics-body .gl-a[data-aid="' + aid + '"]').forEach(el => el.classList.add('open'));
