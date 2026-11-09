@@ -4254,6 +4254,7 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
 
     # album upsert
     album_id = album_id_hint
+    _merge_later = False
     if g_album_data:
         g_album_id     = str(g_album_data.get('id', ''))
         g_album_name   = g_album_data.get('name', '')
@@ -4275,15 +4276,27 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
             else:
                 ex2 = c.execute("SELECT id FROM albums WHERE title=? AND (artist=? OR artist IS NULL)",
                     (g_album_name, g_album_artist)).fetchone()
+                if not ex2:
+                    # another edition / spelling of an album we already have (deluxe, remaster...): link to it instead of
+                    # inserting a copy, the duplicate merge would delete that copy again while this write is still using it
+                    _gc = _album_canonical(g_album_name)
+                    _gatoks = [t.strip().lower() for t in re.split(r'[,;]', g_album_artist or '') if t.strip()]
+                    for _r in c.execute("SELECT id, title, artist FROM albums").fetchall():
+                        if _album_canonical(_r[1]) != _gc:
+                            continue
+                        _rtoks = [t.strip().lower() for t in re.split(r'[,;]', _r[2] or '') if t.strip()]
+                        if not _r[2] or any(_fuzzy(a, b) >= 0.85 for a in _gatoks for b in _rtoks):
+                            ex2 = (_r[0],)
+                            break
                 if ex2:
                     album_id = ex2[0]
-                    c.execute("UPDATE albums SET genius_id=?, cover_path=COALESCE(?,cover_path) WHERE id=?",
+                    c.execute("UPDATE albums SET genius_id=COALESCE(genius_id,?), cover_path=COALESCE(?,cover_path) WHERE id=?",
                         (g_album_id, album_cov, album_id))
                 else:
                     album_id = str(uuid.uuid4())
                     c.execute("INSERT INTO albums (id,title,artist,cover_path,source,genius_id,created_at) VALUES (?,?,?,?,?,?,?)",
                         (album_id, g_album_name, g_album_artist, album_cov, 'genius', g_album_id, int(time.time())))
-                    _analysis_pool.submit(merge_duplicate_albums)
+                    _merge_later = True  # merged at the end, not in parallel with this write
         # album tracks
         if token:
             tracks_resp = _genius_get(f'/albums/{g_album_id}/tracks?per_page=50', token)
@@ -4415,6 +4428,8 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
         with db() as c:
             _wr = c.execute("SELECT title, artist, album FROM songs WHERE id=?", (sid,)).fetchone()
         if _wr: write_meta(file_path, _wr[0] or '', _wr[1] or '', _wr[2] or '', tn or 0)
+    if _merge_later:
+        _analysis_pool.submit(merge_duplicate_albums)
 
 def _genius_enrich(sid, token, genius_song_id=None, skip_title=False, _cached_song_data=None, _confidence=None, confirmed=False):
     """Enrich a song in DB with genius metadata. Entry point for auto-enrichment."""
