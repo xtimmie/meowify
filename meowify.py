@@ -28259,7 +28259,8 @@ function _sdCloseOpt(k) {
   const blk = document.querySelector(`.sd-opt[data-opt="${k}"]`);
   if (!blk) return;
   const inner = blk.querySelector('.sd-opt-in');
-  inner.querySelectorAll('input').forEach(i => i.setAttribute('value', k === 'plays' ? '0' : ''));
+  inner.querySelectorAll('input').forEach(i => { i.setAttribute('value', k === 'plays' ? '0' : ''); i.removeAttribute('disabled'); i.style.opacity = ''; });
+  inner.querySelectorAll('[data-reset]').forEach(el => el.removeAttribute('data-reset'));
   inner.querySelectorAll('.sd-rs').forEach(b => b.remove());
   blk.insertAdjacentHTML('beforebegin', `<template data-opt="${k}">${inner.innerHTML}</template>`);
   blk.remove();
