@@ -14214,6 +14214,31 @@ def _drag_embed_cover(path, cover_path):
     except Exception as e:
         _log_library.warning('[drag out] cover embed failed: %s', e)
 
+_DRAG_RESERVED = {'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+                  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'}
+
+def _drag_clean_tags(path, keep_track):
+    """the copy carries the library's data only: no stale track number from the source file (a youtube playlist index
+    survives write_meta when the library track is 0) and no downloader leftovers (comment, purl, synopsis, description, encoder)"""
+    try:
+        if Path(path).suffix.lower() == '.mp3':
+            from mutagen.id3 import ID3
+            tags = ID3(path)
+            for k in list(tags.keys()):
+                if k.startswith('COMM') or k == 'TSSE' or k.lower() in ('txxx:purl', 'txxx:comment', 'txxx:synopsis', 'txxx:description'):
+                    del tags[k]
+            if not keep_track:
+                tags.delall('TRCK')
+            tags.save(path)
+        elif not keep_track:
+            import mutagen
+            f = mutagen.File(path, easy=True)
+            if f is not None and 'tracknumber' in f:
+                del f['tracknumber']
+                f.save()
+    except Exception as e:
+        _log_library.warning('[drag out] tag cleanup failed: %s', e)
+
 def _drag_prepare(ids):
     import tempfile, shutil, uuid
     root = Path(tempfile.gettempdir()) / 'meowify-drag'
@@ -14238,6 +14263,8 @@ def _drag_prepare(ids):
             continue
         src, title, artist, album, tn, rd, cover = r
         stem = _drag_clean(f'{title} - {artist}' if (title and artist) else (title or '')) or _drag_clean(Path(src).stem) or 'song'
+        if stem.split('.')[0].upper() in _DRAG_RESERVED:
+            stem += '_'  # windows refuses CON.mp3, NUL.mp3 and friends
         ext = Path(src).suffix or '.mp3'
         name, n = stem, 2
         while (name + ext).lower() in used:
@@ -14251,7 +14278,10 @@ def _drag_prepare(ids):
         except Exception as e:
             _log_library.warning('[drag out] tags failed: %s', e)
         _drag_embed_cover(str(dst), cover)
+        _drag_clean_tags(str(dst), bool(tn))
         files.append(str(dst))
+    if not files:
+        shutil.rmtree(out_dir, ignore_errors=True)
     return files
 
 def _drag_window():
@@ -27982,6 +28012,8 @@ async function _doStart(a) {
     const known = new Set(S.library.map(s => s.id));
     let ids = (S.selected && S.selected.size > 1 && S.selected.has(a.id)) ? [...S.selected] : [a.id];
     ids = ids.filter(id => known.has(id));  // sidebar playlist rows carry data-id too, those are not songs
+    const ord = new Map((S.viewSongs || []).map((s, i) => [s.id, i]));
+    ids.sort((x, y) => (ord.has(x) ? ord.get(x) : 1e9) - (ord.has(y) ? ord.get(y) : 1e9));  // same order as on screen
     if (!ids.length) return;
     // hand the pointer back: the reorder engines treat this as a cancel and put the rows where they were
     (a.row.isConnected ? a.row : document).dispatchEvent(new PointerEvent('pointercancel', {pointerId: a.pid, bubbles: true}));
