@@ -28119,8 +28119,18 @@ function _sdShowOpt(k, focus) {
   if (chips && !chips.querySelector('[data-chip]')) chips.style.display = 'none';
   if (focus && blk) blk.querySelector('input')?.focus();
 }
-function _sdCoverBtn(title, onclick, inner) {
-  return `<button type="button" title="${title}" onclick="${onclick}" style="width:30px;height:30px;padding:0;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(4px);font:700 13px/1 inherit">${inner}</button>`;
+// logos copied from the song menu (genius) and the youtube_video source icon
+const _SD_ICO_GENIUS = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>';
+const _SD_ICO_YT = '<svg viewBox="0 0 15 15" width="1em" height="1em"><rect width="15" height="12" y="1" rx="3" fill="currentColor"/><path fill="var(--color-surface-container-high)" d="M5.75 4.5v5l4-2.5z"/></svg>';
+const _SD_ICO_UP = '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></svg>';
+// the 3 dot button on the cover opens the normal context menu
+function _sdCoverMenu(e, sid) {
+  e.stopPropagation();
+  const song = S.library.find(s => s.id === sid);
+  const items = [{icon: _SD_ICO_UP, label: 'upload cover', fn: () => document.getElementById('edit-song-cover-file')?.click()}];
+  if (song?.genius_id) items.push({icon: _SD_ICO_GENIUS, label: 'redownload from genius', fn: () => refreshSongCover(sid, 'genius')});
+  items.push({icon: _SD_ICO_YT, label: 'redownload from youtube music', fn: () => refreshSongCover(sid, 'ytm')});
+  showCtx(e, items);
 }
 // optional block: input area plus, for the ones the user can drop again, an x on the right
 function _sdOptWrap(k, inner) {
@@ -28269,9 +28279,17 @@ async function _sdRenderEdit(sid, song) {
   let x = null;
   try { x = await api('GET', `/api/songs/${sid}/extra`); } catch (e) { x = null; }
   if (!x || x.error) x = {};
+  let sh = null;
+  try { sh = await api('GET', `/api/songs/${sid}/stats-candidates`); } catch (e) { sh = null; }
+  if (sh && sh.error) sh = null;
   const pins = new Set((x.pins || []).map(k => k === 'featuring' ? 'featuring_artists' : k));
   const isSingle = !song.album_id;
-  const albumName = song.album_id ? ((S.albums || []).find(a => a.id === song.album_id)?.title || song.album || '') : '';
+  const _aid = song._pendingAlbumId || song.album_id;
+  const _alb = _aid ? (S.albums || []).find(a => a.id === _aid) : null;
+  const albumName = _alb ? (_alb.title || song.album || '') : (song.album_id ? (song.album || '') : '');
+  const albumThumb = _alb?.thumbnail || '';
+  const shTop = sh && sh.rows && sh.rows[0];
+  const shInfo = !sh ? '' : `${sh.current_plays} plays on this song` + (shTop ? ` · possible match: ${esc(shTop.title)} by ${esc(shTop.artist)} (${shTop.plays} plays)${sh.rows.length > 1 ? ` +${sh.rows.length - 1} more` : ''}` : ' · no other history looks like it');
   const credits = _sdCreditRows(song);
   const mvUrl = x.mv_url || (song.mv_video_id ? 'https://www.youtube.com/watch?v=' + song.mv_video_id : '');
   const lu = song.loudness_user, po = song.play_offset || 0;
@@ -28304,28 +28322,29 @@ async function _sdRenderEdit(sid, song) {
     : `<template data-opt="${k}">${inner}</template>`;
   const g = x.genius;
   const body = `<div id="sd-err" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-error-container,rgba(186,26,26,.15));color:var(--color-on-error-container,var(--color-error,#ba1a1a));font:var(--type-body-small)"></div>
-    <div style="display:flex;justify-content:center;margin-bottom:18px">
-      <div style="position:relative;width:132px;height:132px">
-        ${_sdCover(song, 132, 'edit-song-cover-img')}
+    <div style="display:grid;grid-template-columns:clamp(112px,28%,152px) minmax(0,1fr);gap:14px;align-items:stretch;margin-bottom:12px">
+      <div style="position:relative;min-height:112px">
+        ${song.cover_path
+          ? `<img id="edit-song-cover-img" src="/cover/${song.id}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:var(--radius-md)">`
+          : `<div id="edit-song-cover-img" style="position:absolute;inset:0;border-radius:var(--radius-md);background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:32px">♪</div>`}
         <input type="file" id="edit-song-cover-file" accept="image/*" style="display:none" onchange="uploadSongCover('${sid}',this)">
-        <div style="position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:6px;padding:22px 6px 8px;border-radius:0 0 var(--radius-md) var(--radius-md);background:linear-gradient(transparent,rgba(0,0,0,.7))">
-          ${_sdCoverBtn('upload cover', "document.getElementById('edit-song-cover-file').click()", '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></svg>')}
-          ${song.genius_id ? _sdCoverBtn('redownload from genius', `refreshSongCover('${sid}','genius')`, 'G') : ''}
-          ${_sdCoverBtn('redownload from youtube music', `refreshSongCover('${sid}','ytm')`, '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>')}
-        </div>
+        <button type="button" class="cbtn mu-ripple" title="cover options" style="position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)" onclick="_sdCoverMenu(event,'${sid}')"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+        ${f('title', 'title', `<input class="inp" id="edit-song-title" value="${esc(init.title)}" autocomplete="off">`, pins.has('title') && 'reset to auto')}
+        ${f('artist', 'artist', `<input class="inp" id="edit-song-artist" value="${esc(init.artist)}" autocomplete="off">`, pins.has('artist') && 'reset to auto')}
       </div></div>
     <div style="display:flex;flex-direction:column;gap:12px">
-      ${f('title', 'title', `<input class="inp" id="edit-song-title" value="${esc(init.title)}" autocomplete="off">`, pins.has('title') && 'reset to auto')}
-      ${f('artist', 'artist', `<input class="inp" id="edit-song-artist" value="${esc(init.artist)}" autocomplete="off">`, pins.has('artist') && 'reset to auto')}
       ${f('featuring_artists', 'featuring', `<input class="inp" id="edit-song-feat" value="${esc(init.featuring_artists)}" placeholder="comma separated" autocomplete="off">`, pins.has('featuring_artists') && 'reset to auto')}
       ${f('release_date', 'release date', `<input class="inp" id="sd-release" value="${esc(init.release_date)}" placeholder="yyyy, yyyy-mm or yyyy-mm-dd" style="max-width:240px" autocomplete="off">`, pins.has('release_date') && 'reset to auto')}
       ${f('track_num', 'track number', `<input class="inp" id="edit-song-tracknum" type="number" min="0" value="${esc(init.track_num)}" style="max-width:100px">`)}
       <div style="display:flex;flex-direction:column;gap:6px">
         <span style="${_SD_LBL}">album</span>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-song-single" ${isSingle ? 'checked' : ''} onchange="toggleSingleMode('${sid}',this.checked)"><span style="font:var(--type-body-small)">single (no album)</span></label>
-        <div id="edit-album-row" style="display:${isSingle ? 'none' : 'flex'};align-items:center;gap:8px">
-          <span id="edit-album-name" style="flex:1;font:var(--type-body-small);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(albumName)}</span>
-          <button type="button" class="btn btn-out mu-ripple" onclick="_sdStash('${sid}');pickAlbumForSong('${sid}')">change</button>
+        <div id="edit-album-row" style="display:${isSingle ? 'none' : 'flex'};gap:10px;align-items:center;padding:8px;border-radius:var(--radius-md);background:var(--color-surface-container-high)">
+          ${albumThumb ? `<img src="${esc(albumThumb)}" alt="" onerror="this.style.display='none'" style="width:46px;height:46px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">` : ''}
+          <span id="edit-album-name" style="flex:1;min-width:0;font:var(--type-body-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(albumName)}</span>
+          <button type="button" class="btn btn-out mu-ripple" style="flex-shrink:0;padding:6px 16px" onclick="_sdStash('${sid}');pickAlbumForSong('${sid}')">change</button>
         </div>
       </div>
       ${blk('credits', f('credits', 'credits', `<div id="sd-credits" style="display:flex;flex-direction:column;gap:6px">${credits.map(c => _sdCreditRowHtml(c.role, c.names)).join('')}</div>
@@ -28339,7 +28358,7 @@ async function _sdRenderEdit(sid, song) {
         ${g ? `<a href="${esc(g.url || '#')}" target="_blank" rel="noopener" title="open the genius page" style="display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit;padding:8px;border-radius:var(--radius-md);background:var(--color-surface-container-high)">
           ${g.cover ? `<img src="${esc(g.cover)}" alt="" onerror="this.style.display='none'" style="width:46px;height:46px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">` : ''}
           <div style="min-width:0;flex:1"><div style="font:var(--type-body-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.title || 'genius page')}</div><div style="${_SD_LBL};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.artists || '')}</div></div>
-          <span style="${_SD_LBL};white-space:nowrap">open ↗</span></a>
+          <span class="btn btn-out" style="flex-shrink:0;padding:6px 16px;pointer-events:none;white-space:nowrap">open ↗</span></a>
         <div style="${_SD_LBL}">${g.confirmed ? 'confirmed match' : (g.confidence != null ? Math.round(g.confidence * 100) + '% match' : 'unconfirmed match')}</div>` : `<div style="font:var(--type-body-small)">not linked</div>`}
         <div style="display:flex;gap:6px"><input class="inp" id="sd-genius-url" placeholder="paste a genius.com song link" style="flex:1;min-width:0" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();_sdGeniusLink('${sid}')}"><button type="button" class="btn btn-out mu-ripple" onclick="_sdGeniusLink('${sid}')">link</button></div>
         <div style="display:flex;gap:6px"><button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="showGeniusFix('${sid}')">search genius</button>${g ? `<button type="button" class="btn btn-out mu-ripple" style="padding:3px 10px;font-size:12px" onclick="_sdGeniusUnlink('${sid}')">unlink</button>` : ''}</div>
@@ -28348,7 +28367,13 @@ async function _sdRenderEdit(sid, song) {
       ${blk('plays', f('play_offset', 'extra plays', `<input class="inp" id="sd-play-offset" type="number" min="0" step="1" value="${po}" style="max-width:140px">${hint(real + ' real plays + this. not added to play history, stats pages keep counting real plays only')}`, po > 0 && 'clear'))}
       ${blk('loud', f('loudness', 'loudness override (LUFS)', `<input class="inp" id="sd-loud" type="number" step="0.1" min="-70" max="0" value="${lu == null ? '' : esc(String(lu))}" placeholder="${song.loudness_auto != null ? Number(song.loudness_auto).toFixed(1) : 'auto'}" style="max-width:140px">${hint('auto measured: ' + _sdLoud(song.loudness_auto) + '. empty = use the automatic value')}`, lu != null && 'reset to auto'))}
       <div id="sd-chips" style="display:${opts.some(o => !o.filled) ? 'flex' : 'none'};flex-wrap:wrap;gap:6px;align-items:center"><span style="${_SD_LBL}">add</span>${opts.filter(o => !o.filled).map(o => `<button type="button" class="btn btn-out mu-ripple" data-chip="${o.k}" style="padding:3px 10px;font-size:12px" onclick="_sdShowOpt('${o.k}',true)">+ ${o.label}</button>`).join('')}</div>
-      <button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start" onclick="_sdStash('${sid}');openStatsLink('${sid}')">play history link</button>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+        <span style="${_SD_LBL}">play history</span>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%">
+          <button type="button" class="btn btn-out mu-ripple" style="flex-shrink:0" onclick="_sdStash('${sid}');openStatsLink('${sid}')">${shTop ? 'review possible match' : 'link play history'}</button>
+          ${shInfo ? `<span style="${_SD_LBL};flex:1;min-width:140px">${shInfo}</span>` : ''}
+        </div>
+      </div>
     </div>
     <div style="margin-top:16px">
       ${_sdRow('duration', song.duration ? fmt(song.duration) : '-')}
