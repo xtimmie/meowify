@@ -16150,12 +16150,13 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 .seek-btn{display:none!important}
 body.seek-on .seek-btn{display:flex!important}
 .seek-btn svg{overflow:visible}
-.seek-btn .seek-n{font-family:inherit;font-weight:800;stroke:none}
+.seek-btn .seek-n{font-family:inherit;font-weight:800;stroke:currentColor;stroke-width:.35px;stroke-linejoin:round;letter-spacing:-.2px;transform-box:fill-box;transform-origin:center;transition:transform .28s cubic-bezier(.2,1.5,.4,1)}
 .seek-btn .seek-rot{transform-box:view-box;transform-origin:12px 12px;transition:transform .28s cubic-bezier(.2,1.5,.4,1)}
 #bseekb .seek-rot,#mob-np-bseekb .seek-rot{transform:rotate(-45deg)}
 #bseekf .seek-rot,#mob-np-bseekf .seek-rot{transform:rotate(45deg)}
-#bseekb:active .seek-rot,#mob-np-bseekb:active .seek-rot{transform:rotate(-75deg)}
-#bseekf:active .seek-rot,#mob-np-bseekf:active .seek-rot{transform:rotate(75deg)}
+#bseekb:active .seek-rot,#mob-np-bseekb:active .seek-rot{transform:rotate(-60deg)}
+#bseekf:active .seek-rot,#mob-np-bseekf:active .seek-rot{transform:rotate(60deg)}
+.seek-btn:active .seek-n{transform:scale(.7)}
 body.seek-on #app.mobile #player .seek-btn{display:none!important}
 
 /* ── REPEAT ──────────────────────────────────────────────────────────── */
@@ -17478,8 +17479,8 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
         </button>
         <button class="cbtn mu-ripple seek-btn" id="bseekb" onclick="seekBy(-1)" title="seek back">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
-            <g class="seek-rot"><path d="M12 5 A7 7 0 1 1 5 12"/><polygon points="12,2.4 12,7.6 8.4,5" fill="currentColor" stroke-width="1"/></g>
-            <text class="seek-n" x="12" y="15.2" text-anchor="middle" font-size="9" fill="currentColor">-5</text>
+            <g class="seek-rot"><path d="M12 4.5 A7.5 7.5 0 1 1 4.5 12"/><polygon points="12,2.1 12,6.9 8.8,4.5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="15" text-anchor="middle" font-size="8.4" fill="currentColor">&#8722;5</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="bprev" onclick="prevSong()" title="previous">
@@ -17525,8 +17526,8 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
         </button>
         <button class="cbtn mu-ripple seek-btn" id="bseekf" onclick="seekBy(1)" title="seek forward">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
-            <g class="seek-rot"><path d="M12 5 A7 7 0 1 0 19 12"/><polygon points="12,2.4 12,7.6 15.6,5" fill="currentColor" stroke-width="1"/></g>
-            <text class="seek-n" x="12" y="15.2" text-anchor="middle" font-size="9" fill="currentColor">+5</text>
+            <g class="seek-rot"><path d="M12 4.5 A7.5 7.5 0 1 0 19.5 12"/><polygon points="12,2.1 12,6.9 15.2,4.5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="15" text-anchor="middle" font-size="8.4" fill="currentColor">+5</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="brep" onclick="toggleRepeat()" title="repeat">
@@ -24438,7 +24439,7 @@ function renderNowPlaying(_preArg) {
         </button>
         <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekb" onclick="seekBy(-1)">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <g class="seek-rot"><path d="M12 5 A7 7 0 1 1 5 12"/><polygon points="12,2.4 12,7.6 8.4,5" fill="currentColor" stroke-width="1"/></g>
+            <g class="seek-rot"><path d="M12 4.5 A7.5 7.5 0 1 1 4.5 12"/><polygon points="12,2.1 12,6.9 8.8,4.5" fill="currentColor" stroke-width="1"/></g>
             <text class="seek-n" x="12" y="${_seekY()}" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(-1)}</text>
           </svg>
         </button>
@@ -24484,7 +24485,7 @@ function renderNowPlaying(_preArg) {
         </button>
         <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekf" onclick="seekBy(1)">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <g class="seek-rot"><path d="M12 5 A7 7 0 1 0 19 12"/><polygon points="12,2.4 12,7.6 15.6,5" fill="currentColor" stroke-width="1"/></g>
+            <g class="seek-rot"><path d="M12 4.5 A7.5 7.5 0 1 0 19.5 12"/><polygon points="12,2.1 12,6.9 15.2,4.5" fill="currentColor" stroke-width="1"/></g>
             <text class="seek-n" x="12" y="${_seekY()}" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(1)}</text>
           </svg>
         </button>
@@ -38562,7 +38563,7 @@ function seekStep() {
 }
 
 function _seekLbl(dir) {
-  return (dir < 0 ? '-' : '+') + seekStep();
+  return (dir < 0 ? '\u2212' : '+') + seekStep();
 }
 
 function _seekY() {
@@ -38571,7 +38572,7 @@ function _seekY() {
 
 function _seekFs() {
   const n = String(seekStep()).length + 1;
-  return n <= 2 ? 9 : n === 3 ? 7.5 : 6.2;
+  return n <= 2 ? 8.4 : n === 3 ? 7 : 5.8;
 }
 
 function _updateSeekBtns() {
@@ -42660,10 +42661,12 @@ def _wg_icon(sd, kind, cx, cy, isz, fill, S):
         import math
         a = -45 if kind == 'seekb' else 45
         ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
-        hd = ((12, 2.4), (12, 7.6), (8.4, 5)) if kind == 'seekb' else ((12, 2.4), (12, 7.6), (15.6, 5))
+        hd = ((12, 2.1), (12, 6.9), (8.8, 4.5)) if kind == 'seekb' else ((12, 2.1), (12, 6.9), (15.2, 4.5))
         hd = [(12 + (x - 12) * ca - (y - 12) * sa, 12 + (x - 12) * sa + (y - 12) * ca) for x, y in hd]
         a0, a1 = (270, 180) if kind == 'seekb' else (0, 270)
-        sd.arc([ox + 4 * u, oy + 4 * u, ox + 20 * u, oy + 20 * u], a0 + a, a1 + a, fill=fill, width=max(1, int(round(2 * u))))
+        sd.arc([ox + 3.5 * u, oy + 3.5 * u, ox + 20.5 * u, oy + 20.5 * u], a0 + a, a1 + a, fill=fill, width=max(1, int(round(1.9 * u))))
+        ex, ey = 12 + 7.5 * math.cos(math.radians(a1 + a)), 12 + 7.5 * math.sin(math.radians(a1 + a))
+        sd.ellipse(P((ex - 0.95, ey - 0.95), (ex + 0.95, ey + 0.95)), fill=fill)
         sd.polygon(P(*hd), fill=fill)
     elif kind == 'shuffle':
         w = max(1, int(round(2 * u)))
@@ -42949,13 +42952,15 @@ def _wg_render(sp, W, hover, press):
                     sd.ellipse([x0 * S, y0 * S, (x0 + bs) * S - 1, (y0 + bs) * S - 1], fill=(128, 128, 128, 102 if press == idx else 71))
                 ic = acc if ((kind == 'shuffle' and sp.get('shuf')) or (kind == 'repeat' and sp.get('rep'))) else fg
                 _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, ic, S)
-                if kind in ('seekb', 'seekf'):
-                    lb = ('-' if kind == 'seekb' else '+') + str(sp['seek'])
-                    spx = max(7, int(round(18 * sc * (0.40 if len(lb) <= 2 else 0.32 if len(lb) == 3 else 0.26))))
-                    texts.append((int(x0 + bs / 2.0 - _wg_tw(lb, spx, True) / 2.0), int(y0 + bs / 2.0 + spx * 0.36), lb, spx, True, fg))
-                elif kind == 'repeat' and sp.get('rep') == 2:
-                    spx = max(6, int(round(18 * sc * 0.28)))
-                    texts.append((int(x0 + bs / 2.0 - _wg_tw('1', spx, True) / 2.0), int(y0 + bs / 2.0 + spx * 0.36), '1', spx, True, ic))
+                if kind in ('seekb', 'seekf') or (kind == 'repeat' and sp.get('rep') == 2):
+                    if kind == 'repeat':
+                        lb, spx, sw = '1', max(6, int(round(18 * sc * 0.28))), 0
+                    else:
+                        lb, sw = ('\u2212' if kind == 'seekb' else '+') + str(sp['seek']), 1
+                        spx = max(6, int(round(18 * sc * (0.34 if len(lb) <= 2 else 0.28 if len(lb) == 3 else 0.22))))
+                    nf = _wg_font(spx * S, True, 0)
+                    nl, nt, nr, nb = nf.getbbox(lb, anchor='ls')
+                    sd.text(((x0 + bs / 2.0) * S - (nl + nr) / 2.0, (y0 + bs / 2.0) * S - (nt + nb) / 2.0), lb, font=nf, fill=ic, anchor='ls', stroke_width=sw, stroke_fill=ic)
         elif t == 'text' and wd > 0:
             pxs, n = _wg_px(sp, m, b), len(b['l'])
             if n == 1 and b['l'][0] == ['lyrics']:   # a lone lyrics row can wrap onto two lines
