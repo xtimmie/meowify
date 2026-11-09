@@ -16150,7 +16150,13 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 .seek-btn{display:none!important}
 body.seek-on .seek-btn{display:flex!important}
 .seek-btn svg{overflow:visible}
-.seek-btn .seek-n{font-family:inherit;font-weight:700;stroke:none}
+.seek-btn .seek-n{font-family:inherit;font-weight:800;stroke:none}
+.seek-btn .seek-rot{transform-box:view-box;transform-origin:12px 12px;transition:transform .28s cubic-bezier(.2,1.5,.4,1)}
+#bseekb .seek-rot,#mob-np-bseekb .seek-rot{transform:rotate(-45deg)}
+#bseekf .seek-rot,#mob-np-bseekf .seek-rot{transform:rotate(45deg)}
+#bseekb:active .seek-rot,#mob-np-bseekb:active .seek-rot{transform:rotate(-75deg)}
+#bseekf:active .seek-rot,#mob-np-bseekf:active .seek-rot{transform:rotate(75deg)}
+body.seek-on #app.mobile #player .seek-btn{display:none!important}
 
 /* ── REPEAT ──────────────────────────────────────────────────────────── */
 #rep-seg-a, #rep-seg-b, #rep-seg-c, #rep-seg-d {
@@ -17472,9 +17478,8 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
         </button>
         <button class="cbtn mu-ripple seek-btn" id="bseekb" onclick="seekBy(-1)" title="seek back">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
-            <path d="M12 6 A7 7 0 1 1 5 13"/>
-            <polygon points="12,1.5 12,10.5 7,6" fill="currentColor"/>
-            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="7.5" fill="currentColor">-5</text>
+            <g class="seek-rot"><path d="M12 5 A7 7 0 1 1 5 12"/><polygon points="12,2.4 12,7.6 8.4,5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="15.2" text-anchor="middle" font-size="9" fill="currentColor">-5</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="bprev" onclick="prevSong()" title="previous">
@@ -17520,9 +17525,8 @@ body.select-mode #app:not(.mobile) #vc .sel-reorderable :is(.song-row-mobile,.so
         </button>
         <button class="cbtn mu-ripple seek-btn" id="bseekf" onclick="seekBy(1)" title="seek forward">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
-            <path d="M12 6 A7 7 0 1 0 19 13"/>
-            <polygon points="12,1.5 12,10.5 17,6" fill="currentColor"/>
-            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="7.5" fill="currentColor">+5</text>
+            <g class="seek-rot"><path d="M12 5 A7 7 0 1 0 19 12"/><polygon points="12,2.4 12,7.6 15.6,5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="15.2" text-anchor="middle" font-size="9" fill="currentColor">+5</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="brep" onclick="toggleRepeat()" title="repeat">
@@ -20171,6 +20175,8 @@ class AudioEngine {
       else if (c.cmd === 'seek') _nmSeek(c.value);
       else if (c.cmd === 'seekb') seekBy(-1);
       else if (c.cmd === 'seekf') seekBy(1);
+      else if (c.cmd === 'shuffle') { toggleShuffle(); setTimeout(() => _nativePush(true), 80); }
+      else if (c.cmd === 'repeat') { toggleRepeat(); setTimeout(() => _nativePush(true), 80); }
       else if (c.cmd === 'cfg') api('GET', '/api/settings').then(n => { Object.assign(CFG, n); renderSettings(); });
     } catch (e) { console.warn('[native] command failed', c, e); }
   }
@@ -20187,14 +20193,15 @@ class AudioEngine {
     const playing = !!(s && S.isPlaying);
     const thHue = Math.round(CFG.theme_hue ?? 145);
     const thSat = Math.round((typeof _bwSync !== 'undefined' && _bwSync) ? _bwEffSat(CFG.theme_bri ?? 1.0) : (CFG.theme_sat ?? 50));
-    const key = (s ? s.id + '|' + (s.title || '') + '|' + (s.artist || '') + '|' + (s.album || '') + '|' + (s.cover_path || '') : '') + '|' + (playing ? 1 : 0) + '|' + Math.round(dur) + '|' + thHue + '|' + thSat;
+    const shufOn = !!S.shuffle, repN = S.repeat === 'one' ? 2 : S.repeat === 'all' ? 1 : 0;
+    const key = (s ? s.id + '|' + (s.title || '') + '|' + (s.artist || '') + '|' + (s.album || '') + '|' + (s.cover_path || '') : '') + '|' + (playing ? 1 : 0) + '|' + Math.round(dur) + '|' + thHue + '|' + thSat + '|' + (shufOn ? 1 : 0) + '|' + repN;
     // only resend when something changed or the position jumped (a seek), plain playback is extrapolated natively
     const exp = _nmLastPlaying ? _nmLastPos + (now - _nmLastAt) / 1000 : _nmLastPos;
     if (!force && key === _nmLast && Math.abs(pos - exp) < 1.5) return;
     _nmLast = key; _nmLastPos = pos; _nmLastAt = now; _nmLastPlaying = playing;
     fetch('/api/native/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
       body: JSON.stringify({ id: s ? s.id : null, title: s ? (s.title || '') : '', artist: s ? (s.artist || '') : '',
-        album: s ? (s.album || '') : '', dur, pos, playing, cover: !!(s && s.cover_path), hue: thHue, sat: thSat }) }).catch(() => {});
+        album: s ? (s.album || '') : '', dur, pos, playing, cover: !!(s && s.cover_path), hue: thHue, sat: thSat, shuf: shufOn, rep: repN }) }).catch(() => {});
   }
 
   window._nmSetting = async function (key, val) { try { return await _nmSetting0(key, val); } finally { setTimeout(() => window._nmPrevRefresh && window._nmPrevRefresh(), 0); } };
@@ -20460,7 +20467,7 @@ class AudioEngine {
     const sw = (key, on) => `<label class="switch" style="flex-shrink:0"><input type="checkbox" ${on ? 'checked' : ''} onchange="_nmSetting('${key}', this.checked)" onclick="event.stopPropagation()"><div class="switch-track"><div class="switch-thumb"></div></div></label>`;
     const chip = (on, js, label) => `<button class="btn ${on ? 'btn-filled' : 'btn-out'} mu-ripple" style="padding:4px 10px;font:var(--type-label-small)" onclick="${js}">${label}</button>`;
     const list = (key) => Array.isArray(CFG[key]) ? CFG[key] : ['prev', 'play', 'next'];
-    const btnChips = (key) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']].map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
+    const btnChips = (key, all) => `<div style="display:flex;gap:6px;flex-wrap:wrap">${(all || [['prev', 'previous'], ['play', 'play / pause'], ['next', 'next']]).map(([v, l]) => chip(list(key).includes(v), `_nmToggleBtn('${key}','${v}')`, l)).join('')}</div>`;
     const status = c.err ? esc(c.err) : '';
     const mode = CFG.win_wg ? 'widget' : CFG.win_tray_ctrl ? 'tray' : 'off';
     const modeChips = `<div style="display:flex;gap:6px;flex-wrap:wrap">${[['off', 'off'], ['widget', 'widget'], ['tray', 'tray buttons (legacy)']].map(([v, l]) => chip(mode === v, `_nmMode('${v}')`, l)).join('')}</div>`;
@@ -20494,6 +20501,7 @@ class AudioEngine {
       + hd('size and position')
       + row('auto width', 'widget sizes itself to what it shows, the width below is then the max', wgYesNo('win_wg_auto'))
       + (CFG.win_wg_auto ? row('count lyrics in auto width', 'on: width follows the current lyric line. off: lyrics get a fixed block so the width only changes with title and artist', wgYesNo('win_wg_autolyr')) : '')
+      + row('widget buttons', 'pick which buttons the controls block shows, the order is fixed like the player. seek buttons use the seek step from the playback settings', btnChips('win_wg_btns', [['shuffle', 'shuffle'], ['seekb', 'seek back'], ['prev', 'previous'], ['play', 'play / pause'], ['next', 'next'], ['seekf', 'seek forward'], ['repeat', 'repeat']]))
       + row('widget width', 'fixed width, or the max width when auto width is on', wgSlider('win_wg_w', 300, 120, 900, 10))
       + row('widget distance from tray', 'gap between the widget and the tray icons', wgSlider('win_wg_gap', 8, 0, 200, 4));
     }
@@ -24430,9 +24438,8 @@ function renderNowPlaying(_preArg) {
         </button>
         <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekb" onclick="seekBy(-1)">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 6 A7 7 0 1 1 5 13"/>
-            <polygon points="12,1.5 12,10.5 7,6" fill="currentColor"/>
-            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(-1)}</text>
+            <g class="seek-rot"><path d="M12 5 A7 7 0 1 1 5 12"/><polygon points="12,2.4 12,7.6 8.4,5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="${_seekY()}" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(-1)}</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="mob-np-bprev" onclick="prevSong()">
@@ -24477,9 +24484,8 @@ function renderNowPlaying(_preArg) {
         </button>
         <button class="cbtn mu-ripple seek-btn" id="mob-np-bseekf" onclick="seekBy(1)">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 6 A7 7 0 1 0 19 13"/>
-            <polygon points="12,1.5 12,10.5 17,6" fill="currentColor"/>
-            <text class="seek-n" x="12" y="16" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(1)}</text>
+            <g class="seek-rot"><path d="M12 5 A7 7 0 1 0 19 12"/><polygon points="12,2.4 12,7.6 15.6,5" fill="currentColor" stroke-width="1"/></g>
+            <text class="seek-n" x="12" y="${_seekY()}" text-anchor="middle" font-size="${_seekFs()}" fill="currentColor">${_seekLbl(1)}</text>
           </svg>
         </button>
         <button class="cbtn mu-ripple" id="mob-np-brep" onclick="toggleRepeat()">
@@ -38559,9 +38565,13 @@ function _seekLbl(dir) {
   return (dir < 0 ? '-' : '+') + seekStep();
 }
 
+function _seekY() {
+  return (12 + _seekFs() * 0.36).toFixed(1);
+}
+
 function _seekFs() {
   const n = String(seekStep()).length + 1;
-  return n <= 2 ? 7.5 : n === 3 ? 6 : 5;
+  return n <= 2 ? 9 : n === 3 ? 7.5 : 6.2;
 }
 
 function _updateSeekBtns() {
@@ -38571,6 +38581,7 @@ function _updateSeekBtns() {
     if (!t) return;
     t.textContent = _seekLbl(b.id.endsWith('seekb') ? -1 : 1);
     t.setAttribute('font-size', _seekFs());
+    t.setAttribute('y', _seekY());
   });
 }
 
@@ -39840,7 +39851,7 @@ function renderSettings() {
         })()}
         ${row('\u23ee restarts track', 'prev restarts if >3s in, press again to go back', toggle('prev_restarts', CFG.prev_restarts !== false))}
         ${row('seek step', 'seconds skipped by the left / right arrow keys and the seek buttons', `<input class="input" type="number" min="1" max="120" step="1" value="${seekStep()}" style="width:90px;text-align:right;padding:8px 6px" onchange="setSeekStep(this.value)">`)}
-        ${row('seek buttons', 'show -N / +N buttons around prev / next in the player, now playing and the taskbar widget', toggle('seek_btns', CFG.seek_btns === true, '_updateSeekBtns()'))}
+        ${row('seek buttons', 'show -N / +N buttons around prev / next in the player and in the mobile now playing view (the taskbar widget has its own button toggles)', toggle('seek_btns', CFG.seek_btns === true, '_updateSeekBtns()'))}
       `) : ''}
 
       ${_sectionMatch('audio') ? section('audio', `
@@ -42645,12 +42656,28 @@ def _wg_icon(sd, kind, cx, cy, isz, fill, S):
     if kind == 'play': sd.polygon(P((8, 5), (8, 19), (19, 12)), fill=fill)
     elif kind == 'pause': R(6, 5, 10, 19); R(14, 5, 18, 19)
     elif kind == 'prev': R(6, 6, 8, 18); sd.polygon(P((9.5, 12), (18, 18), (18, 6)), fill=fill)
-    elif kind == 'seekb':
-        sd.arc([ox + 4 * u, oy + 5 * u, ox + 20 * u, oy + 21 * u], 270, 180, fill=fill, width=max(1, int(round(2 * u))))
-        sd.polygon(P((12, 1.5), (12, 10.5), (7, 6)), fill=fill)
-    elif kind == 'seekf':
-        sd.arc([ox + 4 * u, oy + 5 * u, ox + 20 * u, oy + 21 * u], 0, 270, fill=fill, width=max(1, int(round(2 * u))))
-        sd.polygon(P((12, 1.5), (12, 10.5), (17, 6)), fill=fill)
+    elif kind in ('seekb', 'seekf'):
+        import math
+        a = -45 if kind == 'seekb' else 45
+        ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+        hd = ((12, 2.4), (12, 7.6), (8.4, 5)) if kind == 'seekb' else ((12, 2.4), (12, 7.6), (15.6, 5))
+        hd = [(12 + (x - 12) * ca - (y - 12) * sa, 12 + (x - 12) * sa + (y - 12) * ca) for x, y in hd]
+        a0, a1 = (270, 180) if kind == 'seekb' else (0, 270)
+        sd.arc([ox + 4 * u, oy + 4 * u, ox + 20 * u, oy + 20 * u], a0 + a, a1 + a, fill=fill, width=max(1, int(round(2 * u))))
+        sd.polygon(P(*hd), fill=fill)
+    elif kind == 'shuffle':
+        w = max(1, int(round(2 * u)))
+        sd.line(P((3, 17), (8, 17), (16, 7), (18, 7)), fill=fill, width=w, joint='curve')
+        sd.line(P((3, 7), (8, 7), (10.2, 9.75)), fill=fill, width=w, joint='curve')
+        sd.line(P((13.8, 14.25), (16, 17), (18, 17)), fill=fill, width=w, joint='curve')
+        sd.polygon(P((18, 4), (22, 7), (18, 10)), fill=fill)
+        sd.polygon(P((18, 14), (22, 17), (18, 20)), fill=fill)
+    elif kind == 'repeat':
+        w = max(1, int(round(2 * u)))
+        sd.line(P((4, 13), (4, 7), (17, 7)), fill=fill, width=w, joint='curve')
+        sd.polygon(P((17, 3.8), (21.5, 7), (17, 10.2)), fill=fill)
+        sd.line(P((20, 11), (20, 17), (7, 17)), fill=fill, width=w, joint='curve')
+        sd.polygon(P((7, 13.8), (2.5, 17), (7, 20.2)), fill=fill)
     else: R(16, 6, 18, 18); sd.polygon(P((6, 18), (14.5, 12), (6, 6)), fill=fill)
 
 def _wg_render(sp, W, hover, press):
@@ -42812,6 +42839,7 @@ def _wg_vis(sp):
     """the layout with only what has something to show right now, an empty artist drops out and so does a text block left without rows"""
     out = []
     for b in sp['lay']:
+        if b['t'] == 'controls' and not sp.get('btns'): continue
         if b['t'] != 'text': out.append(b); continue
         lines = []
         for ln in b['l']:
@@ -42820,13 +42848,23 @@ def _wg_vis(sp):
         if lines: out.append({'t': 'text', 'l': lines})
     return out
 
-def _wg_seek_cfg():
-    if CFG.get('seek_btns') is not True: return 0
-    try: return max(1, min(120, int(round(float(CFG.get('seek_step', 5))))))
-    except Exception: return 5
+_WG_BTN_ORDER = ('shuffle', 'seekb', 'prev', 'play', 'next', 'seekf', 'repeat')
+
+def _wg_btns():
+    v = CFG.get('win_wg_btns')
+    if not isinstance(v, list): v = ['prev', 'play', 'next']
+    return [k for k in _WG_BTN_ORDER if k in v]
+
+def _wg_sp_extra(sp):
+    sp['btns'] = _wg_btns()
+    try: sp['seek'] = max(1, min(120, int(round(float(CFG.get('seek_step', 5))))))
+    except Exception: sp['seek'] = 5
+    sp['shuf'] = bool(_NM.get('shuf'))
+    try: sp['rep'] = int(_NM.get('rep') or 0)
+    except Exception: sp['rep'] = 0
 
 def _wg_ncb(sp):
-    return 5 if sp.get('seek') else 3
+    return len(sp.get('btns') or ())
 
 def _wg_m2(sp):
     sc = sp['sc']
@@ -42900,20 +42938,24 @@ def _wg_render(sp, W, hover, press):
         elif t == 'controls':
             bs = m['bs']
             y0 = (H - bs) // 2
-            ctl = [('prev', 'prev'), ('pause' if sp['playing'] else 'play', 'toggle'), ('next', 'next')]
-            if sp.get('seek'): ctl = [('seekb', 'seekb')] + ctl + [('seekf', 'seekf')]
+            _km = {'shuffle': ('shuffle', 'shuffle'), 'seekb': ('seekb', 'seekb'), 'prev': ('prev', 'prev'), 'play': ('pause' if sp['playing'] else 'play', 'toggle'),
+                   'next': ('next', 'next'), 'seekf': ('seekf', 'seekf'), 'repeat': ('repeat', 'repeat')}
+            ctl = [_km[k] for k in (sp.get('btns') or ())]
             for i, (kind, cmd) in enumerate(ctl):
                 x0 = x + i * bs
                 btns.append((x0, y0, x0 + bs, y0 + bs, cmd))
                 idx = len(btns) - 1
                 if idx == hover:
                     sd.ellipse([x0 * S, y0 * S, (x0 + bs) * S - 1, (y0 + bs) * S - 1], fill=(128, 128, 128, 102 if press == idx else 71))
-                _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, fg, S)
+                ic = acc if ((kind == 'shuffle' and sp.get('shuf')) or (kind == 'repeat' and sp.get('rep'))) else fg
+                _wg_icon(sd, kind, x0 + bs / 2.0, y0 + bs / 2.0, 18 * sc, ic, S)
                 if kind in ('seekb', 'seekf'):
                     lb = ('-' if kind == 'seekb' else '+') + str(sp['seek'])
-                    spx = max(6, int(round(18 * sc * (0.34 if len(lb) <= 2 else 0.28 if len(lb) == 3 else 0.23))))
-                    scy = y0 + bs / 2.0 + 18 * sc / 24.0
-                    texts.append((int(x0 + bs / 2.0 - _wg_tw(lb, spx, True) / 2.0), int(scy + spx * 0.36), lb, spx, True, fg))
+                    spx = max(7, int(round(18 * sc * (0.40 if len(lb) <= 2 else 0.32 if len(lb) == 3 else 0.26))))
+                    texts.append((int(x0 + bs / 2.0 - _wg_tw(lb, spx, True) / 2.0), int(y0 + bs / 2.0 + spx * 0.36), lb, spx, True, fg))
+                elif kind == 'repeat' and sp.get('rep') == 2:
+                    spx = max(6, int(round(18 * sc * 0.28)))
+                    texts.append((int(x0 + bs / 2.0 - _wg_tw('1', spx, True) / 2.0), int(y0 + bs / 2.0 + spx * 0.36), '1', spx, True, ic))
         elif t == 'text' and wd > 0:
             pxs, n = _wg_px(sp, m, b), len(b['l'])
             if n == 1 and b['l'][0] == ['lyrics']:   # a lone lyrics row can wrap onto two lines
@@ -43377,7 +43419,7 @@ class _NmWidget:
               'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
         sp['lay'] = lay
-        sp['seek'] = _wg_seek_cfg()
+        _wg_sp_extra(sp)
         W = max(int(120 * sc), min(mx, _wg_natural(sp))) if cfg['auto'] else mx
         img, _btn = _wg_render(sp, W, -1, -1)
         mg = max(10, int(14 * sc))
@@ -43429,14 +43471,15 @@ class _NmWidget:
         cover = self.cover if (st['id'] and self.cover_for == st['id']) else None
         light = self._sys_light(now)
         sig = (st['id'], st['title'], st['artist'], st['playing'], lyr, items, cfg['bg'], cfg['fs'], cfg['shape'], cfg['lmode'], cfg['lcol'],
-               cfg['auto'], cfg['autolyr'], repr(lay), cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover), _wg_seek_cfg())
+               cfg['auto'], cfg['autolyr'], repr(lay), cfg['hue'], cfg['sat'], light, int(sc * 100), H, id(cover),
+               tuple(_wg_btns()), CFG.get('seek_step'), bool(_NM.get('shuf')), _NM.get('rep'))
         if sig != self.sig:
             self.sig = sig
             self.sp = {'H': H, 'sc': sc, 'items': list(items), 'fs': cfg['fs'], 'shape': cfg['shape'], 'auto': cfg['auto'], 'autolyr': cfg['autolyr'], 'tl': cfg['tl'], 'lp': cfg['lp'],
                        'title': st['title'], 'artist': st['artist'], 'lyric': lyr, 'playing': st['playing'], 'cover': cover,
                        'radius': int(8 * sc) if self.win11 else 0, 'colors': _wg_colors(cfg, light)}
             self.sp['lay'] = lay
-            self.sp['seek'] = _wg_seek_cfg()
+            _wg_sp_extra(self.sp)
             self.nat = _wg_natural(self.sp) if cfg['auto'] else 0
             self.dirty = True
         mx = int(_nm_ci('win_wg_w', 300, 120, 900) * sc)
@@ -43572,7 +43615,7 @@ def api_native_state():
     _NM.update({'id': d.get('id'), 'title': d.get('title') or '', 'artist': d.get('artist') or '', 'album': d.get('album') or '',
                 'hue': d.get('hue'), 'sat': d.get('sat'),
                 'dur': float(d.get('dur') or 0), 'pos': float(d.get('pos') or 0),
-                'playing': bool(d.get('playing')), 'cover': bool(d.get('cover')), 'at': time.time()})
+                'playing': bool(d.get('playing')), 'cover': bool(d.get('cover')), 'shuf': bool(d.get('shuf')), 'rep': int(d.get('rep') or 0), 'at': time.time()})
     try:
         if _NM_ST['tray']: _NM_ST['tray'].update(_NM['playing'])
         if _NM_ST['thumb']: _NM_ST['thumb'].push(_NM['playing'])
