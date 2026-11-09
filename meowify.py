@@ -28249,6 +28249,15 @@ function _sdCollect() {
 }
 
 // leaving to a sub popup (album picker, play history) and coming back keeps what was typed
+// shortcut from the edit popup: turn the autodetect setting off, keep what was typed and reopen the form with the real album
+async function _sdDisableAutoSingle(sid) {
+  _sdStash(sid);
+  await saveSetting('hide_single_albums', false);
+  S.plSongs = {};
+  await loadData();
+  rerenderCurrentView();
+  editSong(sid);
+}
 function _sdStash(sid) {
   _sdKeepFrom = Date.now();
   const c = _sdCollect();
@@ -28346,7 +28355,10 @@ async function _sdRenderEdit(sid, song) {
   try { sh = await api('GET', `/api/songs/${sid}/stats-candidates`); } catch (e) { sh = null; }
   if (sh && sh.error) sh = null;
   const pins = new Set((x.pins || []).map(k => k === 'featuring' ? 'featuring_artists' : k));
-  const isSingle = !song.album_id;
+  // autoSingle: counts as a single only because the autodetect single albums setting matched its one track album, the data itself still has an album
+  const _alb0 = song.album_id ? (S.albums || []).find(a => a.id === song.album_id) : null;
+  const autoSingle = CFG.hide_single_albums !== false && !!(_alb0 && _alb0.title) && !song.album && !song._pendingAlbumId;
+  const isSingle = !song.album_id || autoSingle;
   const _aid = song._pendingAlbumId || song.album_id;
   const _alb = _aid ? (S.albums || []).find(a => a.id === _aid) : null;
   const albumName = _alb ? (_alb.title || song.album || '') : (song.album_id ? (song.album || '') : '');
@@ -28403,7 +28415,8 @@ async function _sdRenderEdit(sid, song) {
       ${f('track_num', 'track number', `<input class="inp" id="edit-song-tracknum" type="number" min="0" value="${esc(init.track_num)}" style="max-width:100px">`)}
       <div style="display:flex;flex-direction:column;gap:6px">
         <span style="${_SD_LBL}">album</span>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-song-single" ${isSingle ? 'checked' : ''} onchange="toggleSingleMode('${sid}',this.checked)"><span style="font:var(--type-body-small)">single (no album)</span></label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:${autoSingle ? 'default' : 'pointer'};${autoSingle ? 'opacity:.55' : ''}"><input type="checkbox" id="edit-song-single" ${isSingle ? 'checked' : ''} ${autoSingle ? 'disabled' : ''} onchange="toggleSingleMode('${sid}',this.checked)"><span style="font:var(--type-body-small)">single (no album)</span></label>
+        ${autoSingle ? `<div style="display:flex;flex-direction:column;gap:8px;padding:8px 10px;border-radius:var(--radius-md);background:var(--color-surface-container-high)"><span style="${_SD_LBL}">autodetected as a single by the autodetect single albums setting, its only album is a one track album with the same name${albumName ? ' (' + esc(albumName) + ')' : ''}. the album data itself is untouched. turn the setting off to treat it as a normal album and change it here</span><button type="button" class="btn btn-out mu-ripple" style="align-self:flex-start;padding:4px 12px;font-size:12px" onclick="_sdDisableAutoSingle('${sid}')">turn off autodetect single albums</button></div>` : ''}
         <div id="edit-album-row" style="display:${isSingle ? 'none' : 'flex'};gap:10px;align-items:center;padding:8px;border-radius:var(--radius-md);background:var(--color-surface-container-high)">
           ${albumThumb ? `<img src="${esc(albumThumb)}" alt="" onerror="this.style.display='none'" style="width:46px;height:46px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0">` : ''}
           <span id="edit-album-name" style="flex:1;min-width:0;font:var(--type-body-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(albumName)}</span>
@@ -39421,15 +39434,15 @@ function renderSettings() {
         ${row('use genius metadata', 'show names, feats, album and release date from genius when a match exists, genius also splits producers out of the feats. off = show what youtube music or the file gave. nothing stored is changed, flip it any time', toggle('genius_override', CFG.genius_override !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
         ${row('write edits to file tags', 'when you edit a song, also write title, artist, album, track number and release date into the audio file. off = edits only live in the library', toggle('write_tags_on_edit', CFG.write_tags_on_edit !== false))}
-        ${row('autodetect single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) counts as a single song, same as a song with no album. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('autodetect single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) counts as a single song, same as a song with no album. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'S.plSongs={};loadData().then(rerenderCurrentView)'))}
         ${row('album column for singles', 'what the album column shows for single songs (no album, or autodetected). fake album = a virtual album named after the song with its cover and artist, clicking it opens its own album view. nothing gets added to your albums', `
           <div class="select-wrap" style="width:160px">
-            <select class="input" style="width:160px" onchange="saveSetting('single_album_mode',this.value).then(()=>{loadData().then(rerenderCurrentView)})">
+            <select class="input" style="width:160px" onchange="saveSetting('single_album_mode',this.value).then(()=>{S.plSongs={};loadData().then(rerenderCurrentView)})">
               ${[['dash','- (dash)'],['empty','empty'],['fake','fake album']].map(([v,n])=>`<option value="${v}" ${(CFG.single_album_mode||'dash')===v?'selected':''}>${n}</option>`).join('')}
             </select>
             <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </div>`)}
-        ${CFG.single_album_mode === 'fake' ? row('add - single to fake album names', 'fake album names get - single after the song name', toggle('single_album_suffix', CFG.single_album_suffix === true, 'loadData().then(rerenderCurrentView)')) : ''}
+        ${CFG.single_album_mode === 'fake' ? row('add - single to fake album names', 'fake album names get - single after the song name', toggle('single_album_suffix', CFG.single_album_suffix === true, 'S.plSongs={};loadData().then(rerenderCurrentView)')) : ''}
         ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
         ${row('reorder on long press (mobile)', 'off: long press opens the song menu and reordering only works in select mode. on: long press reorders reorderable lists and the menu opens from the 3 dot button, lists you cant reorder still open the menu on long press', toggle('mob_reorder_default', CFG.mob_reorder_default === true))}
         ${row('"prod." label', 'write producers as "prod. name" instead of just adding them to the commas', toggle('list_prod_prefix', CFG.list_prod_prefix === true, 'rerenderCurrentView()'))}
