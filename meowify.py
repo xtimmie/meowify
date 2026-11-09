@@ -196,6 +196,7 @@ _DEFS   = {"data_dir": str(_HOME), "gapless": True, "format": "mp3", "quality": 
 _DEFS.update({"dbx_push_mode": "missing_on_peer", "dbx_quota_cap_pct": 80, "backup_keep_daily": 7, "backup_max_mb": 500, "glass_alpha": 1.0, "glass_blur": 1.0, "dbx_live_sync": False, "artist_use_main_name": True, "genius_override": True, "artist_show_aliases": True, "hide_single_albums": True, "list_show_producers": False, "list_prod_prefix": False, "list_feat_prefix": False, "search_credits_prod": False, "search_credits_writers": False, "search_credits_other": False})
 
 _DEFS.update({"write_tags_on_edit": True})
+_DEFS.update({"single_album_mode": "dash", "single_album_suffix": False})
 
 def load_cfg():
     _HOME.mkdir(parents=True, exist_ok=True)
@@ -344,6 +345,7 @@ def db():
     conn.create_function('_ulower', 1, _ulower, deterministic=True)
     conn.create_function('_disp_artist', 1, _disp_artist)
     conn.create_function('_disp_album', 3, _disp_album)
+    conn.create_function('_disp_single', 3, _disp_single)
     try:
         yield conn
         conn.commit()
@@ -566,19 +568,26 @@ def _disp_album(album_id, album_title, song_title):
     except Exception:
         return album_title
 
+def _sgl_name(title):
+    return (title or '') + (' - single' if CFG.get('single_album_suffix', False) else '')
+
+def _disp_single(alb0, title, source):
+    """album text for sorting / search / the album column: the real one, or for a single song (no album, or autodetected single) the fake album name when single_album_mode is fake. the fake album id is sgl_<song id>, nothing is stored"""
+    try:
+        if alb0:
+            return alb0
+        if not title or source == 'downloading' or CFG.get('single_album_mode', 'dash') != 'fake':
+            return ''
+        return _sgl_name(title)
+    except Exception:
+        return alb0 or ''
+
 _SONGS_DISPLAY_SQL = """
 CREATE VIEW songs_display AS
 SELECT id, sync_id, title,
        _disp_artist(songs.artist) AS artist,
-       CASE WHEN songs.album_id IS NOT NULL
-                 AND (SELECT COUNT(*) FROM album_tracks atc WHERE atc.album_id = songs.album_id) <= 1
-                 AND (SELECT COUNT(*) FROM songs so WHERE so.album_id = songs.album_id) = 1
-            THEN _disp_album(
-                     songs.album_id,
-                     COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album),
-                     songs.title)
-            ELSE COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album)
-       END AS album,
+       songs._alb0 AS album,
+       _disp_single(songs._alb0, songs.title, songs.source) AS album_sort,
        duration, file_path,
        cover_path, source, source_id, added_at, modified_at,
        album_id,
@@ -599,12 +608,22 @@ SELECT id, sync_id, title,
        songs.play_offset AS play_offset, songs.play_count AS play_real,
        songs.loudness_lufs AS loudness_auto, songs.loudness_user AS loudness_user,
        (SELECT group_concat(role || char(31) || _disp_artist(name), char(30)) FROM (SELECT role, name FROM song_credits WHERE song_id = songs.id ORDER BY position)) AS credits
-FROM songs
+FROM (SELECT songs.*,
+             CASE WHEN songs.album_id IS NOT NULL
+                       AND (SELECT COUNT(*) FROM album_tracks atc WHERE atc.album_id = songs.album_id) <= 1
+                       AND (SELECT COUNT(*) FROM songs so WHERE so.album_id = songs.album_id) = 1
+                  THEN _disp_album(
+                           songs.album_id,
+                           COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album),
+                           songs.title)
+                  ELSE COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album)
+             END AS _alb0
+      FROM songs) AS songs
 """
 
 def _ensure_songs_display_view(c):
     row = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='songs_display'").fetchone()
-    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or '') and '_disp_artist(name)' in (row[0] or '') and 'loudness_user' in (row[0] or ''):
+    if row and '_disp_album' in (row[0] or '') and 'atc.album_id = songs.album_id) <= 1' in (row[0] or '') and 'AS credits' in (row[0] or '') and '_disp_artist(name)' in (row[0] or '') and 'loudness_user' in (row[0] or '') and 'album_sort' in (row[0] or ''):
         return
     c.execute("DROP VIEW IF EXISTS songs_display")
     c.execute(_SONGS_DISPLAY_SQL)
@@ -6240,6 +6259,7 @@ def audio(sid):
 
 @app.route('/cover/<sid>')
 def cover(sid):
+    if sid.startswith('sgl_'): sid = sid[4:]  # fake single album, its cover is the song's
     if not re.fullmatch(r'[\w\-]+', sid): return '', 400
     with db() as c:
         row = c.execute("SELECT cover_path FROM songs WHERE id=?", (sid,)).fetchone()
@@ -7946,6 +7966,10 @@ def artist_cover(aid):
 
 @app.route('/api/albums/<aid>/songs')
 def api_album_songs(aid):
+    if aid.startswith('sgl_'):
+        with db() as c:
+            rows = c.execute("SELECT * FROM songs_display WHERE id=?", (aid[4:],)).fetchall()
+        return jsonify([dict(r) for r in rows])
     with db() as c:
         rows = c.execute("SELECT * FROM songs_display WHERE album_id=? ORDER BY track_num, title", (aid,)).fetchall()
     return jsonify([dict(r) for r in rows])
@@ -9224,6 +9248,7 @@ def _dbx_snapshot_gz(src, dst):
         d.create_function('_ulower', 1, _ulower, deterministic=True)
         d.create_function('_disp_artist', 1, _disp_artist)
         d.create_function('_disp_album', 3, _disp_album)
+        d.create_function('_disp_single', 3, _disp_single)
         try:
             s.backup(d)
             try:
@@ -9842,7 +9867,7 @@ _DBX_SHARED_PREFS = frozenset([
     'auto_align_lyrics', 'ui_design', 'glass_alpha', 'glass_blur',
     'settings_nav', 'sidebar_layout', 'sidebar_hidden',
     'volume', 'volume_boost', 'eq', 'enhance_audio', 'immersive_audio',
-    'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums', 'genius_override',
+    'artist_use_main_name', 'artist_show_aliases', 'hide_single_albums', 'single_album_mode', 'single_album_suffix', 'genius_override',
     'list_show_producers', 'list_prod_prefix', 'list_feat_prefix',
     'search_credits_prod', 'search_credits_writers', 'search_credits_other',
 ])
@@ -10044,6 +10069,7 @@ def _dbx_merge_db(local_path, remote_path):
         _conn.create_function('_ulower', 1, _ulower, deterministic=True)
         _conn.create_function('_disp_artist', 1, _disp_artist)
         _conn.create_function('_disp_album', 3, _disp_album)
+        _conn.create_function('_disp_single', 3, _disp_single)
         c = _conn
         with _conn:
             _artist_remap = {}
@@ -13203,6 +13229,11 @@ def api_analyze_loudness(sid):
 
 @app.route('/api/albums/<aid>')
 def api_album_detail(aid):
+    if aid.startswith('sgl_'):
+        with db() as c:
+            r = c.execute("SELECT s.title, s.artist, s.release_date, COALESCE(s.cover_path, (SELECT a.cover_path FROM albums a WHERE a.id = s.album_id)) AS cp FROM songs s WHERE s.id=?", (aid[4:],)).fetchone()
+        if not r: return jsonify({'error':'not found'}), 404
+        return jsonify(_disp_rows([{'id': aid, 'title': _sgl_name(r['title']), 'artist': r['artist'], 'cover_path': r['cp'], 'year': (r['release_date'] or '')[:4], 'source': 'single', 'transition_album': 0}], 'artist')[0])
     with db() as c:
         row = c.execute("SELECT * FROM albums WHERE id=?", (aid,)).fetchone()
     if not row: return jsonify({'error':'not found'}), 404
@@ -13361,6 +13392,11 @@ def api_ytm_album(browse_id):
 
 @app.route('/api/albums/<aid>/all-tracks')
 def api_album_all_tracks(aid):
+    if aid.startswith('sgl_'):
+        with db() as c:
+            r = c.execute("SELECT id, title, artist FROM songs WHERE id=?", (aid[4:],)).fetchone()
+        if not r: return jsonify([])
+        return jsonify(_disp_rows([{'id': aid, 'album_id': aid, 'song_id': r['id'], 'genius_song_id': None, 'title': r['title'], 'artist': r['artist'], 'track_num': 1, 'owned': 1}], 'artist'))
     with db() as c:
         rows = c.execute("""SELECT at.id, at.album_id, at.song_id, at.genius_song_id,
             at.title, at.artist, at.track_num,
@@ -17367,7 +17403,7 @@ const COL_DEFS = {
   source: { label:'', w:28, min:24 },
   menu:   { label:'', w:42, fixed:true, min:42 },
 };
-const SORT_COL_MAP = { title:'title', album:'album', date:'added_at', plays:'play_count', duration:'duration' };
+const SORT_COL_MAP = { title:'title', album:'album_sort', date:'added_at', plays:'play_count', duration:'duration' };
 const COL_DISPLAY_LABEL = { num:'#', thumb:'cover', title:'title', album:'album', date:'date added', plays:'plays', duration:'duration', source:'source', menu:'actions' };
 const VIEW_COLS = {
   library:  ['num','title','album','date','plays','duration','source','menu'],
@@ -23126,12 +23162,14 @@ function _aliasHay(a, f) {
   }
   return out;
 }
+// album id a song row links to: its real album when it shows one, its fake single album when that mode is on, else nothing
+function _sAlbId(s) { return s.album ? (s.album_id || null) : (s.album_sort ? 'sgl_' + s.id : null); }
 function _songHay(s) {
-  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.source, s.credits, CFG.search_credits_prod, CFG.search_credits_writers, CFG.search_credits_other].map(x => x || '').join('|') + '|' + (S._aliasVer || 0);
+  const sig = [s.title, s.artist, s.featuring_artists, s.album, s.album_sort, s.source, s.credits, CFG.search_credits_prod, CFG.search_credits_writers, CFG.search_credits_other].map(x => x || '').join('|') + '|' + (S._aliasVer || 0);
   const c = _srchHayCache.get(s);
   if (c && c.sig === sig) return c.h;
   const n = _srchNorm;
-  const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '') + _aliasHay(s.artist, s.featuring_artists)), feat: n(s.featuring_artists), album: n(s.album), source: n(s.source) };
+  const h = { title: n(s.title), artist: n((s.artist || '') + ' ' + (s.featuring_artists || '') + _aliasHay(s.artist, s.featuring_artists)), feat: n(s.featuring_artists), album: n(s.album || s.album_sort), source: n(s.source) };
   const _cr = _songCredits(s), _W = ['Writer', 'Composer', 'Lyricist'], _P = ['Producer', 'Executive Producer'];
   const _cj = f => n(_cr.filter(f).map(c => c.name).join(' '));
   h.prod = _cj(c => _P.includes(c.role));
@@ -23475,7 +23513,7 @@ function _albPrefetch(aid){if(!(S._albTracks&&S._albTracks[aid]))_albFetch(aid);
 function _albSig(t){return t.map(x=>x.id+'|'+(x.song_id||'')+'|'+x.title+'|'+x.track_num).join('~');}
 
 function _albSkel(aid){
-  const n=Math.min(30,S.library.filter(s=>s.album_id===aid).length)||8;
+  const n=aid.startsWith('sgl_')?1:Math.min(30,S.library.filter(s=>s.album_id===aid).length)||8;
   const w=i=>(42+((i*37)%40))+'%';
   const mob=isMobile();
   const cols=getViewCols('album');
@@ -28488,7 +28526,7 @@ async function _showSongDetailsOld(sid){
     ];
     if(song.featuring_artists) rows.push(row('featuring',names(song.featuring_artists.split(', ').filter(Boolean))));
     for(const [role,ns] of _songCreditsGrouped(song)){ if(role==='Featuring') continue; rows.push(row(esc(role.toLowerCase()),names(ns))); }
-    rows.push(row('album',esc(song.album||'-')));
+    rows.push(row('album',esc(song.album||song.album_sort||'-')));
     if(song.release_date) rows.push(row('released',esc(song.release_date)));
     rows.push(row('duration',song.duration?fmt(song.duration):'-'));
     rows.push(row('source',esc((song.source||'local').replace('_',' '))));
@@ -28508,7 +28546,7 @@ async function _showSongDetailsOld(sid){
         if(g.youtube && g.youtube!==mv) rows.push(row('youtube (genius)',link(g.youtube,'open')));
       }
     }
-    return `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">${cov}<div style="overflow:hidden;min-width:0"><div style="font:var(--type-body-medium);font-variation-settings:var(--fv-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(song.title||'untitled')}</div><div style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);margin-top:2px">${esc(song.artist||'')}</div></div></div><div>${rows.join('')}</div>${song.album_id?`<button class="btn btn-tonal mu-ripple" style="margin-top:12px;width:100%" onclick="closeModal();setView('album',null,'${song.album_id}')">open album</button>`:''}`;
+    return `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">${cov}<div style="overflow:hidden;min-width:0"><div style="font:var(--type-body-medium);font-variation-settings:var(--fv-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(song.title||'untitled')}</div><div style="font:var(--type-body-small);font-variation-settings:var(--fv-body);color:var(--color-on-surface-variant);margin-top:2px">${esc(song.artist||'')}</div></div></div><div>${rows.join('')}</div>${_sAlbId(song)?`<button class="btn btn-tonal mu-ripple" style="margin-top:12px;width:100%" onclick="closeModal();setView('album',null,'${_sAlbId(song)}')">open album</button>`:''}`;
   };
   showModal('song details',build(null),
     `<button class="btn btn-out mu-ripple" onclick="showSongStatsDetail('${escJ(sid)}','${escJ(song.title||'')}','${escJ(song.artist||'')}')">stats</button><button class="btn btn-fill mu-ripple" onclick="closeModal()">done</button>`
@@ -29421,7 +29459,7 @@ function albumHeader(alb, owned, total) {
   const dlAllBtn = missing > 0 ? `<button class="btn btn-tonal mu-ripple" onclick="downloadAllMissing('${alb.id}')" style="margin-top:10px;font-size:13px;display:inline-flex;align-items:center;gap:6px">${MEOW_ICONS.download} download ${missing} missing</button>` : '';
   const _albCovClick = alb.cover_path ? `onclick="openCoverLightbox('/cover/${alb.id}')"` : '';
   const isTA = !!(alb.transition_album);
-  const taBtn = CFG.transition_albums ? `
+  const taBtn = CFG.transition_albums && !String(alb.id).startsWith('sgl_') ? `
     <button class="cbtn mu-ripple ${isTA?'active':''}" id="ta-btn-${alb.id}" title="${isTA?'transition album: on - click to disable':'transition album: off - click to enable'}"
       onclick="(async()=>{const btn=this;const on=!btn.classList.contains('active');btn.classList.toggle('active',on);btn.title=on?'transition album: on - click to disable':'transition album: off - click to enable';await api('PATCH','/api/albums/${alb.id}',{transition_album:on?1:0});const idx=S.albums.findIndex(a=>a.id==='${alb.id}');if(idx>=0)S.albums[idx].transition_album=on?1:0;})()">
       <svg viewBox="0 0 16 16" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block">
@@ -29575,8 +29613,10 @@ function _songRowBase(s,num,pid,opts={},vlistIdx,type){
   const _ghostTitleWrap = isGhost ? 'opacity:0.45;' : '';
   cell.title=`<div class="sinfo" style="display:flex;align-items:center;gap:10px;min-width:0;${_ghostTitleWrap}"><div class="sthumb" style="width:40px;height:40px;flex-shrink:0">${cov}</div><div style="min-width:0"><div class="stitle" style="${titleStyle}">${esc(s.title||'untitled')}</div><div class="sartist" style="${titleStyle}">${isSpecial?esc(s.artist||''):songArtistLineHtml(s)}${(!isSpecial&&_listCompact&&!isMobile()&&opts.view!=='album'&&s.album)?' · '+esc(s.album):''}</div></div></div>`;
   const _inAlbumView = opts.view === 'album';
-  const _albLink = s.album_id && s.album && !_inAlbumView && !isMobile();
-  cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}"${s.album?'':' style="opacity:.4"'} onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${s.album_id}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(s.album||'-')}</div>`;
+  const _albId = _sAlbId(s);
+  const _albTxt = s.album || s.album_sort || '';
+  const _albLink = _albId && !_inAlbumView && !isMobile();
+  cell.album=isSpecial?`<div class="salbum"></div>`:`<div class="salbum${_albLink?' link':''}"${_albTxt?'':' style="opacity:.4"'} onclick="event.stopPropagation();_killNearbyRipples(this);${_albLink?`setView('album',null,'${_albId}')`:''}\" ${_albLink?`onmouseenter=\"this.style.color='var(--color-primary)';this.style.textDecoration='underline'\" onmouseleave=\"this.style.color='';this.style.textDecoration=''\"`:''} >${esc(_albTxt||(CFG.single_album_mode==='empty'?'':'-'))}</div>`;
   cell.date=isSpecial?`<div class="sdate"></div>`:`<div class="sdate">${fmtDate(s.added_at)}</div>`;
   cell.duration=isGhost?`<div class="sdur" style="color:var(--color-on-surface-variant);opacity:0.35">—</div>`:isSpecial?`<div class="sdur"></div>`:`<div class="sdur">${s.duration?fmt(s.duration):''}</div>`;
   cell.plays=isGhost?`<div class="splays" style="color:var(--color-on-surface-variant);opacity:0.35">—</div>`:isSpecial?`<div class="splays"></div>`:`<div class="splays">${fmtPlays(s.play_count)}</div>`;
@@ -34593,7 +34633,7 @@ function songCtx(e, sid, pid, qctx) {
   if (pid && multi) items.push({icon: ICON_REMOVE, label:`remove from playlist (${ids.length})`, fn:()=>{ ids.forEach(id=>rmFromPl(pid,id)); }});
   if (!multi) items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><defs><mask id="ctx-m"><rect width="48" height="48" x="-12" y="-12" fill="white"/><rect x="5" y="6" width="14" height="2" rx="1" fill="black"/><rect x="5" y="10" width="8" height="2" rx="1" fill="black"/><rect x="5" y="14" width="6" height="2" rx="1" fill="black"/><rect x="5" y="18" width="12" height="2" rx="1" fill="black"/></mask></defs><rect x="0" y="0" width="24" height="24" rx="4.5" fill="currentColor" mask="url(#ctx-m)"/></svg>', label:'show details', fn:()=> showSongDetails(sid)});
   if (!multi) items.push({icon:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>', label:'edit', fn:()=> editSong(sid)});
-  if (!multi && song.album_id) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-alb-m"><rect width="20" height="20" fill="white"/><circle cx="10" cy="10" r="3.6" fill="black"/><circle cx="10" cy="10" r="1.1" fill="white"/></mask></defs><circle cx="10" cy="10" r="9" mask="url(#ctx-alb-m)"/></svg>', label:'go to album', fn:()=> setView('album',null,song.album_id)});
+  if (!multi && _sAlbId(song)) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-alb-m"><rect width="20" height="20" fill="white"/><circle cx="10" cy="10" r="3.6" fill="black"/><circle cx="10" cy="10" r="1.1" fill="white"/></mask></defs><circle cx="10" cy="10" r="9" mask="url(#ctx-alb-m)"/></svg>', label:'go to album', fn:()=> setView('album',null,_sAlbId(song))});
   if (!multi && song.artist) items.push({icon:'<svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor" style="display:block" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="7" r="3.5"/><rect x="3.5" y="13.5" width="13" height="7" rx="3"/></svg>', label:'go to artist', fn:()=> _songArtistGo(song, e)});
   items.push({icon:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em"><path fill="currentColor" d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>', label:'fix genius metadata', fn:()=> showGeniusFix(sid)});
   items.push({icon:'<svg style="display:block;width:20px;height:20px;overflow:visible;translate:-1px;" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-lyr-note-mask"><rect width="20" height="20" fill="white"/><path d="M 12.5 12.58 c -7.5 -3.5 -9.17 5.75 -2.58 5.75 c 2.92 0 4.58 -1.5 4.58 -4.17 c 0 -0.08 0 -7.83 0 -9.33 c 0 0 2 0.42 3.17 3.33 c 2.67 -4.5 -5.25 -8.17 -5.25 -5.58 c 0 2.33 0.08 7.25 0.08 10.08 Z" fill="black" stroke="black" stroke-width="3.5" stroke-linejoin="round"/></mask></defs><g mask="url(#ctx-lyr-note-mask)"><rect x="1.5" y="4.5" width="14" height="2.2" rx="1.1" fill="currentColor"/><rect x="1.5" y="9" width="14" height="2.2" rx="1.1" fill="currentColor"/><rect x="1.5" y="13.5" width="14" height="2.2" rx="1.1" fill="currentColor"/></g><path d="M 12.5 12.58 c -7.5 -3.5 -9.17 5.75 -2.58 5.75 c 2.92 0 4.58 -1.5 4.58 -4.17 c 0 -0.08 0 -7.83 0 -9.33 c 0 0 2 0.42 3.17 3.33 c 2.67 -4.5 -5.25 -8.17 -5.25 -5.58 c 0 2.33 0.08 7.25 0.08 10.08 Z" fill="currentColor"/></svg>', label:'open genius lyrics', fn:()=> openGeniusLyrics(sid)});
@@ -39376,7 +39416,15 @@ function renderSettings() {
         ${row('use genius metadata', 'show names, feats, album and release date from genius when a match exists, genius also splits producers out of the feats. off = show what youtube music or the file gave. nothing stored is changed, flip it any time', toggle('genius_override', CFG.genius_override !== false, 'loadData().then(rerenderCurrentView)'))}
         ${row('show aliases on artist page', 'list the aliases under the artist name on their page', toggle('artist_show_aliases', CFG.artist_show_aliases !== false, 'rerenderCurrentView()'))}
         ${row('write edits to file tags', 'when you edit a song, also write title, artist, album, track number and release date into the audio file. off = edits only live in the library', toggle('write_tags_on_edit', CFG.write_tags_on_edit !== false))}
-        ${row('hide single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) shows as a plain single. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('autodetect single albums', 'a track whose only album is a one track album with the same name (feat / - single ignored) counts as a single song, same as a song with no album. data stays untouched', toggle('hide_single_albums', CFG.hide_single_albums !== false, 'loadData().then(rerenderCurrentView)'))}
+        ${row('album column for singles', 'what the album column shows for single songs (no album, or autodetected). fake album = a virtual album named after the song with its cover and artist, clicking it opens its own album view. nothing gets added to your albums', `
+          <div class="select-wrap" style="width:160px">
+            <select class="input" style="width:160px" onchange="saveSetting('single_album_mode',this.value).then(()=>{loadData().then(rerenderCurrentView)})">
+              ${[['dash','- (dash)'],['empty','empty'],['fake','fake album']].map(([v,n])=>`<option value="${v}" ${(CFG.single_album_mode||'dash')===v?'selected':''}>${n}</option>`).join('')}
+            </select>
+            <svg class="select-arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>`)}
+        ${CFG.single_album_mode === 'fake' ? row('add - single to fake album names', 'fake album names get - single after the song name', toggle('single_album_suffix', CFG.single_album_suffix === true, 'loadData().then(rerenderCurrentView)')) : ''}
         ${row('producers in song list', 'show the producers after the artist and feats in the song list, needs a genius match', toggle('list_show_producers', CFG.list_show_producers === true, 'rerenderCurrentView()'))}
         ${row('reorder on long press (mobile)', 'off: long press opens the song menu and reordering only works in select mode. on: long press reorders reorderable lists and the menu opens from the 3 dot button, lists you cant reorder still open the menu on long press', toggle('mob_reorder_default', CFG.mob_reorder_default === true))}
         ${row('"prod." label', 'write producers as "prod. name" instead of just adding them to the commas', toggle('list_prod_prefix', CFG.list_prod_prefix === true, 'rerenderCurrentView()'))}
