@@ -1159,6 +1159,17 @@ def init_db():
             c.execute("ALTER TABLE songs ADD COLUMN mv_offset REAL")
         if 'mv_url' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN mv_url TEXT")
+        # mv_url is the only thing the music video feature reads now. one time: rows with a video id get the url built from it
+        # (the id was the newer one when the two disagreed), rows without an id lose a stale url the old remove left behind
+        try:
+            if not CFG.get('mv_url_migrated'):
+                c.execute("UPDATE songs SET mv_url=NULL WHERE (mv_video_id IS NULL OR mv_video_id='') AND mv_url IS NOT NULL")
+                c.execute("UPDATE songs SET mv_url='https://www.youtube.com/watch?v=' || mv_video_id WHERE mv_video_id IS NOT NULL AND mv_video_id!=''")
+                with _cfg_lock:
+                    CFG['mv_url_migrated'] = True
+                    save_cfg(CFG)
+        except Exception as _e:
+            _log_mv.warning(f'[mv] mv_url migration failed: {_e}')
         # manual overrides from the song editor: extra plays on top of the real count, loudness that beats the auto measurement
         if 'play_offset' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN play_offset INTEGER DEFAULT 0")
@@ -4382,13 +4393,17 @@ def _genius_write(sid, song_data, token, skip_title=False, album_id_hint=None, c
                 (sid, g_genius_id, album_id))
         # display columns (title/artist/featuring/album/release_date) are no longer written here,
         # resolve_song rebuilds them from the raw layers right after this block
+        _mv_old = (c.execute("SELECT mv_video_id FROM songs WHERE id=?", (sid,)).fetchone() or [None])[0]
         c.execute("""UPDATE songs SET cover_path=COALESCE(?,cover_path), album_id=COALESCE(?,album_id),
                      genius_id=?, modified_at=?,
                      source_id=COALESCE(source_id,?),
+                     mv_offset=CASE WHEN ? IS NOT NULL AND ? IS NOT mv_video_id THEN NULL ELSE mv_offset END,
                      mv_video_id=COALESCE(?,mv_video_id), mv_url=COALESCE(?,mv_url)
                      WHERE id=?""",
             (cov, album_id, g_genius_id, int(time.time()), g_media_audio_vid,
-             g_mv_video_id, g_mv_url, sid))
+             g_mv_video_id, g_mv_video_id, g_mv_video_id, _mv_canon_url(g_mv_video_id), sid))
+        if g_mv_video_id and g_mv_video_id != _mv_old:
+            _mv_invalidate(sid)  # genius knows the official video better than a saved one, it replaces it and the offset gets re-aligned
         frow = c.execute("SELECT file_path, album FROM songs WHERE id=?", (sid,)).fetchone()
         file_path  = frow[0] if frow else None
         file_album = frow[1] if frow else ''
@@ -7024,7 +7039,7 @@ def api_song_extra(sid):
         g = c.execute("SELECT genius_id, confidence, confirmed, data FROM song_genius WHERE song_id=?", (sid,)).fetchone()
     if not r:
         return jsonify({'error': 'not found'}), 404
-    out['mv_url'] = r[1] or (f'https://www.youtube.com/watch?v={r[0]}' if r[0] else None)
+    out['mv_url'] = _mv_canon_url(_mv_row_vid(r[1], r[0]))
     out['mv_offset'] = r[3]
     out['pins'] = sorted(_get_song_user_edits(sid).keys())
     fp = r[2]
@@ -10181,7 +10196,9 @@ def _dbx_merge_db(local_path, remote_path):
                         f'{"loudness_user=excluded.loudness_user, " if "loudness_user" in cols else ""}'
                         f'{"play_offset=COALESCE(excluded.play_offset, songs.play_offset), " if "play_offset" in cols else ""}'
                         f'album_id=excluded.album_id, track_num=excluded.track_num, '
-                        f'mv_video_id=COALESCE(excluded.mv_video_id, songs.mv_video_id), mv_offset=COALESCE(excluded.mv_offset, songs.mv_offset), '\
+                        f'mv_offset=CASE WHEN excluded.mv_video_id IS NOT NULL AND excluded.mv_video_id IS NOT songs.mv_video_id THEN excluded.mv_offset ELSE COALESCE(excluded.mv_offset, songs.mv_offset) END, '
+                        f'mv_video_id=COALESCE(excluded.mv_video_id, songs.mv_video_id), '
+                        f'{"mv_url=COALESCE(excluded.mv_url, songs.mv_url), " if "mv_url" in cols else ""}'\
                         f'{"spotify_url=COALESCE(excluded.spotify_url, songs.spotify_url), " if "spotify_url" in cols else ""}'\
                         f'{"queue_skip=excluded.queue_skip, " if "queue_skip" in cols else ""}'\
                         f'modified_at=excluded.modified_at '
@@ -10687,7 +10704,7 @@ def _dbx_apply_actions(c, actions):
             elif kind == 'pref_reset':
                 _dbx_apply_pref_reset(target, ts)
             elif kind == 'mv_delete':
-                c.execute("UPDATE songs SET mv_video_id=NULL, mv_offset=NULL WHERE sync_id=?", (target,))
+                c.execute("UPDATE songs SET mv_video_id=NULL, mv_url=NULL, mv_offset=NULL WHERE sync_id=?", (target,))
             elif kind == 'lyrics_delete':
                 c.execute("DELETE FROM lyrics WHERE song_id=(SELECT id FROM songs WHERE sync_id=?)", (target,))
         except Exception as e:
@@ -12265,6 +12282,24 @@ def api_update_apply():
     return jsonify({'ok': True})
 
 # ── music video backend ────────────────────────────────────────────────────────
+# autosearch (looking a video up on youtube music when a song has none) is switched off for now, the code stays in
+# _mv_find_and_cache. the saved mv_url is the only thing the music video feature reads
+_MV_AUTOSEARCH = False
+
+def _mv_canon_url(vid):
+    return 'https://www.youtube.com/watch?v=' + vid if vid else None
+
+def _mv_row_vid(mv_url, mv_video_id=None):
+    """video id of a song's music video. mv_url is the source of truth, mv_video_id is only a fallback for rows an older version wrote"""
+    return _yt_id_from_url(mv_url or '') or (mv_video_id or None)
+
+def _mv_invalidate(sid):
+    """forget what is cached for a song's video and cancel a running align job so it can't write a stale result back"""
+    with _mv_find_gen_lock:
+        _mv_find_gens.pop(sid, None)
+    with _mv_cache_lock:
+        _mv_cache.pop(sid, None)
+
 def _mv_ytdlp_stream_url(video_id):
     """Get direct video stream URLs for a YouTube video_id via yt-dlp.
     Returns (video_url, expires_at) or raises on failure."""
@@ -12390,11 +12425,11 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
         return None
 
 def _mv_persist(song_id, video_id, offset):
-    """Persist MV video_id + offset to the songs table for cache survival across restarts."""
+    """Persist the aligned offset for the song's video. only writes while the song still has that video (or none), a link changed mid-align must not be overwritten."""
     try:
         with db() as c:
-            c.execute("UPDATE songs SET mv_video_id=?, mv_offset=? WHERE id=?",
-                      (video_id, offset, song_id))
+            c.execute("UPDATE songs SET mv_video_id=?, mv_url=?, mv_offset=? WHERE id=? AND (mv_video_id IS NULL OR mv_video_id=?)",
+                      (video_id, _mv_canon_url(video_id), offset, song_id, video_id))
         _log_mv.info(f'[mv] persisted video={video_id} offset={offset:.2f}s song={song_id}')
     except Exception as e:
         # column may not exist yet if schema hasn't been migrated - silently ignore
@@ -12433,9 +12468,12 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
         # build candidate list: hint first (skip search if it xcorrs cleanly),
         # then fall back to a fresh ytmusic search
         hint_candidates = [{'videoId': hint_video_id, 'title': '(hint)'}] if hint_video_id else []
-        yt = _import_ytmusic()
-        query = f'{artist} {title}'.strip()
-        results = yt.search(query, filter='videos', limit=8, ignore_spelling=True)
+        if _MV_AUTOSEARCH:
+            yt = _import_ytmusic()
+            query = f'{artist} {title}'.strip()
+            results = yt.search(query, filter='videos', limit=8, ignore_spelling=True)
+        else:
+            results = []  # no autosearch: only the saved link (the hint) is looked at
 
         search_candidates = [r for r in results if r.get('videoId')
                              and r.get('videoId') != hint_video_id]
@@ -12543,10 +12581,15 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
         if _cancelled(): return
 
+        synced = True
         if offset is None or video_id is None:
-            _log_mv.warning(f'[mv] no confident xcorr match for {song_id} after trying {len(ordered[:3])} candidates')
-            _set('not_found')
-            return
+            if _MV_AUTOSEARCH or not hint_video_id:
+                _log_mv.warning(f'[mv] no confident xcorr match for {song_id} after trying {len(ordered[:3])} candidates')
+                _set('not_found')
+                return
+            # the saved link couldn't be aligned with the song: play it unshifted, the offset can be set by hand
+            _log_mv.info(f'[mv] no confident align for the saved link {hint_video_id} song={song_id}, using offset 0')
+            video_id, offset, synced = hint_video_id, 0.0, False
 
         _log_mv.info(f'[mv] offset={offset}s video={video_id} song={song_id}')
 
@@ -12559,7 +12602,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
 
         if _cancelled(): return
         proxy_url = f'/api/mv-proxy/{video_id}'
-        _set('ready', video_id=video_id, offset=offset,
+        _set('ready', video_id=video_id, offset=offset, synced=synced,
              video_url=proxy_url, stream_url=video_url, expires_at=expires_at)
         _mv_persist(song_id, video_id, offset)
 
@@ -12707,11 +12750,12 @@ def api_mv_warmup():
                 if time.time() < cached.get('expires_at', 0) - 600:
                     continue  # already fresh
             row = c.execute(
-                "SELECT mv_video_id, mv_offset FROM songs WHERE id=? AND mv_video_id IS NOT NULL",
+                "SELECT mv_video_id, mv_offset, mv_url FROM songs WHERE id=?",
                 (sid,)
             ).fetchone()
-            if row:
-                _mv_warmup_pool.submit(_mv_warm_stream_url, sid, row[0], row[1])
+            _wvid = _mv_row_vid(row[2], row[0]) if row else None
+            if _wvid and row[1] is not None:  # no offset yet = not aligned, warming it would mark it ready unshifted
+                _mv_warmup_pool.submit(_mv_warm_stream_url, sid, _wvid, row[1])
                 queued += 1
     return jsonify({'ok': True, 'queued': queued})
 
@@ -12720,31 +12764,50 @@ def api_mv_status(sid):
     """GET: return MV status/url. POST: set manual video_id. DELETE: clear cached MV."""
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
-        video_id = (data.get('video_id') or '').strip()
+        now = int(time.time())
+        if data.get('resync'):
+            # redo the audio align for the saved link
+            try:
+                with db() as c:
+                    c.execute("UPDATE songs SET mv_offset=NULL, modified_at=? WHERE id=? AND (mv_url IS NOT NULL OR mv_video_id IS NOT NULL)", (now, sid))
+            except Exception as e:
+                _log_mv.warning(f'[mv] resync err: {e}')
+                return jsonify({'ok': False, 'error': str(e)}), 500
+            _mv_invalidate(sid)
+            return jsonify({'ok': True})
+        video_id = _yt_id_from_url((data.get('url') or data.get('video_id') or '').strip())
         if not video_id:
-            return jsonify({'ok': False, 'error': 'missing video_id'}), 400
+            return jsonify({'ok': False, 'error': 'that is not a youtube link'}), 400
         try:
             with db() as c:
-                c.execute("UPDATE songs SET mv_video_id=?, mv_offset=NULL WHERE id=?", (video_id, sid))
+                cur = c.execute("SELECT mv_video_id, mv_url FROM songs WHERE id=?", (sid,)).fetchone()
+                if not cur:
+                    return jsonify({'ok': False, 'error': 'not found'}), 404
+                if _mv_row_vid(cur[1], cur[0]) != video_id:
+                    # the stored offset belongs to the old video
+                    c.execute("UPDATE songs SET mv_video_id=?, mv_url=?, mv_offset=NULL, modified_at=? WHERE id=?",
+                              (video_id, _mv_canon_url(video_id), now, sid))
         except Exception as e:
-            _log_mv.warning(f'[mv] set video_id err: {e}')
+            _log_mv.warning(f'[mv] set link err: {e}')
             return jsonify({'ok': False, 'error': str(e)}), 500
-        _log_mv.info(f'[mv] manual video_id set: song={sid} video={video_id}')
+        _mv_invalidate(sid)
+        _log_mv.info(f'[mv] link set: song={sid} video={video_id}')
         return jsonify({'ok': True})
     if request.method == 'DELETE':
         full = request.args.get('full') == '1'
         with _mv_cache_lock:
-            old = _mv_cache.pop(sid, None)
+            old = _mv_cache.get(sid)
+        _mv_invalidate(sid)
         _log_mv.info(f'[mv] clear song={sid} full={full} had_cache={old is not None}')
         if full:
             old_vid = old.get('video_id') if old else None
             if not old_vid:
                 with db() as c:
-                    row = c.execute("SELECT mv_video_id FROM songs WHERE id=?", (sid,)).fetchone()
-                old_vid = row[0] if row else None
+                    row = c.execute("SELECT mv_video_id, mv_url FROM songs WHERE id=?", (sid,)).fetchone()
+                old_vid = _mv_row_vid(row[1], row[0]) if row else None
             try:
                 with db() as c:
-                    c.execute("UPDATE songs SET mv_video_id=NULL, mv_offset=NULL WHERE id=?", (sid,))
+                    c.execute("UPDATE songs SET mv_video_id=NULL, mv_url=NULL, mv_offset=NULL, modified_at=? WHERE id=?", (int(time.time()), sid))
                     song_row = c.execute("SELECT sync_id FROM songs WHERE id=?", (sid,)).fetchone()
                     if song_row and song_row[0]:
                         _record_sync_action('mv_delete', song_row[0], conn=c)
@@ -12812,14 +12875,20 @@ def api_mv_status(sid):
 
     # not cached - check DB for persisted result first
     with db() as c:
-        row = c.execute("SELECT title, artist, mv_video_id, mv_offset FROM songs WHERE id=?", (sid,)).fetchone()
+        row = c.execute("SELECT title, artist, mv_video_id, mv_offset, mv_url FROM songs WHERE id=?", (sid,)).fetchone()
     if not row:
         with _mv_cache_lock:
             _mv_cache.pop(sid, None)
         return jsonify({'status': 'not_found'})
 
-    mv_video_id = row[2] if row else None
-    mv_offset   = row[3] if row else None
+    mv_video_id = _mv_row_vid(row[4], row[2])
+    mv_offset   = row[3]
+
+    if not mv_video_id and not _MV_AUTOSEARCH:
+        # no saved link and autosearch is off: nothing to show. the link comes from genius, the edit song popup or the player menu
+        with _mv_cache_lock:
+            _mv_cache.pop(sid, None)
+        return jsonify({'status': 'no_video'})
 
     if mv_video_id is not None and mv_offset is not None:
         # fully persisted result - warm stream URL in background, return 'warming' immediately
@@ -14046,10 +14115,10 @@ def api_song_details_patch(sid):
     data = request.get_json(silent=True) or {}
     reset = {str(k) for k in (data.get('reset') or [])}
     with db() as c:
-        row = c.execute("SELECT mv_video_id, mv_offset FROM songs WHERE id=?", (sid,)).fetchone()
+        row = c.execute("SELECT mv_video_id, mv_offset, mv_url FROM songs WHERE id=?", (sid,)).fetchone()
     if not row:
         return jsonify({'error': 'not found'}), 404
-    cur_vid, cur_off = row[0], row[1]
+    cur_vid, cur_off = _mv_row_vid(row[2], row[0]), row[1]
     now = int(time.time())
     upd, pins = {}, {}
     if 'title' in data:
@@ -14150,9 +14219,14 @@ def api_song_details_patch(sid):
         ed = _get_song_user_edits(sid)
         ed['credits'] = credits_new
         _put_song_user_edits(sid, ed)
-    if mv_changed:
+    if mv_changed or ('mv_offset' in upd and upd['mv_offset'] is None):
+        _mv_invalidate(sid)  # new video, or the offset was cleared so it gets aligned again
+    elif 'mv_offset' in upd:
         with _mv_cache_lock:
-            _mv_cache.pop(sid, None)
+            _e = _mv_cache.get(sid)
+            if _e:
+                _e['offset'] = upd['mv_offset']
+                _e.pop('synced', None)
     if text_reset or credits_new is not None:
         resolve_song(sid, sync_artists=True)
         if credits_new is not None or 'credits' in text_reset:
@@ -21272,7 +21346,7 @@ function _mvPreloadNext() {
               // warming = stream URL being fetched, check again shortly
               currentSlot.pollTimer = setTimeout(() => _pollSlot(attempts + 1), 2000);
             }
-          } else if (data.status !== 'disabled' && data.status !== 'not_found' && attempts < 60) {
+          } else if (data.status !== 'disabled' && data.status !== 'not_found' && data.status !== 'no_video' && attempts < 60) {
             currentSlot.pollTimer = setTimeout(() => _pollSlot(attempts + 1), off === 1 ? 1000 : 3000);
           }
         })
@@ -24368,10 +24442,10 @@ function renderNowPlaying(_preArg) {
   const _mvCtrlHtml = CFG.music_video ? (
     '<div id="np-mv-overlay-controls">'
     + '<div id="np-mv-top-bar">'
-    + `<button class="mv-ctl-btn" id="np-mv-menu-btn" title="more options" onclick="event.stopPropagation();_mvOpenMenu(event)">${_mvIconMore}</button>`
-    + `<button class="mv-ctl-btn" id="np-mv-toggle-btn" title="show video" onclick="event.stopPropagation();toggleMusicVideo()">${_mvIconPlay}</button>`
+    + `<button class="cbtn mv-ctl-btn mu-ripple" style="display:none" id="np-mv-toggle-btn" title="show video" onclick="event.stopPropagation();toggleMusicVideo()">${_mvIconPlay}</button>`
+    + `<button class="cbtn mv-ctl-btn mu-ripple" id="np-mv-menu-btn" title="video options" onclick="event.stopPropagation();_mvOpenMenu(event)">${_mvIconMore}</button>`
     + '</div>'
-    + `<button class="mv-ctl-btn" id="np-mv-fs-btn" style="position:absolute;bottom:8px;right:8px" title="fullscreen" onclick="event.stopPropagation();toggleMvFullscreen()">${_mvIconFs}</button>`
+    + `<button class="cbtn mv-ctl-btn mu-ripple" id="np-mv-fs-btn" title="fullscreen" onclick="event.stopPropagation();toggleMvFullscreen()">${_mvIconFs}</button>`
     + '<div id="np-mv-status"><div id="np-mv-status-fill"></div><div id="np-mv-status-text"></div></div>'
     + '</div>'
   ) : '';
@@ -24645,43 +24719,47 @@ function renderNowPlaying(_preArg) {
 #np-cover-inner:hover #np-mv-top-bar,
 #np-cover-inner:focus-within #np-mv-top-bar,
 #np-mv-top-bar.mv-ctl-visible{opacity:1;pointer-events:auto;}
+/* glass round buttons: cbtn underneath, same look as the 3 dot button on the edit song cover */
 .mv-ctl-btn{
-  width:30px;height:30px;border-radius:50%;
-  border:none;cursor:pointer;
-  background:rgba(0,0,0,.55);
-  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-  color:#fff;
-  display:flex;align-items:center;justify-content:center;
-  transition:background 140ms;
+  width:32px!important;height:32px!important;border:none;cursor:pointer;
+  background:color-mix(in srgb,#000 46%,transparent)!important;
+  backdrop-filter:blur(10px) saturate(1.4);-webkit-backdrop-filter:blur(10px) saturate(1.4);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),0 2px 8px rgba(0,0,0,.28);
+  color:#fff!important;
   flex-shrink:0;pointer-events:auto;
+  transition:background var(--dur-2),transform var(--dur-2);
 }
-@media(hover:hover){.mv-ctl-btn:hover{background:rgba(0,0,0,.8);}}
+@media(hover:hover){.mv-ctl-btn:hover{background:color-mix(in srgb,#000 64%,transparent)!important;color:#fff!important;}}
+.mv-ctl-btn:active{transform:scale(.93);}
 #np-mv-fs-btn{
   position:absolute;bottom:8px;right:8px;
   opacity:0;transition:opacity 160ms;
   pointer-events:none;
 }
-#np-cover-inner:hover #np-mv-fs-btn,
-#np-cover-inner:focus-within #np-mv-fs-btn,
 #np-mv-fs-btn.mv-ctl-visible{opacity:1;pointer-events:auto;}
 /* status bar — wipe-in progress indicator over cover art */
 #np-mv-status{
-  position:absolute;bottom:0;left:0;right:0;z-index:7;
-  height:28px;overflow:hidden;border-radius:0 0 inherit inherit;
-  pointer-events:none;opacity:0;transition:opacity 200ms;
+  position:absolute;left:50%;bottom:10px;z-index:7;
+  transform:translate(-50%,6px);
+  display:flex;align-items:center;justify-content:center;
+  height:26px;padding:0 14px;min-width:96px;max-width:calc(100% - 16px);box-sizing:border-box;
+  border-radius:13px;overflow:hidden;
+  background:color-mix(in srgb,#000 46%,transparent);
+  backdrop-filter:blur(10px) saturate(1.4);-webkit-backdrop-filter:blur(10px) saturate(1.4);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),0 2px 8px rgba(0,0,0,.28);
+  pointer-events:none;opacity:0;transition:opacity 200ms,transform 200ms;
 }
-#np-mv-status.active{opacity:1;}
+#np-mv-status.active{opacity:1;transform:translate(-50%,0);}
 #np-mv-status-fill{
   position:absolute;inset:0;
-  background:rgba(0,0,0,.62);
+  background:rgba(255,255,255,.16);
   transform:scaleX(0);transform-origin:left;
   transition:transform 2.4s linear;
 }
 #np-mv-status-fill.instant{transition:none;}
 #np-mv-status-text{
-  position:absolute;inset:0;
-  display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:500;letter-spacing:.02em;
+  position:relative;
+  font-size:11px;font-weight:500;letter-spacing:.02em;white-space:nowrap;
   color:rgba(255,255,255,.9);
 }
 
@@ -24737,14 +24815,13 @@ body.mv-fs #mv-fs-controls{display:flex;}
 #mv-fs-seek-bar:hover #mv-fs-seek-thumb{opacity:1;}
 #mv-fs-tlbl{font-size:12px;color:rgba(255,255,255,.8);min-width:34px;text-align:center;font-variant-numeric:tabular-nums;}
 #mv-fs-btns{display:flex;align-items:center;justify-content:center;gap:8px;}
-.mv-fs-btn{
-  width:38px;height:38px;border-radius:50%;border:none;cursor:pointer;
-  background:transparent;color:#fff;font-size:18px;
-  display:flex;align-items:center;justify-content:center;
-  transition:background 120ms;
-}
-@media(hover:hover){.mv-fs-btn:hover{background:rgba(255,255,255,.18);}}
-#mv-fs-playbtn{width:48px;height:48px;font-size:22px;}
+.mv-fs-btn{width:40px!important;height:40px!important;}
+#mv-fs-playbtn{width:52px!important;height:52px!important;}
+/* close button, only in fullscreen, fades like the other controls */
+#mv-fullscreen-close{display:none;position:absolute;top:14px;right:14px;z-index:4;}
+body.mv-fs #mv-fullscreen-close{display:flex;opacity:0;pointer-events:none;transition:opacity 160ms;}
+body.mv-fs #np-mv-container:hover #mv-fullscreen-close,
+body.mv-fs #np-mv-container:focus-within #mv-fullscreen-close{opacity:1;pointer-events:auto;}
 #np-mv-reload.mv-reload-spin svg{animation:mv-reload-spin-anim 0.8s linear infinite;}
 @keyframes mv-reload-spin-anim{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 `;document.head.appendChild(_s);}
@@ -24760,7 +24837,7 @@ let _mvSyncThrottle = 0;    // last timestamp _mvSyncVideo was called from updat
 
 function _mvVideo() { return document.getElementById('np-mv-video'); }
 function _mvContainer() { return document.getElementById('np-mv-container'); }
-function _mvBtn() { return document.getElementById('np-mv-toggle-btn'); }
+function _mvBtn() { return null; } // the old separate show button is gone, the toggle button decides its own visibility in _mvUpdateToggleIcon
 function _mvFsBtn() { return document.getElementById('np-mv-fs-btn'); }
 function _mvToggleBtn() { return document.getElementById('np-mv-toggle-btn'); }
 
@@ -24770,6 +24847,8 @@ const _MV_ICON_HIDE = '<svg viewBox="0 0 24 24" width="14" height="14" fill="non
 function _mvUpdateToggleIcon() {
   const btn = _mvToggleBtn();
   if (!btn) return;
+  // only offered when the current song has a loaded video
+  btn.style.display = (S.cur && _mvSongId === S.cur.id && _mvVideo()?.getAttribute('src')) ? '' : 'none';
   btn.innerHTML = _mvActive ? _MV_ICON_HIDE : _MV_ICON_PLAY;
   btn.title = _mvActive ? 'hide video' : 'show video';
   _mvFsBtn()?.classList.toggle('mv-ctl-visible', _mvActive);
@@ -24777,10 +24856,10 @@ function _mvUpdateToggleIcon() {
 
 let _mvStatusFillTarget = 0;
 const _mvStatusMap = {
-  searching:   ['finding video...',  0.25],
-  downloading: ['downloading...',    0.55],
+  searching:   ['checking video...', 0.25],
+  downloading: ['getting audio...',  0.55],
   correlating: ['syncing audio...',  0.82],
-  warming:     ['loading...',        0.92],
+  warming:     ['loading video...',  0.92],
 };
 function _mvShowStatus(status) {
   const [label, progress] = _mvStatusMap[status] || ['loading...', 0.3];
@@ -24812,7 +24891,95 @@ function _mvClearStatus() {
   _mvUpdateToggleIcon();
 }
 
+const _MV_ICO = {
+  link:   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.7-1.7"/></svg>',
+  reload: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>',
+  sync:   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>',
+  offset: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  remove: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
+};
+// fullscreen control icons
+const _MV_FS_PREV  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg>';
+const _MV_FS_NEXT  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg>';
+const _MV_FS_PLAY  = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:block;translate:1px"><path d="M8 5v14l11-7z"/></svg>';
+const _MV_FS_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:block"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
+const _MV_FS_CLOSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="display:block"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+function _mvCurVidId() {
+  return _mvVideo()?.src?.split('/mv-proxy/')[1]?.split(/[?#]/)[0] || null;
+}
+
+// the video menu on the cover, same ctx menu as everywhere else
 function _mvOpenMenu(e) {
+  const sid = S.cur?.id;
+  if (!sid) return;
+  const vid = _mvSongId === sid ? _mvCurVidId() : null;
+  const items = [{icon: _MV_ICO.link, label: vid ? 'change video link' : 'add video link', fn: _mvSetUrl}];
+  if (vid) {
+    items.push({icon: _SD_ICO_YT, label: 'open on youtube', fn: () => window.open('https://www.youtube.com/watch?v=' + vid, '_blank', 'noopener')});
+    items.push({icon: _MV_ICO.sync, label: 're-sync audio', fn: _mvResync});
+    items.push({icon: _MV_ICO.offset, label: 'set sync offset', fn: _mvSetOffset});
+    items.push({icon: _MV_ICO.reload, label: 'reload video', fn: _mvReloadCurrent});
+    items.push({sep: true});
+    items.push({icon: _MV_ICO.remove, label: 'remove video', err: true, fn: _mvDisableForSong});
+  }
+  showCtx(e, items);
+}
+
+// paste a youtube link for the current song, the old video keeps playing until the new one is ready
+async function _mvSetUrl() {
+  const sid = S.cur?.id;
+  if (!sid) return;
+  const cur = _mvSongId === sid ? _mvCurVidId() : null;
+  const raw = await promptModal('music video link', 'youtube link or video id', cur ? 'https://www.youtube.com/watch?v=' + cur : '');
+  if (raw == null) return;
+  const r = await fetch('/api/songs/' + sid + '/music-video', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: raw})}).then(x => x.json()).catch(() => null);
+  if (!r || !r.ok) {
+    showModal('invalid link', '<p>' + esc((r && r.error) || 'could not save that link') + '</p>', '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
+    return;
+  }
+  _mvHiddenSongs.delete(sid);
+  _mvReloadCurrent();
+}
+
+// align the saved video with the song audio again
+async function _mvResync() {
+  const sid = S.cur?.id;
+  if (!sid) return;
+  await fetch('/api/songs/' + sid + '/music-video', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({resync: true})}).catch(() => {});
+  _mvReloadCurrent();
+}
+
+// how many seconds into the video the song starts, applied live
+async function _mvSetOffset() {
+  const sid = S.cur?.id;
+  if (!sid) return;
+  const raw = await promptModal('sync offset', 'seconds into the video where the song starts. positive when the video has an intro, negative when it starts late', String(Math.round((_mvOffset || 0) * 100) / 100));
+  if (raw == null) return;
+  const n = parseFloat(raw.replace(',', '.'));
+  if (!isFinite(n) || Math.abs(n) > 3600) { _showSyncToast('that is not a valid offset'); return; }
+  const r = await fetch('/api/songs/' + sid + '/details', {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mv_offset: n})}).then(x => x.json()).catch(() => null);
+  if (!r || r.error) { _showSyncToast((r && r.error) || 'could not save the offset'); return; }
+  if (S.cur?.id !== sid) return;
+  _mvOffset = n;
+  if (_mvActive) {
+    const v = _mvVideo();
+    if (v) v.currentTime = Math.max(0, (engine.hasPaused ? (engine._pausedAt || 0) : (engine.curTime || 0)) + n);
+  }
+  _showSyncToast('sync offset ' + n + 's');
+}
+
+// back to the cover art and forget the loaded video of this song
+function _mvDropVideo() {
+  if (_mvActive) toggleMusicVideo();
+  const v = _mvVideo();
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  _mvSongId = null;
+  _mvClearStatus();
+}
+
+// previous menu, unused now, safe to delete
+function _mvOpenMenuOld(e) {
   const currentVid = _mvVideo()?.src?.match(/mv-proxy\/([^?/]+)/)?.[1] || null;
   const items = [
     {
@@ -24851,7 +25018,20 @@ function _mvOpenMenu(e) {
   showCtx(e, items);
 }
 
-function _mvDisableForSong() {
+// removes the saved link from the song (it also goes away on synced devices)
+async function _mvDisableForSong() {
+  const sid = S.cur?.id;
+  if (!sid) return;
+  if (!await confirmModal('remove music video', 'remove the saved video link from this song? it is removed on your synced devices too')) return;
+  ++_mvPollGeneration;
+  clearTimeout(_mvPollTimer);
+  await fetch('/api/songs/' + sid + '/music-video?full=1', {method:'DELETE'}).catch(() => {});
+  _mvHiddenSongs.delete(sid);
+  if (S.cur?.id === sid) _mvDropVideo();
+}
+
+// previous remove, unused now, safe to delete
+function _mvDisableForSongOld() {
   const sid = S.cur?.id;
   if (!sid) return;
   fetch('/api/songs/' + sid + '/music-video?full=1', {method:'DELETE'}).catch(() => {});
@@ -24936,7 +25116,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
     if (_pollAborted || _mvPollGeneration !== myPollGen || S.cur?.id !== sid) { _mvClearStatus(); return; }
     if (!CFG.music_video) { _mvClearStatus(); return; } // setting disabled while we were awaiting
     const status = data.status;
-    if (status === 'disabled' || status === 'not_found') {
+    if (status === 'disabled' || status === 'not_found' || status === 'no_video') {
       _mvClearStatus();
       return;
     }
@@ -24960,6 +25140,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
         }
       }
       _mvClearStatus();
+      if (data.synced === false) _showSyncToast('could not sync this video automatically, set the offset in the video menu');
       console.log('[mv] poll ready: sid=' + sid + ' offset=' + data.offset + ' url=' + data.video_url);
       vid.onerror = null;
       const srcChanged = vid.src !== data.video_url;
@@ -24979,6 +25160,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
           _mvPollTimer = setTimeout(_poll, 2000);
         }
       };
+      _mvUpdateToggleIcon();
       // start preloading next song immediately - no delay
       _mvPreloadNext();
 
@@ -25041,6 +25223,7 @@ function _mvShowVideo(sid, offset, videoUrl) {
   if (!vid || !cont) { console.warn('[mv] _mvShowVideo: missing vid or cont', !!vid, !!cont); return; }
   _mvActive = true;
   _mvOffset = offset;
+  _mvUpdateToggleIcon();
   if (vid.src !== videoUrl) vid.src = videoUrl;
   cont.style.display = '';
   _mvSetActiveClass(true);
@@ -25118,7 +25301,7 @@ async function _mvReloadCurrent() {
   const oldSrc = vid ? vid.src : '';
 
   try {
-    await fetch('/api/songs/' + sid + '/music-video?full=1', {method:'DELETE'}).catch(() => {});
+    await fetch('/api/songs/' + sid + '/music-video', {method:'DELETE'}).catch(() => {}); // only drops the server cache, the saved link stays
 
     // poll for the fresh result; once ready, swap source without ever hiding
     // the container (so old video / cover keeps showing until new one is set)
@@ -25135,6 +25318,7 @@ async function _mvReloadCurrent() {
         _mvSongId = sid;
         _mvOffset = data.offset || 0;
         _mvActive = wasActive;
+        if (data.synced === false) _showSyncToast('could not sync this video automatically, set the offset in the video menu');
         _mvSetActiveClass(wasActive);
         const vid2 = _mvVideo();
         if (vid2 && data.video_url !== oldSrc) {
@@ -25152,6 +25336,7 @@ async function _mvReloadCurrent() {
         _mvPreloadNext();
         break;
       }
+      if (data.status === 'no_video') { _mvDropVideo(); break; }
       if (data.status === 'not_found' || data.status === 'disabled') break;
       if (!wasActive) _mvShowStatus(data.status);
       attempts++;
@@ -25188,9 +25373,9 @@ function _mvEnsureFsControls(cont) {
       '<span id="mv-fs-tdur" class="mv-fs-tlbl">0:00</span>' +
     '</div>' +
     '<div id="mv-fs-btns">' +
-      '<button class="mv-fs-btn" onclick="prevSong()" title="previous">&#x23EE;</button>' +
-      '<button class="mv-fs-btn" id="mv-fs-playbtn" onclick="togglePlay()" title="play/pause">&#x23F8;</button>' +
-      '<button class="mv-fs-btn" onclick="nextSong()" title="next">&#x23ED;</button>' +
+      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" onclick="prevSong()" title="previous">' + _MV_FS_PREV + '</button>' +
+      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" id="mv-fs-playbtn" data-ps="1" onclick="togglePlay()" title="play/pause">' + _MV_FS_PAUSE + '</button>' +
+      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" onclick="nextSong()" title="next">' + _MV_FS_NEXT + '</button>' +
     '</div>';
   cont.appendChild(ctrl);
   ctrl.querySelector('#mv-fs-seek-bar').addEventListener('click', e => {
@@ -25204,7 +25389,9 @@ function _mvEnsureFsControls(cont) {
   });
   const closeBtn = document.createElement('button');
   closeBtn.id = 'mv-fullscreen-close';
-  closeBtn.innerHTML = '&#x2715;';
+  closeBtn.className = 'cbtn mv-ctl-btn mu-ripple';
+  closeBtn.title = 'close';
+  closeBtn.innerHTML = _MV_FS_CLOSE;
   closeBtn.onclick = toggleMvFullscreen;
   cont.appendChild(closeBtn);
 }
@@ -25274,7 +25461,7 @@ updateProg = function(t, d) {
     if (ft) ft.style.right = (100 - pct) + '%';
     if (tc) tc.textContent = fmt(t);
     if (td) td.textContent = fmt(d);
-    if (pb) pb.innerHTML = S.isPlaying ? '&#x23F8;' : '&#x25B6;';
+    if (pb) { const _ps = S.isPlaying ? '1' : '0'; if (pb.dataset.ps !== _ps) { pb.dataset.ps = _ps; pb.innerHTML = S.isPlaying ? _MV_FS_PAUSE : _MV_FS_PLAY; } }
   }
 };
 
@@ -28993,6 +29180,7 @@ async function saveSongDetails(sid) {
   closeModal();
   await loadData();
   rerenderCurrentView();
+  if (S.cur && S.cur.id === sid && CFG.music_video && ('mv_url' in out || 'mv_offset' in out || reset.includes('mv_offset'))) { _mvHiddenSongs.delete(sid); _mvReloadCurrent(); }
   if (res && res.tags === 'failed') {
     showModal('saved', '<p>saved, but the file tags could not be written. the file may be in use or read only. the library already has your changes</p>', '<button class="btn btn-out mu-ripple" onclick="closeModal()">ok</button>');
   }
@@ -43963,7 +44151,7 @@ def main():
                 _log_mv.info(f'[mv] restored {len(_mv_file_cache)} cached video files')
     except Exception as _e:
         _log_mv.warning(f'[mv] file cache restore error: {_e}')
-    threading.Thread(target=_mv_startup_prewarm, daemon=True).start()
+    # no startup prewarm: every song with a video downloaded its whole video on launch (only 8 are kept). the player warms the current and next songs itself
     host = '127.0.0.1'
     port = _cached_port()
     url = f'http://{host}:{port}'
