@@ -14186,6 +14186,239 @@ def api_song_cover_upload(sid):
         c.execute("UPDATE songs SET cover_path=?, modified_at=? WHERE id=?", (cov, int(time.time()), sid))
     return jsonify({'ok': True, 'cover_path': cov})
 
+# ── drag songs out of the window as real files ──
+# the frontend calls /api/drag-out when the pointer leaves the window while a song is held. the files are temp copies named
+# 'Title - Artist.ext' with the library's current tags (and cover) written into them, then the os level drag is started:
+#   windows : SHDoDragDrop with a shell data object (CF_HDROP), on the window's ui thread
+#   qt      : QDrag with file urls, on the gui thread
+#   gtk     : Gtk drag with text/uri-list, on the main loop (wayland needs a real input serial, so this one is best effort)
+_drag_keep = set()
+_DRAG_MAX = 50
+
+def _drag_clean(s):
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', str(s or '')).strip().rstrip('. ')[:120]
+
+def _drag_embed_cover(path, cover_path):
+    if not cover_path or not os.path.isfile(cover_path) or not path.lower().endswith('.mp3'):
+        return
+    try:
+        from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+        try:
+            tags = ID3(path)
+        except ID3NoHeaderError:
+            tags = ID3()
+        tags.delall('APIC')
+        with open(cover_path, 'rb') as fh:
+            tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=fh.read()))
+        tags.save(path)
+    except Exception as e:
+        _log_library.warning('[drag out] cover embed failed: %s', e)
+
+def _drag_prepare(ids):
+    import tempfile, shutil, uuid
+    root = Path(tempfile.gettempdir()) / 'meowify-drag'
+    root.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for d in root.iterdir():  # drags from a while ago, whoever received them is long done
+        try:
+            if d.is_dir() and now - d.stat().st_mtime > 3 * 3600:
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+    out_dir = root / uuid.uuid4().hex[:12]
+    out_dir.mkdir()
+    used, files = set(), []
+    for sid in ids[:_DRAG_MAX]:
+        with db() as c:
+            r = c.execute(
+                "SELECT file_path, title, artist, COALESCE((SELECT a.title FROM albums a WHERE a.id = songs.album_id), songs.album), "
+                "COALESCE((SELECT at.track_num FROM album_tracks at WHERE at.song_id = songs.id AND at.album_id = songs.album_id ORDER BY at.id LIMIT 1), songs.track_num), "
+                "release_date, cover_path FROM songs WHERE id=?", (sid,)).fetchone()
+        if not r or not r[0] or not os.path.isfile(r[0]):
+            continue
+        src, title, artist, album, tn, rd, cover = r
+        stem = _drag_clean(f'{title} - {artist}' if (title and artist) else (title or '')) or _drag_clean(Path(src).stem) or 'song'
+        ext = Path(src).suffix or '.mp3'
+        name, n = stem, 2
+        while (name + ext).lower() in used:
+            name = f'{stem} ({n})'
+            n += 1
+        used.add((name + ext).lower())
+        dst = out_dir / (name + ext)
+        shutil.copyfile(src, dst)
+        try:
+            write_meta(str(dst), title or '', artist or '', album or '', tn or 0, release_date=rd or '')
+        except Exception as e:
+            _log_library.warning('[drag out] tags failed: %s', e)
+        _drag_embed_cover(str(dst), cover)
+        files.append(str(dst))
+    return files
+
+def _drag_window():
+    try:
+        import webview
+        wins = list(webview.windows)
+    except Exception:
+        return None
+    for w in wins:
+        if getattr(w, 'title', '') == 'meowify':
+            return w
+    return wins[0] if wins else None
+
+def _drag_win_ui(hwnd, paths):
+    """runs on the window's ui thread"""
+    import ctypes
+    from ctypes import wintypes, byref, POINTER, c_void_p
+
+    class GUID(ctypes.Structure):
+        _fields_ = [('Data1', ctypes.c_ulong), ('Data2', ctypes.c_ushort), ('Data3', ctypes.c_ushort), ('Data4', ctypes.c_ubyte * 8)]
+    iid = GUID(0x0000010e, 0, 0, (ctypes.c_ubyte * 8)(0xC0, 0, 0, 0, 0, 0, 0, 0x46))  # IID_IDataObject
+    shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32
+    shell32.SHParseDisplayName.argtypes = [wintypes.LPCWSTR, c_void_p, POINTER(c_void_p), wintypes.ULONG, POINTER(wintypes.ULONG)]
+    shell32.SHParseDisplayName.restype = ctypes.c_long
+    shell32.ILFindLastID.argtypes = [c_void_p]
+    shell32.ILFindLastID.restype = c_void_p
+    shell32.SHCreateDataObject.argtypes = [c_void_p, wintypes.UINT, POINTER(c_void_p), c_void_p, POINTER(GUID), POINTER(c_void_p)]
+    shell32.SHCreateDataObject.restype = ctypes.c_long
+    shell32.SHDoDragDrop.argtypes = [wintypes.HWND, c_void_p, c_void_p, wintypes.DWORD, POINTER(wintypes.DWORD)]
+    shell32.SHDoDragDrop.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [c_void_p]
+    ole32.OleInitialize.argtypes = [c_void_p]
+    ole32.OleInitialize(None)  # already done by winforms on its ui thread, harmless then
+
+    def parse(p):
+        pidl = c_void_p()
+        hr = shell32.SHParseDisplayName(p, None, byref(pidl), 0, None)
+        if hr < 0:
+            raise OSError('SHParseDisplayName failed 0x%08x for %s' % (hr & 0xffffffff, p))
+        return pidl
+
+    folder = parse(str(Path(paths[0]).parent))
+    pidls = [parse(p) for p in paths]
+    pdo = c_void_p()
+    try:
+        children = (c_void_p * len(pidls))(*[shell32.ILFindLastID(p) for p in pidls])
+        hr = shell32.SHCreateDataObject(folder, len(pidls), children, None, byref(iid), byref(pdo))
+        if hr < 0:
+            raise OSError('SHCreateDataObject failed 0x%08x' % (hr & 0xffffffff))
+        eff = wintypes.DWORD(0)
+        # no drop source passed: the shell's default one (esc cancels, button up drops). copy only, so explorer never moves the temp file
+        shell32.SHDoDragDrop(hwnd, pdo, None, 1, byref(eff))
+    finally:
+        if pdo:
+            vtbl = ctypes.cast(pdo, POINTER(POINTER(c_void_p)))[0]
+            ctypes.WINFUNCTYPE(wintypes.ULONG, c_void_p)(vtbl[2])(pdo)  # IUnknown::Release
+        for p in pidls + [folder]:
+            ole32.CoTaskMemFree(p)
+
+def _drag_win(native, paths):
+    from System import Action
+    hwnd = int(native.Handle.ToInt64())
+
+    def run():
+        try:
+            _drag_win_ui(hwnd, paths)
+        except Exception as e:
+            _log_library.warning('[drag out] %s', e)
+        finally:
+            _drag_keep.discard(act)
+    act = Action(run)
+    _drag_keep.add(act)
+    native.BeginInvoke(act)
+    return True, ''
+
+_qt_dispatcher = [None]
+
+def _drag_qt(native, paths):
+    from qtpy.QtCore import QObject, Signal, Slot, QUrl, QMimeData, Qt
+    from qtpy.QtGui import QDrag
+    from qtpy.QtWidgets import QApplication
+    if _qt_dispatcher[0] is None:
+        class _Disp(QObject):
+            go = Signal(object)
+
+            def __init__(self):
+                super().__init__()
+                self.go.connect(self._run)
+
+            @Slot(object)
+            def _run(self, fn):
+                try:
+                    fn()
+                except Exception as e:
+                    _log_library.warning('[drag out] %s', e)
+        d = _Disp()
+        d.moveToThread(QApplication.instance().thread())  # so emitting from the server thread runs the slot on the gui thread
+        _qt_dispatcher[0] = d
+
+    def run():
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+        drag = QDrag(native)
+        drag.setMimeData(mime)
+        act = getattr(Qt, 'CopyAction', None) or Qt.DropAction.CopyAction
+        (getattr(drag, 'exec', None) or drag.exec_)(act)
+    _qt_dispatcher[0].go.emit(run)
+    return True, ''
+
+def _drag_gtk(native, paths):
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib
+    widget = getattr(native, 'webview', None) or getattr(native, 'window', None) or native
+    uris = [GLib.filename_to_uri(p, None) for p in paths]
+
+    def run():
+        ids = []
+
+        def on_get(_w, _ctx, data, _info, _t):
+            data.set_uris(uris)
+
+        def on_end(_w, _ctx):
+            for i in ids:
+                try:
+                    widget.disconnect(i)
+                except Exception:
+                    pass
+        ids.append(widget.connect('drag-data-get', on_get))
+        ids.append(widget.connect('drag-end', on_end))
+        tl = Gtk.TargetList.new([Gtk.TargetEntry.new('text/uri-list', 0, 0)])
+        widget.drag_begin_with_coordinates(tl, Gdk.DragAction.COPY, 1, None, -1, -1)
+        return False
+    GLib.idle_add(run)
+    return True, ''
+
+def _drag_start_native(paths):
+    w = _drag_window()
+    native = getattr(w, 'native', None) if w else None
+    if native is None:
+        return False, 'dragging out only works in the desktop app'
+    try:
+        if sys.platform == 'win32':
+            return _drag_win(native, paths)
+        m = type(native).__module__.lower()
+        if 'qt' in m:
+            return _drag_qt(native, paths)
+        if 'gtk' in m:
+            return _drag_gtk(native, paths)
+        return False, 'unsupported window backend ' + m
+    except Exception as e:
+        _log_library.warning('[drag out] start failed: %s', e)
+        return False, 'could not start the drag: ' + str(e)[:120]
+
+@app.route('/api/drag-out', methods=['POST'])
+def api_drag_out():
+    ids = [str(i) for i in ((request.get_json(silent=True) or {}).get('ids') or []) if i]
+    if not ids:
+        return jsonify({'error': 'no songs'}), 400
+    files = _drag_prepare(ids)
+    if not files:
+        return jsonify({'error': 'no files found for these songs'}), 404
+    ok, msg = _drag_start_native(files)
+    if not ok:
+        return jsonify({'error': msg}), 501
+    return jsonify({'ok': True, 'files': len(files)})
+
 @app.route('/api/songs/<sid>/cover-from-album', methods=['POST'])
 def api_song_cover_from_album(sid):
     """use the cover of the album the song is in (covers are content addressed files, so the song just points at the same file)"""
@@ -27721,6 +27954,44 @@ document.addEventListener('click', e => {
 document.addEventListener('dragstart', e => {
   if (_qSwipe && _qSwipe.on) e.preventDefault();
 }, true);
+
+// ── drag songs out of the window as real files (desktop app only) ──
+// press on a song row and move the pointer out of the window with the button held: a running reorder drag is cancelled
+// (rows go back) and the backend starts an os level file drag with 'Title - Artist.ext' copies carrying the library tags
+const _DO = {armed: null, busy: false, off: false};
+const _DO_MARGIN_X = 24, _DO_MARGIN_Y = 60; // a bit of overshoot is normal when pushing to a list edge for autoscroll
+document.addEventListener('pointerdown', e => {
+  _DO.armed = null;
+  if (_DO.off || _DO.busy || e.pointerType !== 'mouse' || e.button !== 0) return;
+  const row = e.target.closest && e.target.closest('.song-row, .song-row-mobile');
+  if (!row || !row.dataset.id || e.target.closest('button, a, input, textarea, select')) return;
+  _DO.armed = {id: row.dataset.id, row, pid: e.pointerId};
+}, true);
+document.addEventListener('pointerup', () => { _DO.armed = null; }, true);
+document.addEventListener('pointercancel', () => { _DO.armed = null; }, true);
+document.addEventListener('pointermove', e => {
+  const a = _DO.armed;
+  if (!a || !(e.buttons & 1)) return;
+  if (e.clientX >= -_DO_MARGIN_X && e.clientY >= -_DO_MARGIN_Y && e.clientX <= innerWidth + _DO_MARGIN_X && e.clientY <= innerHeight + _DO_MARGIN_Y) return;
+  _DO.armed = null;
+  _doStart(a);
+}, true);
+async function _doStart(a) {
+  _DO.busy = true;
+  try {
+    const known = new Set(S.library.map(s => s.id));
+    let ids = (S.selected && S.selected.size > 1 && S.selected.has(a.id)) ? [...S.selected] : [a.id];
+    ids = ids.filter(id => known.has(id));  // sidebar playlist rows carry data-id too, those are not songs
+    if (!ids.length) return;
+    // hand the pointer back: the reorder engines treat this as a cancel and put the rows where they were
+    (a.row.isConnected ? a.row : document).dispatchEvent(new PointerEvent('pointercancel', {pointerId: a.pid, bubbles: true}));
+    const r = await api('POST', '/api/drag-out', {ids});
+    if (r && r.error && /only works|unsupported/.test(r.error)) _DO.off = true;
+  } catch (e) {
+  } finally {
+    _DO.busy = false;
+  }
+}
 
 // call after anything that can change what plays next (add, remove, reorder, shuffle):
 // refreshes the next up card and re-points the gapless/crossfade preload, only if the preloaded song is stale
