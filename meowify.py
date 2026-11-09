@@ -14784,7 +14784,7 @@ body.design-paper #app :is(.qs-hdr,.lyrics-hdr){box-shadow:none!important;--hdr-
 #app:not(.mobile) .queue-sidebar{--sb-w:280px}
 #app:not(.mobile) .lyrics-sidebar{--sb-w:320px}
 #app:not(.mobile) .nowplaying-sidebar{--sb-w:300px;overflow-x:hidden}
-#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start;margin-left:calc((100% - var(--sb-w)) * var(--sb-par,0))}
+#app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar)>:not([id$="-resize-handle"]):not(.gl-annpop){width:var(--sb-w);min-width:var(--sb-w);flex-shrink:0;align-self:flex-start;margin-left:calc((100% - var(--sb-w)) * var(--sb-par,0))}
 body.rs-full #app:not(.mobile) #main{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto minmax(0,1fr)}
 body.rs-full #app:not(.mobile) #main>.topbar{grid-column:1;grid-row:1}
 body.rs-full #app:not(.mobile) #main>#global-prog{grid-column:1;grid-row:2}
@@ -15491,13 +15491,16 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 @media (hover: hover) {.gl-a:hover{background:color-mix(in oklch,var(--color-primary) 20%,transparent)}}
 .gl-a.open{background:color-mix(in oklch,var(--color-primary) 28%,transparent);color:var(--color-on-surface)}
 .gl-a.gl-pend{background:none;border-radius:0;border-bottom:1px dotted color-mix(in oklch,var(--color-primary) 55%,transparent)}
-.gl-annpop{position:absolute;left:8px;right:8px;bottom:calc(var(--bar-h,0px) + 8px);max-height:58%;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid var(--color-outline-variant);border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:20;overflow:hidden}
+.gl-annpop{position:absolute;left:8px;right:8px;width:auto;min-width:0;max-width:calc(100% - 16px);box-sizing:border-box;bottom:calc(var(--bar-h,0px) + 8px);max-height:58%;display:none;flex-direction:column;background:var(--color-surface-container-high);border:1px solid var(--color-outline-variant);border-radius:14px;corner-shape:squircle;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:20;overflow:hidden}
 .gl-annpop.on{display:flex}
 .gl-annpop-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 0 14px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant)}
 .gl-annpop-body{padding:4px 14px 10px;overflow-y:auto;font:var(--type-body-medium);font-variation-settings:var(--fv-body);color:var(--color-on-surface);line-height:1.6}
 .gl-annpop-body p{margin:0 0 .7em}
 .gl-annpop-body a,.gl-annpop-meta a{color:var(--color-primary)}
 .gl-annpop-meta{display:flex;justify-content:space-between;gap:10px;padding:6px 14px 10px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-on-surface-variant);border-top:1px solid var(--color-outline-variant)}
+body.design-glassy .gl-annpop{background:var(--glass-bg-mid);border:1px solid var(--glass-border);box-shadow:var(--glass-spec-panel);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+body.design-glassy .gl-annpop-meta{border-top-color:var(--glass-border)}
+body.design-glassy .gl-annpop-hdr .cbtn:hover{background:color-mix(in oklch,var(--color-on-surface) 12%,transparent)}
 #blyrics-src svg{display:block}
 .lye{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;min-width:0;box-sizing:border-box;padding-bottom:24px;accent-color:var(--color-primary)}
 .lye .lye-top{position:sticky;top:0;z-index:6;display:flex;flex-direction:column;gap:8px;margin:0 -16px;padding:6px 16px 8px;background:color-mix(in oklch,var(--color-surface-container-lowest) 90%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
@@ -15510,6 +15513,8 @@ body.design-glassy .lyrics-resync button{background:var(--glass-bg-mid);border:1
 .lye textarea.input.lye-ta,.lye .lye-row input.input{background:color-mix(in oklch,var(--color-on-surface) 7%,transparent);border:1px solid transparent;box-shadow:none;color:var(--color-on-surface);outline:0;transition:background var(--dur-2) var(--ease-out),border-color var(--dur-2) var(--ease-out)}
 .lye textarea.input.lye-ta:focus,.lye .lye-row input.input:focus{background:color-mix(in oklch,var(--color-on-surface) 10%,transparent);border-color:color-mix(in oklch,var(--color-primary) 55%,transparent)}
 .lye textarea.input.lye-ta{display:block;width:100%;max-width:100%;min-width:0;min-height:360px;height:calc(100vh - 300px);resize:none;line-height:1.5;padding:10px 12px;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;box-sizing:border-box}
+.lyrics-body .lye>*{min-width:0;max-width:100%}
+.lyrics-body .lye textarea.input.lye-ta{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important}
 .lye .lye-hint{color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.8}
 .lye .lye-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lye .lye-sw{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label)}
@@ -36458,7 +36463,7 @@ function _pinLG(hdr) {
 // edit selectors and order right here. frame/float refraction comes from the LG_PARTS groups (merge + custom selectors), panel/control use generic tier groups
 var GLASS_TIERS = {
   frame:   { sel: '#sidebar,.topbar,.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar', spec: 'var(--glass-spec-panel)', important: true },
-  float:   { sel: '#player,#ctx,#dl-panel-float,.mbox,#vol-slider-popup,.set-pc-shell:not(.set-pc-tab)', spec: 'var(--glass-spec-panel)', important: true },
+  float:   { sel: '#player,#ctx,#dl-panel-float,.mbox,#vol-slider-popup,.gl-annpop,.set-pc-shell:not(.set-pc-tab)', spec: 'var(--glass-spec-panel)', important: true },
   panel:   { sel: '.lib-album,.album-card,.search-track,.set-section,.np-next-card,.np-lrc-preview,.np-meta-grid', spec: 'var(--glass-spec-panel)', important: true, refract: true },
   control: { sel: '.nav-btn.active,.subnav-btn.on,.pl-item.active,.mob-sort-btn,.prog-wrap', spec: 'var(--glass-spec-panel)', important: true, refract: true },
   row:     { sel: '.song-row.playing,.song-row-mobile.playing', spec: 'var(--glass-spec-panel)', important: true, fx: false }, // spec only, never any backdrop
