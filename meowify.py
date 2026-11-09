@@ -15481,6 +15481,11 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 .q-disabled,.q-played{opacity:0.45;filter:grayscale(0.6);}
 .q-disabled.playing,.q-disabled.paused,.q-played.playing,.q-played.paused{opacity:1;filter:none;}
 .song-list>.q-active-start{position:relative;}
+.q-after-sw{opacity:0.45;filter:grayscale(0.6);}
+.q-after-sw.playing,.q-after-sw.paused{opacity:1;filter:none;}
+.q-sw{background:var(--color-surface-container-low);}
+.qsw-item:hover{background:var(--color-surface-container-high);}
+.qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
 .q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
 .q-active-start::before{content:'previously played';position:absolute;top:-7px;left:50%;transform:translateX(-50%);padding:0 8px;font-size:9px;line-height:13px;letter-spacing:.08em;white-space:nowrap;color:var(--color-on-surface-variant);background:var(--color-surface-container-lowest);pointer-events:none;z-index:1;}
 .dl-active,.song-row-mobile.dl-active{
@@ -20702,7 +20707,7 @@ function _chaosPickNext() {
 }
 
 function getNextSong() {
-  if (S._continueFrom) return S._continueFrom.start;
+  { const _p = _cfReady(); if (_p) return _p.start; }
   if (!S.queue.length) return null;
   if (S.repeat === 'one') return S.queue[S.qi];
   if (S.shuffle && S.shuffleMode === 'chaos') {
@@ -21178,7 +21183,9 @@ function continueFromList(songs, idx, source) {
   // nothing playing (or restored session that never started) -> just play right away
   if (!S.cur || engine._restoredPosition !== undefined) { playFromList(songs, idx, source); return; }
   if (!source) source = _inferSource();
-  S._continueFrom = { songs: [...songs], startId: start.id, start, source };
+  _qswDrop(true);
+  S._continueFrom = { songs: [...songs], startId: start.id, start, source, expanded: false };
+  _qswInsert();
   if (!engine._normGainMap) engine._normGainMap = {};
   engine._normGainMap[start.id] = computeNormGain(S.library.find(l => l.id === start.id) || start);
   if (CFG.volume_norm && start.loudness_lufs == null) ensureLoudness(start);
@@ -21192,22 +21199,37 @@ function continueFromList(songs, idx, source) {
 }
 
 // consumes the pending "play from here next" target, rebuilds the queue from it and returns the song to play
-function _applyContinueFrom() {
-  const p = S._continueFrom;
+function _applyContinueFrom(force, clickId) {
+  const p = force ? S._continueFrom : _cfReady();
   if (!p) return null;
-  S._continueFrom = null;
   const inLib = new Set(S.library.map(l => l.id));
   const songs = p.songs.filter(s => inLib.has(s.id));
   const idx = songs.findIndex(s => s.id === p.startId);
-  if (idx < 0) return null;
+  if (idx < 0) { _qswDrop(true); return null; }
+  S._continueFrom = null;
   // buildQueue calls engine._stopNxt() - keep the preloaded copy alive so the jump stays gapless
-  const keep = engine.nxt && engine.nxt.songId === p.startId ? engine.nxt : null;
+  const keep = (!clickId || clickId === p.startId) && engine.nxt && engine.nxt.songId === p.startId ? engine.nxt : null;
   if (keep) engine.nxt = null;
   const _ch = S.shuffle && S.shuffleMode === 'chaos';
   const _chHist = _ch ? [...S._chaosHistory, ...(S.cur ? [S.cur] : [])] : null;
   buildQueue(songs, idx, p.source);
   if (_ch) S._chaosHistory = _chHist;
   if (keep) engine.nxt = keep;
+  if (clickId && clickId !== p.startId) {
+    // clicked a song inside the stack: the queue is what play from here next builds, playback lands on the clicked song
+    const _cs = songs.find(s => s.id === clickId);
+    if (_cs) {
+      if (_ch) {
+        S._chaosHistory.push(S.queue[0]);
+        S._chaosPlayed.add(_cs.id);
+        S.queue = [_cs]; S.qi = 0;
+        S._chaosNext = _chaosPickNext();
+      } else {
+        const _k = S.queue.findIndex(s => s.id === clickId);
+        if (_k >= 0) S.qi = _k;
+      }
+    }
+  }
   return S.queue[S.qi];
 }
 
@@ -21348,6 +21370,7 @@ async function prevSong() {
         engine._stopNxt();
         if (S.qi > 0) S.qi--;
         else S.qi = S.queue.length - 1;
+        if (S.queue[S.qi] && S.queue[S.qi]._qsw) S.qi = S.qi > 0 ? S.qi - 1 : S.queue.length - 1;
         S.cur = S.queue[S.qi];
         await playSong(S.cur, 0, false);
       }
@@ -21444,6 +21467,7 @@ function _shuffleRemaining(partial) {
     S.queue = [..._head, ..._b.queue];
     if (_curIn) S.qi = _head.length + _b.qi;
     S._wrapPlan = null;
+    _qswEnsure();
     return;
   }
   const cur = S.queue[S.qi] || S.cur;
@@ -21454,6 +21478,7 @@ function _shuffleRemaining(partial) {
   S.qi = greyed.length + built.qi;
   S._qActiveFrom = greyed.length;
   S._wrapPlan = null;
+  _qswEnsure();
 }
 
 function setShuffleMode(mode) {
@@ -21656,6 +21681,7 @@ function toggleShuffle() {
     S._qActiveFrom = 0;
     S._wrapPlan = null;
     S._unshuffledQueue = [...ordered];
+    _qswEnsure();
   }
   updateHighlights();
   engine._stopNxt();
@@ -23500,6 +23526,10 @@ function _removeQueueMany(idxs) {
   const _rmActive = idxs.filter(k => k >= _af0 || S.queue[k]._qa).map(k => S.queue[k].id);
   for (let j = idxs.length - 1; j >= 0; j--) S.queue.splice(idxs[j], 1);
   S._qActiveFrom = _af0 - idxs.filter(k => k < _af0).length;
+  if (S._continueFrom && S._continueFrom.row && !S.queue.includes(S._continueFrom.row)) {
+    S._continueFrom = null;
+    setTimeout(_queueNextChanged, 0);
+  }
   if (_rmActive.length && !(S.shuffle && S.shuffleMode === 'chaos')) {
     // a removed row also leaves the shuffle context, unless the song still has another active row
     const _still = new Set(S.queue.filter((s, k) => k >= S._qActiveFrom || s._qa).map(s => s.id));
@@ -27035,7 +27065,7 @@ let _qLastSel = null; // last tapped queue row, anchor for shift range select (s
 // right click on a queue row opens the normal song menu, with play / remove acting on the queue
 document.addEventListener('contextmenu', e => {
   const row = e.target.closest && e.target.closest('#queue-inner .song-row[data-id]');
-  if (!row || row.classList.contains('drag-spacer')) return;
+  if (!row || row.classList.contains('drag-spacer') || row.dataset.qsw) return;
   const qi = (S.shuffle && S.shuffleMode === 'chaos') ? S.qi : parseInt(row.dataset.qi);
   if (!(qi >= 0)) return;
   songCtx(e, row.dataset.id, '', { qi });
@@ -27043,10 +27073,13 @@ document.addEventListener('contextmenu', e => {
 
 function _queueRowClick(row, e) {
   const id = row.dataset.id;
+  if (row.dataset.qsw) { if (S.qSelectMode) _qToggleSel(id); return; }
   if ((e.shiftKey || e.ctrlKey || e.metaKey) && !S.qSelectMode) { _setQSelectMode(true); _qLastSel = null; }
   if (!S.qSelectMode) {
     const qi = parseInt(row.dataset.qi);
-    S.qi = qi; S.cur = S.queue[qi]; playSong(S.cur);
+    S.qi = qi; S.cur = S.queue[qi];
+    _qswCheckJump();
+    playSong(S.cur);
     return;
   }
   if (e.shiftKey && _qLastSel) {
@@ -27064,7 +27097,156 @@ function _queueRowClick(row, e) {
   _qToggleSel(id);
 }
 
+// ── queue switch ("play from here next") ────────────────────────────────────
+// S._continueFrom holds the pending switch, p.row is the pseudo row that stands for it in S.queue (not in chaos,
+// there the stack is only drawn under the current song). it activates when playback advances onto that row
+function _cfReady() {
+  const p = S._continueFrom;
+  if (!p) return null;
+  if (S.shuffle && S.shuffleMode === 'chaos') return p;
+  const nx = S.queue[S.qi + 1];
+  return (nx && nx._qsw) ? p : null;
+}
+function _qswSync() {
+  const p = S._continueFrom;
+  if (p && p.row) p.row.title = 'qsw|' + (p.expanded ? 1 : 0) + '|' + p.songs.length;
+}
+function _qswList(p) {
+  const inLib = new Set(S.library.map(l => l.id));
+  const all = p.songs.filter(s => inLib.has(s.id));
+  const k = all.findIndex(s => s.id === p.startId);
+  return k > 0 ? all.slice(k) : all;
+}
+function _qswSrcName(p) {
+  const src = p.source || {};
+  if (src.type === 'playlist') { const pl = S.playlists.find(x => x.id === src.id); return pl ? pl.name : 'playlist'; }
+  if (src.type === 'album') { const al = S.albums.find(x => x.id === src.id); return al ? (al.title || al.name || 'album') : 'album'; }
+  if (src.type === 'library') return 'library';
+  return '';
+}
+function _qswAfter(i) {
+  const p = S._continueFrom;
+  if (!p || !p.row) return false;
+  const k = S.queue.indexOf(p.row);
+  return k >= 0 && i > k;
+}
+function _qswEnsure() {
+  const p = S._continueFrom;
+  if (!p || (S.shuffle && S.shuffleMode === 'chaos')) return;
+  if (!p.row) p.row = { id: 'qsw', _qsw: true, _qa: true, title: '', artist: '', duration: 0 };
+  _qswSync();
+  if (S.queue.includes(p.row)) return;
+  const at = Math.min(S.queue.length, S.qi + 1);
+  if (at < (S._qActiveFrom || 0)) S._qActiveFrom++;
+  S.queue.splice(at, 0, p.row);
+}
+function _qswInsert() {
+  _qswEnsure();
+  if (S.queueOpen) renderQueueSidebar();
+}
+function _qswDrop(silent) {
+  const p = S._continueFrom;
+  if (p && p.row) {
+    const k = S.queue.indexOf(p.row);
+    if (k >= 0) {
+      S.queue.splice(k, 1);
+      if (k < S.qi) S.qi--;
+      if (k < (S._qActiveFrom || 0)) S._qActiveFrom--;
+    }
+  }
+  S._continueFrom = null;
+  if (!silent && S.queueOpen) renderQueueSidebar();
+}
+// a click jumped past the row: the switch is cancelled
+function _qswCheckJump() {
+  const p = S._continueFrom;
+  if (!p || !p.row) return;
+  const k = S.queue.indexOf(p.row);
+  if (k < 0) { S._continueFrom = null; return; }
+  if (k < S.qi) _qswDrop(true);
+}
+function _qswCancel(ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  _qswDrop(false);
+  _queueNextChanged();
+}
+function _qswToggle(ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const p = S._continueFrom;
+  if (!p) return;
+  p.expanded = !p.expanded;
+  _qswSync();
+  if (S.queueOpen) renderQueueSidebar();
+}
+function _qswPlay(ev) { _qswGo(null, ev); }
+function _qswPlaySong(id, ev) { _qswGo(id, ev); }
+function _qswGo(clickId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (!S._continueFrom) return;
+  _enqueueCmd(async () => {
+    try {
+      const _skipped = S.cur;
+      engine._stopNxt();
+      _fireSkip(_skipped, 'fwdbtn');
+      window._nextReasonStart = 'fwdbtn';
+      const cf = _applyContinueFrom(true, clickId);
+      if (!cf) { if (S.queueOpen) renderQueueSidebar(); return; }
+      S.cur = cf;
+      await playSong(S.cur);
+      if (S.queueOpen) renderQueueSidebar();
+    } catch (e) { console.error('queue switch err', e); }
+  });
+}
+function _makeQswRow(s, i) {
+  const p = S._continueFrom;
+  const list = p ? _qswList(p) : [];
+  const big = S.queue.length > 400;
+  const open = !!(p && p.expanded) && !big;
+  const cv = sg => sg.cover_path ? '<img src="/cover/' + sg.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
+  const el = document.createElement('div');
+  el.className = 'song-row mu-ripple q-sw' + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '');
+  el.dataset.id = s.id;
+  el.dataset.qi = i;
+  el.dataset.qsw = '1';
+  el.style.cssText = 'grid-template-columns:28px 40px 1fr auto auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
+  let tiles = '';
+  for (let k = Math.min(3, list.length) - 1; k >= 0; k--) {
+    tiles += '<div style="position:absolute;left:' + (k * 4) + 'px;top:' + (8 - k * 4) + 'px;width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px;opacity:' + (1 - k * 0.25) + ';box-shadow:0 0 0 1.5px var(--color-surface-container-low)">' + cv(list[k]) + '</div>';
+  }
+  const src = p ? _qswSrcName(p) : '';
+  const sub = [src, list.length + ' songs'].filter(Boolean).join(' · ');
+  const btn = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;opacity:1';
+  let items = '';
+  if (open) {
+    items = '<div class="qsw-list" style="grid-column:1 / -1;display:flex;flex-direction:column;gap:2px;padding:4px 0 2px 36px">'
+      + list.slice(0, 100).map(sg =>
+        '<div class="qsw-item" data-sid="' + esc(sg.id) + '" onclick="_qswPlaySong(this.dataset.sid, event)" style="display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer">'
+        + '<div style="width:28px;height:28px;border-radius:var(--radius-sm);overflow:hidden;background:var(--color-surface-container-high);display:flex;align-items:center;justify-content:center;font-size:13px">' + cv(sg) + '</div>'
+        + '<div style="overflow:hidden"><div class="stitle">' + esc(sg.title || 'untitled') + '</div><div class="sartist">' + esc(sg.artist || '') + '</div></div>'
+        + '<div class="sdur">' + (sg.duration ? fmt(sg.duration) : '') + '</div></div>'
+      ).join('')
+      + (list.length > 100 ? '<div class="sartist" style="padding:4px 6px">+ ' + (list.length - 100) + ' more songs</div>' : '')
+      + '</div>';
+  }
+  el.innerHTML =
+    '<div class="snum" style="position:relative;display:flex;align-items:center;justify-content:center"><span class="snum-num">' + (i + 1) + '</span></div>'
+    + '<div style="position:relative;width:36px;height:36px;flex-shrink:0">' + tiles + '</div>'
+    + '<div class="sinfo" style="overflow:hidden"><div class="stitle">queue switch</div><div class="sartist">' + esc(sub) + '</div></div>'
+    + '<button class="qsw-btn mu-ripple" style="' + btn + '" title="play now" onclick="_qswPlay(event)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="display:block"><polygon points="4,2 21,12 4,22"></polygon></svg></button>'
+    + (big ? '<span></span>' : '<button class="qsw-btn mu-ripple" style="' + btn + '" title="' + (open ? 'hide songs' : 'show songs') + '" onclick="_qswToggle(event)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block;transform:rotate(' + (open ? 180 : 0) + 'deg);transition:transform .15s"><polyline points="6 9 12 15 18 9"></polyline></svg></button>')
+    + '<button class="qsw-btn mu-ripple" style="' + btn + '" title="cancel" onclick="_qswCancel(event)">' + MEOW_ICONS.close + '</button>'
+    + _SEL_HANDLE
+    + items;
+  el.addEventListener('click', e => _queueRowClick(el, e));
+  return el;
+}
 function _makeQueueRow(s, i) {
+  if (s._qsw) return _makeQswRow(s, i);
+  const _el = _makeQueueRowBase(s, i);
+  if (_qswAfter(i)) _el.classList.add('q-after-sw');
+  return _el;
+}
+function _makeQueueRowBase(s, i) {
   const isCur = i === S.qi;
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
@@ -27445,7 +27627,8 @@ function renderQueueSidebar() {
       const el = _makeQueueRow(cur, 0);
       rowsHtml += el.outerHTML;
     }
-    if (next) {
+    if (S._continueFrom) rowsHtml += _makeQswRow({ id: 'qsw', _qsw: true }, 1).outerHTML;
+    if (next && !S._continueFrom) {
       const cov = next.cover_path ? '<img src="/cover/' + next.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
       rowsHtml +=
         '<div class="song-row" style="grid-template-columns:28px 40px 1fr auto;gap:8px;padding:6px 8px;align-items:center;display:grid;border-radius:var(--radius-md);opacity:0.55;width:100%;min-width:0">'
@@ -27554,6 +27737,7 @@ function renderQueueSidebar() {
         if (sn && sn.textContent) sn.textContent = i + 1;
         r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
         r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
+        r.classList.toggle('q-after-sw', _qswAfter(i));
       });
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
       _qLastQi = S.qi;
@@ -28701,8 +28885,8 @@ function _sessionBody(position) {
   const isChaos = S.shuffle && S.shuffleMode === 'chaos';
   return {
     song_id: S.cur.id,
-    queue: isChaos ? (S._chaosContext || S.library).map(s => s.id) : S.queue.map(s => s.id),
-    qi: S.qi,
+    queue: isChaos ? (S._chaosContext || S.library).map(s => s.id) : S.queue.filter(s => !s._qsw).map(s => s.id),
+    qi: S.qi - S.queue.slice(0, S.qi).filter(s => s._qsw).length,
     position,
     duration: engine.duration || S._restoredDuration || S.cur.duration || 0,
     repeat: S.repeat,
@@ -28711,7 +28895,7 @@ function _sessionBody(position) {
     chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
     chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
     ctx: (S.shuffle && !isChaos) ? (S._unshuffledQueue || []).map(s => s.id) : undefined,
-    afrom: isChaos ? 0 : (S._qActiveFrom || 0),
+    afrom: isChaos ? 0 : ((S._qActiveFrom || 0) - S.queue.slice(0, S._qActiveFrom || 0).filter(s => s._qsw).length),
   };
 }
 function saveSession() {
@@ -37349,12 +37533,12 @@ async function loadData() {
   const _oldQi = S.qi, _oldAf = S._qActiveFrom || 0;
   let _keptBeforeQi = 0, _keptBeforeAf = 0, _curKept = false;
   S.queue = S.queue.filter((s, n) => {
-    const ok = validIds.has(s.id);
+    const ok = s._qsw || validIds.has(s.id);
     if (ok && n < _oldQi) _keptBeforeQi++;
     if (ok && n < _oldAf) _keptBeforeAf++;
     if (ok && n === _oldQi) _curKept = true;
     return ok;
-  }).map(s => s._qa ? Object.assign({}, _libById.get(s.id), { _qa: true }) : _libById.get(s.id));
+  }).map(s => s._qsw ? s : (s._qa ? Object.assign({}, _libById.get(s.id), { _qa: true }) : _libById.get(s.id)));
   S._qActiveFrom = _keptBeforeAf;
   S._unshuffledQueue = S._unshuffledQueue.filter(s => validIds.has(s.id)).map(s => _libById.get(s.id));
   if (S.cur && _libById.has(S.cur.id)) S.cur = _libById.get(S.cur.id);
