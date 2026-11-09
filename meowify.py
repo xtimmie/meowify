@@ -20441,7 +20441,7 @@ function _shuffleBuild(pool, cur) {
 function _qCtx() {
   if (!S._unshuffledQueue || !S._unshuffledQueue.length) {
     const base = (S.shuffle && S.shuffleMode === 'chaos' && S._chaosContext.length) ? S._chaosContext : S.queue;
-    S._unshuffledQueue = [...base];
+    S._unshuffledQueue = base.filter(s => !s._qsw);
   }
   return S._unshuffledQueue;
 }
@@ -20475,7 +20475,7 @@ function _qReorderApply(group, slot) {
   S.qi = Math.max(0, ni);
   S._qActiveFrom = nf;
   S._wrapPlan = null;
-  if (!S.shuffle) S._unshuffledQueue = [...arr];
+  if (!S.shuffle) S._unshuffledQueue = arr.filter(s => !s._qsw);
 }
 // a song can sit in the queue twice (greyed copy + active copy), so the playing row is found by distance
 function _qLocateCur(arr, curSong, oldQi) {
@@ -21482,7 +21482,7 @@ function _shuffleRemaining(partial) {
     if (!S._chaosOn) {
       // entering chaos: keep the real queue so turning chaos off hands it back
       S._chaosStash = { queue: [...S.queue], qi: S.qi };
-      S._chaosContext = [...ctx];
+      S._chaosContext = ctx.filter(s => !s._qsw);
       S._chaosPlayed = curId ? new Set([curId]) : new Set();
       S._chaosHistory = [];
       _chaosRecentArtists.length = 0;
@@ -21512,7 +21512,7 @@ function _shuffleRemaining(partial) {
     return;
   }
   const cur = S.queue[S.qi] || S.cur;
-  const greyed = S.queue.slice(0, S.qi);
+  const greyed = S.queue.slice(0, S.qi).filter(s => !s._qsw);
   const inLib = new Set(S.library.map(s => s.id));
   const built = _shuffleBuild(ctx.filter(s => inLib.has(s.id)), cur);
   S.queue = [...greyed, ...built.queue];
@@ -21701,7 +21701,7 @@ function toggleShuffle() {
   const curId = S.cur?.id;
   if (S.shuffle) {
     // while shuffle was off the queue is the context (it may have been edited by hand), so shuffle starts from it
-    S._unshuffledQueue = [...S.queue];
+    S._unshuffledQueue = S.queue.filter(s => !s._qsw);
     _shuffleRemaining();
   } else {
     // unshuffle: the queue goes back to the full context in its original order. the current song stays what it
