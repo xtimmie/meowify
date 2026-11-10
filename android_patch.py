@@ -632,7 +632,6 @@ def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
         meowify._OTA_DIR = _P(_ota_dir)
 
     # apply all patches immediately after import
-    print("ota-diag env=%r mod=%r is_android=%r" % (os.environ.get("MEOWIFY_OTA_DIR"), getattr(meowify, "_OTA_DIR", "MISSING"), getattr(meowify, "IS_ANDROID", "MISSING")), flush=True)
     _patch_paths(meowify)
     import sys as _sys2
     _sys2.__stderr__.write(f'[android_patch] _HOME={meowify._HOME} ddir={meowify.ddir()}\n')
