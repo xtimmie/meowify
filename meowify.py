@@ -12303,6 +12303,37 @@ def _mv_invalidate(sid):
     with _mv_cache_lock:
         _mv_cache.pop(sid, None)
 
+# youtube answers some requests with the sign in / bot check or a 403, other player clients often get through (same idea as the android download path)
+_MV_CLIENT_FALLBACKS = [None, 'android_vr', 'mweb']
+
+def _mv_ytdlp_run(cmd, timeout):
+    """run yt-dlp (cmd must contain the '--' before the url), retrying with other player clients when youtube blocks the request"""
+    res = None
+    for client in _MV_CLIENT_FALLBACKS:
+        c = list(cmd)
+        if client:
+            i = c.index('--')
+            c[i:i] = ['--extractor-args', 'youtube:player_client=' + client]
+        res = _subrun(c, capture_output=True, text=True, timeout=timeout)
+        if res.returncode == 0:
+            return res
+        err = res.stderr or ''
+        if not any(s in err for s in ('Sign in', 'confirm you', '403', 'Requested format is not available')):
+            break
+        _log_mv.info(f'[mv] yt-dlp blocked with client={client or "default"}, trying the next one')
+    return res
+
+def _mv_err_reason(msg):
+    """short text for the player when a video can't be loaded"""
+    m = (msg or '').lower()
+    if 'sign in' in m or 'confirm you' in m:
+        return 'youtube is asking for a sign in (bot check), try again in a bit'
+    if 'private' in m or 'unavailable' in m or 'not available' in m:
+        return 'that video is unavailable'
+    if 'timed out' in m or 'timeout' in m:
+        return 'youtube took too long to answer'
+    return 'could not load the video'
+
 def _mv_ytdlp_stream_url(video_id):
     """Get direct video stream URLs for a YouTube video_id via yt-dlp.
     Returns (video_url, expires_at) or raises on failure."""
@@ -12311,7 +12342,7 @@ def _mv_ytdlp_stream_url(video_id):
         '--format', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best',
         '--', f'https://www.youtube.com/watch?v={video_id}'
     ]
-    result = _subrun(cmd, capture_output=True, text=True, timeout=30)
+    result = _mv_ytdlp_run(cmd, 30)
     if result.returncode != 0:
         raise RuntimeError(f'yt-dlp failed: {result.stderr[:200]}')
     info = json.loads(result.stdout)
@@ -12534,6 +12565,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
         # try up to 3 candidates until xcorr finds a confident match
         offset = None
         video_id = None
+        xcorr_ran = False  # stays False when every download failed, then nothing is known about the sync
         for candidate in ordered[:3]:
             if _cancelled(): return
             vid = candidate['videoId']
@@ -12557,7 +12589,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
                 ]
                 if _cancelled():
                     return
-                res = _subrun(cmd, capture_output=True, text=True, timeout=90)
+                res = _mv_ytdlp_run(cmd, 90)
                 if res.returncode != 0:
                     _log_mv.warning(f'[mv] yt-dlp failed for {vid}: {res.stderr[:200]}')
                     continue
@@ -12572,6 +12604,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
                     if not _cancelled():
                         _mv_cache[song_id] = {'status': 'correlating', '_gen': my_gen, 'video_id': vid}
 
+                xcorr_ran = True
                 offset = _mv_cross_correlate_offset(song_path, mv_audio_path)
             finally:
                 import shutil as _sh
@@ -12585,6 +12618,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
         if _cancelled(): return
 
         synced = True
+        persist_it = True
         if offset is None or video_id is None:
             if _MV_AUTOSEARCH or not hint_video_id:
                 _log_mv.warning(f'[mv] no confident xcorr match for {song_id} after trying {len(ordered[:3])} candidates')
@@ -12593,6 +12627,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
             # the saved link couldn't be aligned with the song: play it unshifted, the offset can be set by hand
             _log_mv.info(f'[mv] no confident align for the saved link {hint_video_id} song={song_id}, using offset 0')
             video_id, offset, synced = hint_video_id, 0.0, False
+            persist_it = xcorr_ran  # a failed download says nothing about the sync, so it stays unaligned and is tried again next time
 
         _log_mv.info(f'[mv] offset={offset}s video={video_id} song={song_id}')
 
@@ -12600,19 +12635,20 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
             video_url, expires_at = _mv_ytdlp_stream_url(video_id)
         except Exception as e:
             _log_mv.warning(f'[mv] stream url failed: {e}')
-            _set('not_found')
+            _set('error', video_id=video_id, reason=_mv_err_reason(str(e)), ts=time.time())
             return
 
         if _cancelled(): return
         proxy_url = f'/api/mv-proxy/{video_id}'
         _set('ready', video_id=video_id, offset=offset, synced=synced,
              video_url=proxy_url, stream_url=video_url, expires_at=expires_at)
-        _mv_persist(song_id, video_id, offset)
+        if persist_it:
+            _mv_persist(song_id, video_id, offset)
 
     except Exception as e:
         _log_mv.warning(f'[mv] _mv_find_and_cache error: {e}')
         import traceback as _tb; _tb.print_exc()
-        _set('not_found')
+        _set('error', video_id=hint_video_id, reason=_mv_err_reason(str(e)), ts=time.time())
 
 # ── mv search/xcorr cancellation token: bumped each time a new song takes over ──
 _mv_find_gen      = 0
@@ -12709,6 +12745,10 @@ def _mv_warm_stream_url(song_id, video_id, offset):
         _mv_prefetch_bytes(video_id, video_url)
     except Exception as e:
         _log_mv.warning(f'[mv warm] failed {video_id}: {e}')
+        with _mv_cache_lock:
+            _we = _mv_cache.get(song_id)
+            if _we and _we.get('status') == 'warming' and _we.get('video_id') == video_id:
+                _mv_cache[song_id] = {'status': 'error', 'video_id': video_id, 'offset': offset, 'reason': _mv_err_reason(str(e)), 'ts': time.time()}
     finally:
         with _mv_warming_lock:
             _mv_warming.discard(video_id)
@@ -12837,6 +12877,9 @@ def api_mv_status(sid):
     # rapid fetches for the same sid both see cache-miss simultaneously
     with _mv_cache_lock:
         cached = _mv_cache.get(sid)
+        if cached and cached.get('status') == 'error' and time.time() - cached.get('ts', 0) > 45:
+            cached = None  # an old failure, try again
+            _mv_cache.pop(sid, None)
         if cached is None:
             # reserve the slot immediately so a concurrent request won't also
             # submit a find job - we'll overwrite with the real status below
@@ -21549,7 +21592,7 @@ function _mvPreloadNext() {
               // warming = stream URL being fetched, check again shortly
               currentSlot.pollTimer = setTimeout(() => _pollSlot(attempts + 1), 2000);
             }
-          } else if (data.status !== 'disabled' && data.status !== 'not_found' && data.status !== 'no_video' && attempts < 60) {
+          } else if (data.status !== 'disabled' && data.status !== 'not_found' && data.status !== 'no_video' && data.status !== 'error' && attempts < 60) {
             currentSlot.pollTimer = setTimeout(() => _pollSlot(attempts + 1), off === 1 ? 1000 : 3000);
           }
         })
@@ -25094,6 +25137,8 @@ function _mvClearStatus() {
   _mvUpdateToggleIcon();
 }
 
+let _mvErr = null; // {sid, vid}: the saved link of a song whose video failed to load, so the menu still knows it
+
 const _MV_ICO = {
   link:   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.7-1.7"/></svg>',
   reload: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>',
@@ -25116,7 +25161,7 @@ function _mvCurVidId() {
 function _mvOpenMenu(e) {
   const sid = S.cur?.id;
   if (!sid) return;
-  const vid = _mvSongId === sid ? _mvCurVidId() : null;
+  const vid = (_mvSongId === sid ? _mvCurVidId() : null) || (_mvErr && _mvErr.sid === sid ? _mvErr.vid : null);
   const items = [{icon: _MV_ICO.link, label: vid ? 'change video link' : 'add video link', fn: _mvSetUrl}];
   if (vid) {
     items.push({icon: _SD_ICO_YT, label: 'open on youtube', fn: () => window.open('https://www.youtube.com/watch?v=' + vid, '_blank', 'noopener')});
@@ -25133,7 +25178,7 @@ function _mvOpenMenu(e) {
 async function _mvSetUrl() {
   const sid = S.cur?.id;
   if (!sid) return;
-  const cur = _mvSongId === sid ? _mvCurVidId() : null;
+  const cur = (_mvSongId === sid ? _mvCurVidId() : null) || (_mvErr && _mvErr.sid === sid ? _mvErr.vid : null);
   const raw = await promptModal('music video link', 'youtube link or video id', cur ? 'https://www.youtube.com/watch?v=' + cur : '');
   if (raw == null) return;
   const r = await fetch('/api/songs/' + sid + '/music-video', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: raw})}).then(x => x.json()).catch(() => null);
@@ -25142,6 +25187,7 @@ async function _mvSetUrl() {
     return;
   }
   _mvHiddenSongs.delete(sid);
+  _mvErr = null;
   _mvReloadCurrent();
 }
 
@@ -25177,6 +25223,7 @@ function _mvDropVideo() {
   if (_mvActive) toggleMusicVideo();
   const v = _mvVideo();
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  _mvErr = null;
   _mvSongId = null;
   _mvClearStatus();
 }
@@ -25323,6 +25370,12 @@ async function _mvLoadForSong(song, reopenFullscreen) {
       _mvClearStatus();
       return;
     }
+    if (status === 'error') {
+      _mvErr = {sid, vid: data.video_id || null}; // the link is saved, only loading it failed
+      _mvClearStatus();
+      _showSyncToast(data.reason || 'could not load the video');
+      return;
+    }
     if (status === 'ready') {
       // bail if user toggled video off for this song while we were polling
       if (_mvHiddenSongs.has(sid)) {
@@ -25363,6 +25416,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
           _mvPollTimer = setTimeout(_poll, 2000);
         }
       };
+      _mvErr = null;
       _mvUpdateToggleIcon();
       // start preloading next song immediately - no delay
       _mvPreloadNext();
@@ -25521,6 +25575,7 @@ async function _mvReloadCurrent() {
         _mvSongId = sid;
         _mvOffset = data.offset || 0;
         _mvActive = wasActive;
+        _mvErr = null;
         if (data.synced === false) _showSyncToast('could not sync this video automatically, set the offset in the video menu');
         _mvSetActiveClass(wasActive);
         const vid2 = _mvVideo();
@@ -25539,6 +25594,7 @@ async function _mvReloadCurrent() {
         _mvPreloadNext();
         break;
       }
+      if (data.status === 'error') { _mvErr = {sid, vid: data.video_id || null}; _showSyncToast(data.reason || 'could not load the video'); break; }
       if (data.status === 'no_video') { _mvDropVideo(); break; }
       if (data.status === 'not_found' || data.status === 'disabled') break;
       if (!wasActive) _mvShowStatus(data.status);
