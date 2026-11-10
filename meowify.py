@@ -16390,7 +16390,7 @@ body.design-glassy :is(.song-row,.song-row-mobile).drag-lifted.drag-follow{box-s
 .dl-unavailable{opacity:0.45;filter:grayscale(0.6);cursor:default;}
 .q-disabled,.q-played{opacity:0.45;filter:grayscale(0.6);}
 .q-disabled.playing,.q-disabled.paused,.q-played.playing,.q-played.paused{opacity:1;filter:none;}
-.song-list>.q-active-start{position:relative;}
+.song-list>.q-active-start,.vl-static>.q-active-start{position:relative;}
 .q-after-sw{opacity:0.45;filter:grayscale(0.6);}
 .q-after-sw.playing,.q-after-sw.paused{opacity:1;filter:none;}
 .q-sw{background:var(--color-surface-container-low);}
@@ -16413,8 +16413,11 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 @supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
-.q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
-.q-active-start::before{content:'previously played';position:absolute;top:-7px;left:50%;transform:translateX(-50%);padding:0 8px;font-size:9px;line-height:13px;letter-spacing:.08em;white-space:nowrap;color:var(--color-on-surface-variant);background:var(--color-surface-container-lowest);pointer-events:none;z-index:1;}
+.q-div{position:absolute;left:5px;right:5px;top:-8px;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
+.q-div i{flex:1;height:1px;border-radius:1px;}
+.q-div i:first-child{background:linear-gradient(90deg,transparent,var(--color-outline-variant,rgba(128,128,128,.5)));}
+.q-div i:last-child{background:linear-gradient(90deg,var(--color-outline-variant,rgba(128,128,128,.5)),transparent);}
+.q-div b{font-weight:600;font-size:9px;line-height:12px;letter-spacing:.14em;color:var(--color-on-surface-variant);opacity:.85;}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
@@ -28499,6 +28502,7 @@ function _qNum(i) {
   const af = S._qActiveFrom || 0;
   return (af && i >= af) ? i - af + 1 : i + 1;
 }
+const _Q_DIV_HTML = '<div class="q-div"><i></i><b>shuffled</b><i></i></div>';
 function _makeQueueRowBase(s, i) {
   const isCur = i === S.qi;
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
@@ -28516,6 +28520,7 @@ function _makeQueueRowBase(s, i) {
   + '<div class="sdur">' + dur + '</div>'
   + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
   + _SEL_HANDLE;
+  if (i > 0 && i === (S._qActiveFrom || 0)) el.insertAdjacentHTML('beforeend', _Q_DIV_HTML);
   _qBindRow(el);
   return el;
 }
@@ -29035,6 +29040,8 @@ function renderQueueSidebar() {
         if (sn && sn.textContent) sn.textContent = _qNum(i);
         r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
         r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
+        r.querySelector(':scope > .q-div')?.remove();
+        if (i > 0 && i === (S._qActiveFrom || 0)) r.insertAdjacentHTML('beforeend', _Q_DIV_HTML);
         r.classList.toggle('q-after-sw', _qswAfter(i));
       });
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
