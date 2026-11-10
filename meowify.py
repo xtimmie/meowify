@@ -16413,9 +16413,8 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 @supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
-.q-div{position:absolute;left:5px;right:5px;top:-16px;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
-.song-row.q-active-start{overflow:clip;overflow-clip-margin:18px;}
-.song-list>.q-active-start,.vl-static>.q-active-start{margin-top:20px!important;}
+.q-div{position:absolute;left:10px;right:10px;top:0;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
+.q-div-flow{position:relative;left:auto;right:auto;top:auto;height:20px;margin:0 10px;}
 .q-div i{flex:1;height:1px;border-radius:1px;}
 .q-div i:first-child{background:linear-gradient(90deg,transparent,var(--color-outline-variant,rgba(128,128,128,.5)));}
 .q-div i:last-child{background:linear-gradient(90deg,var(--color-outline-variant,rgba(128,128,128,.5)),transparent);}
@@ -28505,7 +28504,7 @@ function _qNum(i) {
   const af = S._qActiveFrom || 0;
   return (af && i >= af) ? i - af + 1 : i + 1;
 }
-const _Q_DIV_HTML = '<div class="q-div"><i></i><b>shuffled</b><i></i></div>';
+const _Q_DIV_HTML = '<div class="q-div q-div-flow"><i></i><b>shuffled</b><i></i></div>';
 function _makeQueueRowBase(s, i) {
   const isCur = i === S.qi;
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
@@ -28523,7 +28522,6 @@ function _makeQueueRowBase(s, i) {
   + '<div class="sdur">' + dur + '</div>'
   + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="remove">' + MEOW_ICONS.close + '</button>'
   + _SEL_HANDLE;
-  if (i > 0 && i === (S._qActiveFrom || 0)) el.insertAdjacentHTML('beforeend', _Q_DIV_HTML);
   _qBindRow(el);
   return el;
 }
@@ -29014,7 +29012,7 @@ function renderQueueSidebar() {
   inner.innerHTML = '<div class=\"song-list\" style=\"padding:0 0 var(--bar-h)\">'
     + S.queue.map((s, i) => {
         const el = _makeQueueRow(s, i);
-        return el.outerHTML;
+        return (i > 0 && i === (S._qActiveFrom || 0) ? _Q_DIV_HTML : '') + el.outerHTML;
       }).join('')
     + '</div>';
   _snapStaticRowH();
@@ -29044,10 +29042,11 @@ function renderQueueSidebar() {
         if (sn && sn.textContent) sn.textContent = _qNum(i);
         r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
         r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
-        r.querySelector(':scope > .q-div')?.remove();
-        if (i > 0 && i === (S._qActiveFrom || 0)) r.insertAdjacentHTML('beforeend', _Q_DIV_HTML);
         r.classList.toggle('q-after-sw', _qswAfter(i));
       });
+      _qListEl.querySelector(':scope > .q-div')?.remove();
+      const _afRow = _qListEl.querySelectorAll(':scope > .song-row')[S._qActiveFrom || 0];
+      if ((S._qActiveFrom || 0) > 0 && _afRow) _afRow.insertAdjacentHTML('beforebegin', _Q_DIV_HTML);
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
       _qLastQi = S.qi;
       _queueNextChanged();
@@ -32747,6 +32746,15 @@ class VirtualList {
     this._gapAt = at > 0 ? at : 0;
     this._gap = px || 0;
     if (this._inner) this._inner.style.marginBottom = this._gapAt > 0 && this._gap ? this._gap + 'px' : '';
+    if (this._gapEl) { this._gapEl.remove(); this._gapEl = null; }
+    if (this._inner && this._gapAt > 0 && this._gapAt < this.songs.length && this._gap) {
+      const dv = document.createElement('div');
+      dv.className = 'q-div';
+      dv.innerHTML = '<i></i><b>shuffled</b><i></i>';
+      dv.style.top = 'calc(var(--vrow-h, ' + this.ROW_H + 'px) * ' + this._gapAt + ' + ' + ((this._gap - 12) / 2) + 'px)';
+      this._inner.appendChild(dv);
+      this._gapEl = dv;
+    }
     this._relayout();
     this._rendered = {start: -1, end: -1};
     this._render();
