@@ -25199,6 +25199,10 @@ function renderNowPlaying(_preArg) {
   transition:opacity 280ms var(--ease-out);
 }
 body.mv-fs #mv-fs-scrim{opacity:1;pointer-events:auto;}
+/* glassy and paper make #app a stacking context (z-index:1), which put the whole player under the body level scrim. while fullscreen is open the app goes back to
+   the root context so the player (z-index 120) sits above the scrim and keeps blurring what is behind it. the animated glassy bg drops behind the app so it doesn't cover it */
+body.mv-fs #app{z-index:auto!important}
+body.mv-fs #ga-bg{z-index:-1!important}
 /* container is reparented to <body> by JS on open, so position:fixed works without being trapped by transform/backdrop-filter
    ancestors in the sidebar. it has inline position/inset/z-index (cover mode), hence the !important. centered above the player, 16:9 */
 body.mv-fs #np-mv-container{
@@ -25783,6 +25787,14 @@ document.addEventListener('loadedmetadata', e => { if (e.target && e.target.id =
 let _mvContOrigParent = null;
 let _mvContOrigNextSibling = null;
 
+// the space the player takes at the bottom, measured because it differs per theme (glassy floats it, mobile puts it above the nav)
+function _mvSyncPlayerH() {
+  const p = document.getElementById('player');
+  if (!p) return;
+  const r = p.getBoundingClientRect();
+  document.documentElement.style.setProperty('--player-h', Math.max(0, window.innerHeight - r.top) + 'px');
+}
+
 function _mvEnsureScrim() {
   if (document.getElementById('mv-fs-scrim')) return;
   const scrim = document.createElement('div');
@@ -25790,6 +25802,7 @@ function _mvEnsureScrim() {
   scrim.onclick = toggleMvFullscreen;
   document.body.appendChild(scrim);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && _mvFullscreenOpen) _mvCloseFullscreen(); });
+  window.addEventListener('resize', () => { if (_mvFullscreenOpen) _mvSyncPlayerH(); });
 }
 
 function _mvEnsureFsControls(cont) {
@@ -25821,6 +25834,7 @@ function _mvOpenFullscreen() {
   _mvContOrigNextSibling = cont.nextSibling;
   document.body.appendChild(cont);
 
+  _mvSyncPlayerH();
   _mvFullscreenOpen = true;
   document.body.classList.add('mv-fs');
 }
