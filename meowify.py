@@ -32761,9 +32761,18 @@ class VirtualList {
     this._render();
   }
   _base(i) { return i * this.ROW_H + (this._gapAt > 0 && i >= this._gapAt ? (this._gap || 0) : 0); }
+  _gapB() {
+    const d = this._drag;
+    if (!d) return this._gapAt;
+    let nA = 0;
+    for (const k of d.group) if (k < this._gapAt) nA++;
+    const vb = this._gapAt - nA;
+    return d.slot < vb ? vb + d.group.length : vb;
+  }
+  _slotTop(p) { return p * this.ROW_H + (this._gapAt > 0 && p >= this._gapB() ? (this._gap || 0) : 0); }
   _idxAt(y) {
     const g = this._gapAt > 0 ? (this._gap || 0) : 0;
-    if (g) { const b = this._gapAt * this.ROW_H; if (y >= b) y = Math.max(b, y - g); }
+    if (g) { const b = this._gapB() * this.ROW_H; if (y >= b) y = Math.max(b, y - g); }
     return y / this.ROW_H;
   }
   _top(i) {
@@ -32787,10 +32796,7 @@ class VirtualList {
     if (this._gapEl) {
       const _d0 = this._drag, _H = this.ROW_H, _pad = (this._gap - 12) / 2;
       if (_d0) {
-        let _nA = 0;
-        for (const k of _d0.group) if (k < this._gapAt) _nA++;
-        const _vb = this._gapAt - _nA;
-        this._gapEl.style.top = ((_vb < _d0.slot ? _vb : _vb + _d0.group.length) * _H + _pad) + 'px';
+        this._gapEl.style.top = (this._gapB() * _H + _pad) + 'px';
       } else {
         this._gapEl.style.top = 'calc(var(--vrow-h, ' + _H + 'px) * ' + this._gapAt + ' + ' + _pad + 'px)';
       }
@@ -36940,7 +36946,7 @@ function initVlistReorder(vl) {
       el.classList.add('drag-drop');
       el.style.scale = '';
       _sn(el, fin + 1);
-      el.style.translate = '0 ' + vl._base(fin) + 'px';
+      el.style.translate = '0 ' + vl._slotTop(fin) + 'px';
       joinAt(el, commit ? fin : m);
     });
     // the rows that stay: their final index decides whether they still touch a selected neighbour
