@@ -10403,6 +10403,13 @@ def _dbx_merge_db(local_path, remote_path):
                         f'(song_genius.fetched_at IS NULL OR excluded.fetched_at > song_genius.fetched_at)',
                         rows
                     )
+                elif tbl == 'stats_redirects':
+                    c.executemany(
+                        f'INSERT INTO stats_redirects ({col_str}) VALUES ({placeholders}) '
+                        f'ON CONFLICT(old_artist, old_title) DO UPDATE SET new_artist=excluded.new_artist, new_title=excluded.new_title, created_at=excluded.created_at '
+                        f'WHERE excluded.created_at IS NOT NULL AND (stats_redirects.created_at IS NULL OR excluded.created_at > stats_redirects.created_at)',
+                        rows
+                    )
                 elif tbl == 'devices':
                     c.executemany(
                         f'INSERT INTO devices ({col_str}) VALUES ({placeholders}) '
