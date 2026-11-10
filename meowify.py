@@ -14355,46 +14355,10 @@ _DRAG_MAX = 50
 def _drag_clean(s):
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', str(s or '')).strip().rstrip('. ')[:120]
 
-def _drag_embed_cover(path, cover_path):
-    if not cover_path or not os.path.isfile(cover_path) or not path.lower().endswith('.mp3'):
-        return
-    try:
-        from mutagen.id3 import ID3, APIC, ID3NoHeaderError
-        try:
-            tags = ID3(path)
-        except ID3NoHeaderError:
-            tags = ID3()
-        tags.delall('APIC')
-        with open(cover_path, 'rb') as fh:
-            tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=fh.read()))
-        tags.save(path)
-    except Exception as e:
-        _log_library.warning('[drag out] cover embed failed: %s', e)
 
 _DRAG_RESERVED = {'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
                   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'}
 
-def _drag_clean_tags(path, keep_track):
-    """the copy carries the library's data only: no stale track number from the source file (a youtube playlist index
-    survives write_meta when the library track is 0) and no downloader leftovers (comment, purl, synopsis, description, encoder)"""
-    try:
-        if Path(path).suffix.lower() == '.mp3':
-            from mutagen.id3 import ID3
-            tags = ID3(path)
-            for k in list(tags.keys()):
-                if k.startswith('COMM') or k == 'TSSE' or k.lower() in ('txxx:purl', 'txxx:comment', 'txxx:synopsis', 'txxx:description'):
-                    del tags[k]
-            if not keep_track:
-                tags.delall('TRCK')
-            tags.save(path)
-        elif not keep_track:
-            import mutagen
-            f = mutagen.File(path, easy=True)
-            if f is not None and 'tracknumber' in f:
-                del f['tracknumber']
-                f.save()
-    except Exception as e:
-        _log_library.warning('[drag out] tag cleanup failed: %s', e)
 
 _DRAG_JUNK_ID3 = ('comm', 'tsse', 'tenc', 'rva2', 'rvad', 'rgad', 'uslt', 'sylt', 'apic', 'tpe2',
                   'txxx:replaygain', 'txxx:purl', 'txxx:comment', 'txxx:synopsis', 'txxx:description')
