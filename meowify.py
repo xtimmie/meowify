@@ -1175,6 +1175,15 @@ def init_db():
                     save_cfg(CFG)
         except Exception as _e:
             _log_mv.warning(f'[mv] mv_url migration failed: {_e}')
+        # an earlier build saved offset 0 whenever the align couldn't run, those songs get aligned again
+        try:
+            if not CFG.get('mv_offset0_reset'):
+                c.execute("UPDATE songs SET mv_offset=NULL WHERE mv_offset=0 AND mv_video_id IS NOT NULL")
+                with _cfg_lock:
+                    CFG['mv_offset0_reset'] = True
+                    save_cfg(CFG)
+        except Exception as _e:
+            _log_mv.warning(f'[mv] offset reset failed: {_e}')
         # manual overrides from the song editor: extra plays on top of the real count, loudness that beats the auto measurement
         if 'play_offset' not in _mv_cols:
             c.execute("ALTER TABLE songs ADD COLUMN play_offset INTEGER DEFAULT 0")
@@ -12355,17 +12364,24 @@ def _mv_invalidate(sid):
 
 # youtube answers some requests with the sign in / bot check or a 403, other player clients often get through (same idea as the android download path)
 _MV_CLIENT_FALLBACKS = [None, 'android_vr', 'mweb']
+_mv_good_client = [None]    # the player client that worked last, tried first next time
+_mv_align_broken = [False]  # set when the audio align can't run at all (no ffmpeg), skips the pointless audio downloads
 
 def _mv_ytdlp_run(cmd, timeout):
     """run yt-dlp (cmd must contain the '--' before the url), retrying with other player clients when youtube blocks the request"""
     res = None
-    for client in _MV_CLIENT_FALLBACKS:
+    order = list(_MV_CLIENT_FALLBACKS)
+    if _mv_good_client[0] in order:
+        order.remove(_mv_good_client[0])
+        order.insert(0, _mv_good_client[0])
+    for client in order:
         c = list(cmd)
         if client:
             i = c.index('--')
             c[i:i] = ['--extractor-args', 'youtube:player_client=' + client]
         res = _subrun(c, capture_output=True, text=True, timeout=timeout)
         if res.returncode == 0:
+            _mv_good_client[0] = client
             return res
         err = res.stderr or ''
         if not any(s in err for s in ('Sign in', 'confirm you', '403', 'Requested format is not available')):
@@ -12384,6 +12400,16 @@ def _mv_err_reason(msg):
         return 'youtube took too long to answer'
     return 'could not load the video'
 
+# video_id -> {'headers': headers yt-dlp used for that stream, 'size': exact byte size or None}, filled by _mv_ytdlp_stream_url.
+# the cache download and the proxy need both: some player clients 403 without their own headers, and only the exact size can tell a cut off download from a whole one
+_mv_stream_meta = {}
+
+def _mv_exact_size(url, fmt):
+    m = re.search(r'[?&]clen=(\d+)', url or '')
+    if m:
+        return int(m.group(1))
+    return fmt.get('filesize') or None
+
 def _mv_ytdlp_stream_url(video_id):
     """Get direct video stream URLs for a YouTube video_id via yt-dlp.
     Returns (video_url, expires_at) or raises on failure."""
@@ -12396,30 +12422,37 @@ def _mv_ytdlp_stream_url(video_id):
     if result.returncode != 0:
         raise RuntimeError(f'yt-dlp failed: {result.stderr[:200]}')
     info = json.loads(result.stdout)
-    # find video-only and audio-only streams
-    formats = info.get('formats', [])
-    video_url = None
-    # prefer video-only stream (no audio) for video element (we sync our own audio)
-    for f in reversed(formats):
-        if f.get('vcodec', 'none') != 'none' and f.get('acodec', 'none') == 'none':
-            if f.get('height', 0) <= 1080:
-                video_url = f.get('url')
-                break
-    # fallback: combined stream if no video-only found
-    if not video_url:
+    # manifests (hls / dash) can't be proxied as one file
+    formats = [f for f in info.get('formats', []) if f.get('url') and f.get('protocol', 'https') in ('https', 'http')]
+    fmt = None
+    # what yt-dlp itself picked for the format selector comes first
+    for f in info.get('requested_formats') or []:
+        if f.get('vcodec', 'none') != 'none' and f.get('url') and f.get('protocol', 'https') in ('https', 'http') and (f.get('height') or 0) <= 1080:
+            fmt = f
+            break
+    # then the best video-only stream (no audio, we sync our own audio), then any video stream
+    if not fmt:
         for f in reversed(formats):
-            if f.get('vcodec', 'none') != 'none':
-                if f.get('height', 0) <= 1080:
-                    video_url = f.get('url')
-                    break
-    if not video_url:
+            if f.get('vcodec', 'none') != 'none' and f.get('acodec', 'none') == 'none' and (f.get('height') or 0) <= 1080:
+                fmt = f
+                break
+    if not fmt:
+        for f in reversed(formats):
+            if f.get('vcodec', 'none') != 'none' and (f.get('height') or 0) <= 1080:
+                fmt = f
+                break
+    if not fmt:
         raise RuntimeError('no suitable video stream found')
+    video_url = fmt['url']
     # estimate expiry from url fragment (YouTube stream urls expire in ~6h)
     import re as _re
     exp_m = _re.search(r'[?&]expire=(\d+)', video_url)
     expires_at = int(exp_m.group(1)) if exp_m else int(time.time()) + 3600 * 5
     exp_in = int(expires_at - time.time()) // 60
     _log_mv.debug(f'[mv stream] got url for {video_id} expires_in={exp_in}m')
+    _hd = fmt.get('http_headers') or info.get('http_headers') or {}
+    _mv_stream_meta[video_id] = {'headers': {k: v for k, v in _hd.items() if k.lower() not in ('accept-encoding', 'range', 'host')},
+                                 'size': _mv_exact_size(video_url, fmt)}
     return video_url, expires_at
 
 def _mv_cross_correlate_offset(song_path, mv_audio_path):
@@ -12429,11 +12462,21 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
     Returns None if no confident match found."""
     try:
         np = _import_numpy()
-        ma = _import_miniaudio()
 
         def _load_mono(path, max_secs=120):
-            decoded = ma.decode_file(str(path), ma.SampleFormat.FLOAT32, nchannels=1, sample_rate=22050)
-            samples = np.frombuffer(decoded.samples, dtype=np.float32)
+            try:
+                ma = _import_miniaudio()
+            except ImportError:
+                ma = None  # miniaudio is optional, ffmpeg (yt-dlp needs it anyway) decodes the same way
+            if ma is not None:
+                decoded = ma.decode_file(str(path), ma.SampleFormat.FLOAT32, nchannels=1, sample_rate=22050)
+                samples = np.frombuffer(decoded.samples, dtype=np.float32)
+            else:
+                res = _subrun(['ffmpeg', '-v', 'error', '-t', str(max_secs), '-i', str(path), '-vn', '-ac', '1', '-ar', '22050', '-f', 'f32le', '-'],
+                              capture_output=True, timeout=60)
+                if res.returncode != 0 or not res.stdout:
+                    raise RuntimeError('ffmpeg could not decode ' + Path(str(path)).name)
+                samples = np.frombuffer(res.stdout, dtype=np.float32)
             max_frames = int(max_secs * 22050)
             return samples[:max_frames], 22050
 
@@ -12506,7 +12549,7 @@ def _mv_cross_correlate_offset(song_path, mv_audio_path):
 
     except Exception as e:
         _log_mv.warning(f'[mv xcorr] error: {e}')
-        return None
+        raise  # the caller tells 'could not run' apart from 'no match'
 
 def _mv_persist(song_id, video_id, offset):
     """Persist the aligned offset for the song's video. only writes while the song still has that video (or none), a link changed mid-align must not be overwritten."""
@@ -12618,6 +12661,7 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
         xcorr_ran = False  # stays False when every download failed, then nothing is known about the sync
         for candidate in ordered[:3]:
             if _cancelled(): return
+            if _mv_align_broken[0]: break  # the align can't run on this machine, don't download audio for nothing
             vid = candidate['videoId']
             _log_mv.info(f'[mv] trying candidate: {candidate.get("title")!r} id={vid}')
 
@@ -12654,8 +12698,15 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
                     if not _cancelled():
                         _mv_cache[song_id] = {'status': 'correlating', '_gen': my_gen, 'video_id': vid}
 
-                xcorr_ran = True
-                offset = _mv_cross_correlate_offset(song_path, mv_audio_path)
+                try:
+                    offset = _mv_cross_correlate_offset(song_path, mv_audio_path)
+                    xcorr_ran = True
+                except Exception as _xe:
+                    # the align itself couldn't run (no ffmpeg / decode problem), that says nothing about the sync
+                    _log_mv.warning(f'[mv] align could not run: {_xe}')
+                    offset = None
+                    if isinstance(_xe, (ImportError, FileNotFoundError)):
+                        _mv_align_broken[0] = True
             finally:
                 import shutil as _sh
                 _sh.rmtree(tmp_dir, ignore_errors=True)
@@ -12692,6 +12743,10 @@ def _mv_find_and_cache(song_id, artist, title, my_gen, hint_video_id=None):
         proxy_url = f'/api/mv-proxy/{video_id}'
         _set('ready', video_id=video_id, offset=offset, synced=synced,
              video_url=proxy_url, stream_url=video_url, expires_at=expires_at)
+        try:
+            _mv_warmup_pool.submit(_mv_prefetch_bytes, video_id, video_url)  # whole file to disk, seeks then come from there
+        except Exception:
+            pass
         if persist_it:
             _mv_persist(song_id, video_id, offset)
 
@@ -12715,13 +12770,18 @@ _mv_file_cache   = {}
 _mv_file_lock    = threading.Lock()
 
 def _mv_prefetch_bytes(video_id, stream_url):
-    """Download the full video stream to a local file so the proxy can serve
-    all range requests instantly with no live upstream hits or reconnects."""
+    """Download the whole video stream to a local file in range chunks so the proxy can serve every range request from disk.
+    Only a download that reaches the exact expected size counts as done. A cut off one is thrown away: it used to be served as if
+    complete, and the player then looped the first second of the truncated file."""
+    meta = _mv_stream_meta.get(video_id) or {}
+    expected = meta.get('size')
+    hdrs = dict(meta.get('headers') or {})
+    hdrs.setdefault('User-Agent', 'Mozilla/5.0')
     with _mv_file_lock:
         if video_id in _mv_file_cache:
             return  # already downloading or done
         dest = str(ddir() / 'mv_cache' / f'{video_id}.mp4')
-        _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0}
+        _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0, 'total': expected}
         _evict_paths = []
         for _eid, _ent in list(_mv_file_cache.items()):
             if len(_mv_file_cache) <= 8:
@@ -12730,39 +12790,78 @@ def _mv_prefetch_bytes(video_id, stream_url):
                 del _mv_file_cache[_eid]
                 _evict_paths.append(_ent['path'])
     for _ep in _evict_paths:
-        try:
-            os.unlink(_ep)
-        except OSError:
-            pass
+        for _p in (_ep, _ep + '.ok'):
+            try:
+                os.unlink(_p)
+            except OSError:
+                pass
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        req = _urllib_request.Request(stream_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with _urllib_request.urlopen(req, timeout=30) as r:
-            with open(dest, 'wb') as f:
-                while True:
-                    chunk = r.read(512 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+        chunk_len = 4 * 1024 * 1024
+        pos = 0
+        total = expected
+        with open(dest, 'wb') as f:
+            while total is None or pos < total:
+                end = pos + chunk_len - 1
+                if total is not None:
+                    end = min(end, total - 1)
+                h = dict(hdrs)
+                h['Range'] = f'bytes={pos}-{end}'
+                req = _urllib_request.Request(stream_url, headers=h)
+                with _urllib_request.urlopen(req, timeout=30) as r:
+                    cr = r.headers.get('Content-Range') or ''
+                    whole = r.status == 200
+                    if whole:
+                        if pos != 0:
+                            raise RuntimeError('server ignored the range request')
+                        cl = r.headers.get('Content-Length')
+                        if cl and cl.isdigit():
+                            total = int(cl)
+                    elif '/' in cr and cr.rsplit('/', 1)[1].isdigit():
+                        total = int(cr.rsplit('/', 1)[1])
+                    if expected is not None and total is not None and total != expected:
+                        raise RuntimeError(f'size mismatch: server says {total} bytes, expected {expected}')
                     with _mv_file_lock:
                         if video_id in _mv_file_cache:
-                            _mv_file_cache[video_id]['size'] = f.tell()
+                            _mv_file_cache[video_id]['total'] = total
+                    got = 0
+                    while True:
+                        buf = r.read(512 * 1024)
+                        if not buf:
+                            break
+                        f.write(buf)
+                        f.flush()  # the proxy reads this file while it is still being written
+                        got += len(buf)
+                        pos += len(buf)
+                        with _mv_file_lock:
+                            if video_id in _mv_file_cache:
+                                _mv_file_cache[video_id]['size'] = pos
+                    if got == 0:
+                        raise RuntimeError(f'empty chunk at byte {pos}')
+                    if whole:
+                        break
         size = os.path.getsize(dest)
         if size == 0:
             raise RuntimeError('empty response from CDN')
+        if total is not None and size != total:
+            raise RuntimeError(f'incomplete download {size}/{total} bytes')
+        with open(dest + '.ok', 'w') as _okf:
+            _okf.write(str(size))  # marks the file as complete, only files with this marker are trusted after a restart
         with _mv_file_lock:
             if video_id in _mv_file_cache:
                 _mv_file_cache[video_id]['done'] = True
                 _mv_file_cache[video_id]['size'] = size
-        _log_mv.info(f'[mv warm] file-cached {size // 1024 // 1024}MB for {video_id}')
+                _mv_file_cache[video_id]['total'] = size
+        _log_mv.info(f'[mv warm] file-cached {size / 1048576:.1f}MB for {video_id}')
     except Exception as e:
         _log_mv.warning(f'[mv warm] file-prefetch failed {video_id}: {e}')
         with _mv_file_lock:
             _mv_file_cache.pop(video_id, None)
-        try:
-            os.unlink(dest)
-        except OSError:
-            pass
+        for _p in (dest, dest + '.ok'):
+            try:
+                os.unlink(_p)
+            except OSError:
+                pass
 
 def _mv_warm_stream_url(song_id, video_id, offset):
     """Fetch a fresh stream URL for a known video_id, populate _mv_cache,
@@ -13051,7 +13150,7 @@ def api_mv_proxy(video_id):
         if start < available and (done or req_end < available):
             actual_end = min(req_end, available - 1)
             length = actual_end - start + 1
-            total = str(available) if done else '*'
+            total = str(fc.get('total') or available) if (done or fc.get('total')) else '*'
             def _file_generate(path, s, l):
                 with open(path, 'rb') as f:
                     f.seek(s)
@@ -13072,7 +13171,8 @@ def api_mv_proxy(video_id):
                             headers=resp_headers, direct_passthrough=True)
 
     # live upstream fallback (file not ready or seek past downloaded portion)
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = dict((_mv_stream_meta.get(video_id) or {}).get('headers') or {})
+    headers.setdefault('User-Agent', 'Mozilla/5.0')
     if range_hdr:
         headers['Range'] = range_hdr
     try:
@@ -15759,7 +15859,7 @@ html.nb-rsidebars :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar),
 html.nb-ctx :is(#ctx,#dl-panel-float),
 html.nb-modal :is(.mbox,#modal-overlay),
 html.nb-pinned .list-header.pinned,
-html.nb-lightbox :is(#cover-lightbox-bg,#cover-lightbox-close,.cover-lightbox-zoom-bar),
+html.nb-lightbox :is(#cover-lightbox-bg,#cover-lightbox-close,.cover-lightbox-zoom-bar,#mv-fs-scrim),
 html.nb-popup #set-pc-overlay,
 html.nb-video .mv-ctl-btn,
 html.nb-mu :is(.dialog-backdrop,[data-mu-dialog],[data-mu-sheet]>*){
@@ -25051,23 +25151,31 @@ function renderNowPlaying(_preArg) {
 }
 
 /* ── MV fullscreen ── */
-/* scrim: full-viewport dark overlay behind the reparented video container */
+/* scrim: dims and blurs the app behind the video, same look as the cover lightbox. the player (z-index 120) sits above it, untouched */
 #mv-fs-scrim{
   position:fixed;inset:0;z-index:118;
-  background:#000;
+  background:rgba(0,0,0,.58);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
   opacity:0;pointer-events:none;
-  transition:opacity 260ms var(--ease-out);
+  transition:opacity 280ms var(--ease-out);
 }
 body.mv-fs #mv-fs-scrim{opacity:1;pointer-events:auto;}
-/* container is reparented to <body> by JS on open, so position:fixed works
-   without being trapped by transform/backdrop-filter ancestors in the sidebar */
+/* container is reparented to <body> by JS on open, so position:fixed works without being trapped by transform/backdrop-filter
+   ancestors in the sidebar. it has inline position/inset/z-index (cover mode), hence the !important. centered above the player, 16:9 */
 body.mv-fs #np-mv-container{
-  position:fixed;
-  inset:0 0 var(--player-h,88px) 0;
-  border-radius:0!important;
-  z-index:119;
+  position:fixed!important;
+  left:50%!important;right:auto!important;bottom:auto!important;
+  top:calc((100vh - var(--player-h,88px)) / 2)!important;
+  width:min(88vw, calc((100vh - var(--player-h,88px) - 10vh) * 16 / 9))!important;
+  height:auto!important;aspect-ratio:16/9;
+  transform:translate(-50%,-50%);
+  border-radius:16px!important;
+  box-shadow:0 24px 80px rgba(0,0,0,.6);
+  z-index:119!important;
   display:block!important;
+  animation:mv-fs-in 260ms var(--ease-out) both;
 }
+@keyframes mv-fs-in{from{opacity:0;transform:translate(-50%,-50%) scale(.96);}to{opacity:1;transform:translate(-50%,-50%) scale(1);}}
 body.mv-fs #np-mv-video{object-fit:contain!important;}
 /* overlay controls: fade in on hover/focus */
 body.mv-fs #np-mv-top-bar,
@@ -25179,6 +25287,7 @@ function _mvClearStatus() {
 }
 
 let _mvErr = null; // {sid, vid}: the saved link of a song whose video failed to load, so the menu still knows it
+const _mvSyncToasted = new Set(); // songs that already showed the could not sync hint this session
 
 const _MV_ICO = {
   link:   '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.7-1.7"/></svg>',
@@ -25343,6 +25452,12 @@ function _mvSyncVideo() {
 
   const vid = _mvVideo();
   if (!vid) return;
+  // a video shorter than the song (cut off download) holds its last frame. calling play() on an ended video restarts it, that looped the first second
+  const _dur = vid.duration;
+  if (isFinite(_dur) && _dur > 0 && targetT >= _dur - 0.05) {
+    if (!vid.paused) vid.pause();
+    return;
+  }
   const drift = Math.abs(vid.currentTime - targetT);
   // normal drift: tolerate up to 0.6s to avoid pointless seeks while playing
   // large drift (seek/skip): debounce 120ms so rapid seek drags don't queue 20 seeks
@@ -25437,7 +25552,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
         }
       }
       _mvClearStatus();
-      if (data.synced === false) _showSyncToast('could not sync this video automatically, set the offset in the video menu');
+      if (data.synced === false && !_mvSyncToasted.has(sid)) { _mvSyncToasted.add(sid); _showSyncToast('could not sync this video automatically, set the offset in the video menu'); }
       console.log('[mv] poll ready: sid=' + sid + ' offset=' + data.offset + ' url=' + data.video_url);
       vid.onerror = null;
       const srcChanged = vid.src !== data.video_url;
@@ -25617,7 +25732,7 @@ async function _mvReloadCurrent() {
         _mvOffset = data.offset || 0;
         _mvActive = wasActive;
         _mvErr = null;
-        if (data.synced === false) _showSyncToast('could not sync this video automatically, set the offset in the video menu');
+        if (data.synced === false && !_mvSyncToasted.has(sid)) { _mvSyncToasted.add(sid); _showSyncToast('could not sync this video automatically, set the offset in the video menu'); }
         _mvSetActiveClass(wasActive);
         const vid2 = _mvVideo();
         if (vid2 && data.video_url !== oldSrc) {
@@ -25660,6 +25775,7 @@ function _mvEnsureScrim() {
   scrim.id = 'mv-fs-scrim';
   scrim.onclick = toggleMvFullscreen;
   document.body.appendChild(scrim);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && _mvFullscreenOpen) _mvCloseFullscreen(); });
 }
 
 function _mvEnsureFsControls(cont) {
@@ -44490,8 +44606,17 @@ def main():
         if mv_cache_dir.exists():
             for f in mv_cache_dir.glob('*.mp4'):
                 size = f.stat().st_size
-                if size > 0:
-                    _mv_file_cache[f.stem] = {'path': str(f), 'done': True, 'size': size}
+                ok = Path(str(f) + '.ok')
+                try:
+                    good = size > 0 and ok.exists() and int(ok.read_text().strip()) == size
+                except Exception:
+                    good = False
+                if good:
+                    _mv_file_cache[f.stem] = {'path': str(f), 'done': True, 'size': size, 'total': size}
+                else:
+                    # unverified file (an older build, or a download that was cut off): it is not trusted, it is deleted
+                    f.unlink(missing_ok=True)
+                    ok.unlink(missing_ok=True)
             if _mv_file_cache:
                 _log_mv.info(f'[mv] restored {len(_mv_file_cache)} cached video files')
     except Exception as _e:
