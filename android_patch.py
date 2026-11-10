@@ -10,6 +10,15 @@ import sys
 
 # ── 1. get data dir from env (set by ServerService before calling us) ─────────
 _data_dir = os.environ.get("MEOWIFY_DATA_DIR", "")
+
+def _ensure_ota_env():
+    # android_patch.py lives in filesDir/meowify (bundled) or filesDir/meowify/ota (overlay)
+    here = os.path.dirname(os.path.abspath(__file__))
+    ota = here if os.path.basename(here) == "ota" else os.path.join(here, "ota")
+    if not os.environ.get("MEOWIFY_OTA_DIR"):
+        os.environ["MEOWIFY_OTA_DIR"] = ota
+    os.makedirs(os.environ["MEOWIFY_OTA_DIR"], exist_ok=True)
+    return os.environ["MEOWIFY_OTA_DIR"]
 if _data_dir:
     os.makedirs(_data_dir, exist_ok=True)
 
@@ -615,9 +624,15 @@ def main_android(port: int, data_dir: str = "", ffmpeg_path: str = ""):
     # do not insert the data dir here, it would shadow the ota copies
 
     # import meowify — module-level code runs here (load_cfg etc)
+    _ota_dir = _ensure_ota_env()
     import meowify
+    # module may have been imported earlier with the env var missing
+    if getattr(meowify, "_OTA_DIR", None) is None:
+        from pathlib import Path as _P
+        meowify._OTA_DIR = _P(_ota_dir)
 
     # apply all patches immediately after import
+    print("ota-diag env=%r mod=%r is_android=%r" % (os.environ.get("MEOWIFY_OTA_DIR"), getattr(meowify, "_OTA_DIR", "MISSING"), getattr(meowify, "IS_ANDROID", "MISSING")), flush=True)
     _patch_paths(meowify)
     import sys as _sys2
     _sys2.__stderr__.write(f'[android_patch] _HOME={meowify._HOME} ddir={meowify.ddir()}\n')
