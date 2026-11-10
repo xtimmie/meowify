@@ -959,6 +959,8 @@ def _backup_pre_migrate():
             cn.close()
         if cols and (ver < _SCHEMA_VERSION or 'audio_available' not in cols):
             _backup_snapshot('premigrate')
+        elif ver > _SCHEMA_VERSION:
+            _log_backup.warning(f'[db] library.db has schema {ver} but this build only knows {_SCHEMA_VERSION}, it was last opened by a newer build')
     except Exception as e:
         _log_backup.warning(f'[snapshot] pre-migrate check failed: {e}')
 
@@ -1480,7 +1482,7 @@ def init_db():
                 FROM songs
             """)
         _ensure_songs_display_view(c)
-        c.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        c.execute(f"PRAGMA user_version = {max(int(version or 0), _SCHEMA_VERSION)}")
 
         # backfill track_num from album_tracks where songs.track_num is still 0
         c.execute("""
@@ -8629,6 +8631,8 @@ def _dbx_push_manifest_locked(dbx, extra_song_sync_ids=None, extra_cover_names=N
             'audio_sync_ids': audio_sync_ids,
             'cover_names':   cover_names,
             'db_hash':       _dbx_db_hash(local_db),
+            'schema':        _SCHEMA_VERSION,
+            'app_version':   APP_VERSION,
             'live':          int(_time.time()) if _dbx_live_flag[0] else 0,
         }
         _sig = (device_name, _dbx_live_flag[0], hash(frozenset(song_sync_ids)), hash(frozenset(audio_sync_ids)), hash(frozenset(cover_names)))
@@ -9287,6 +9291,13 @@ def _dbx_cleanup_delivered(dbx, peer_manifests):
     return deleted, freed
 
 _dbx_synced = {'remote': None, 'stamp': None}
+_dbx_remote_schema = [0]
+_dbx_schema_warned = [False]
+_dbx_deferred_seen = set()
+_DBX_KNOWN_ACTIONS = frozenset(('song_delete', 'song_unlink_album', 'song_set_album', 'album_delete', 'artist_delete', 'pl_delete', 'pl_add', 'pl_remove', 'pref_reset', 'mv_delete', 'lyrics_delete'))
+
+def _dbx_schema_ahead():
+    return bool(CFG.get('dbx_schema_guard', True)) and _dbx_remote_schema[0] > _SCHEMA_VERSION
 
 def _dbx_snapshot_gz(src, dst):
     import gzip, shutil
@@ -9540,6 +9551,11 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
                     _tmp_gz = Path(local_db).parent / 'library_remote.db.gz'
                     if _dbx_pull_file(dbx, remote_db, _tmp_gz) and _dbx_gunzip(_tmp_gz, tmp):
                         _backup_daily()
+                        try:
+                            with contextlib.closing(sqlite3.connect(str(tmp), timeout=10)) as _rk:
+                                _dbx_remote_schema[0] = int(_rk.execute("PRAGMA user_version").fetchone()[0] or 0)
+                        except Exception:
+                            pass
                         _merge_ok = _dbx_merge_db(local_db, tmp)
                         tmp.unlink(missing_ok=True)
                         if _merge_ok is False:
@@ -9591,7 +9607,14 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             known_remote = _remote_db_hash_after_pull if _remote_db_hash_after_pull is not None \
                            else _dbx_remote_hash(dbx, remote_db)
             _unchanged = bool(known_remote) and _dbx_synced['stamp'] is not None and _db_stamp_pre == _dbx_synced['stamp']
-            if not _db_merge_failed and not _unchanged:
+            _schema_ahead = _dbx_schema_ahead()
+            if _schema_ahead != _dbx_schema_warned[0]:
+                _dbx_schema_warned[0] = _schema_ahead
+                if _schema_ahead:
+                    _log_dbx.warning(f'[dbx db] shared library is schema {_dbx_remote_schema[0]}, this build only knows {_SCHEMA_VERSION}: not uploading the library so it does not downgrade it, update this device to sync it again')
+                else:
+                    _log_dbx.info('[dbx db] shared library schema is compatible again, uploads resume')
+            if not _db_merge_failed and not _unchanged and not _schema_ahead:
                 # run lightweight integrity cleanup before upload so peers don't
                 # inherit duplicate album_tracks rows or stale pref_reset storms
                 try:
@@ -9611,7 +9634,7 @@ def _dbx_sync_now_impl(push_db=True, pull_db=True, push_songs=False, pull_songs=
             elif known_remote and not _db_merge_failed:
                 _dbx_synced['remote'] = known_remote
             _log_dbx.info('[dbx db] checkpoint=%s hash_differs=%s stamp_unchanged=%s merge_failed=%s', _cp, local_hash_now != known_remote, _unchanged, _db_merge_failed)
-            if not _db_merge_failed:
+            if not _db_merge_failed and not _schema_ahead:
                 _dbx_synced['stamp'] = _stamp_dec
             with _cfg_lock:
                 CFG['dropbox_last_sync'] = int(_time.time())
@@ -10633,6 +10656,13 @@ def _dbx_pull_actions(dbx, own_device_id):
         for p, v in _fetched.items():
             _dbx_actions_rev[p] = v[0]
         return []
+    _deferred = [a for a in new_actions if a.get('action') not in _DBX_KNOWN_ACTIONS]
+    if _deferred:
+        _kinds = {str(a.get('action')) for a in _deferred}
+        if not _kinds <= _dbx_deferred_seen:
+            _dbx_deferred_seen.update(_kinds)
+            _log_dbx.warning(f'[dbx actions] holding back {len(_deferred)} action(s) from a newer build ({sorted(_kinds)}), they apply once this device is updated')
+        new_actions = [a for a in new_actions if a.get('action') in _DBX_KNOWN_ACTIONS]
     new_actions.sort(key=lambda a: a.get('ts', 0))
     with db() as c:
         for act in new_actions:
