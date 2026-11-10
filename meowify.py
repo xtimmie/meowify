@@ -27243,6 +27243,7 @@ function _lyrMenuItems(song, d, full) {
     if (full) items.push({ sep: true });
   }
   if (!full) return items;
+  if (av.genius) items.push({ _header: true, label: 'display' });
   if (av.genius) items.push({ label: 'show annotations', check: _lyrAnnOn(), fn: () => lyrToggleAnn() });
   if (av.genius) items.push({ label: 'pretty display', check: _lyrPrettyOn(), fn: () => lyrTogglePretty() });
   if (av.genius && _lyrPrettyOn()) items.push({ label: 'artist colors', check: _lyrColOn(), fn: () => lyrToggleCol() });
