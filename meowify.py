@@ -1110,6 +1110,9 @@ def init_db():
             last_src TEXT,
             last_type TEXT
         )""")
+        _pcols = [r[1] for r in c.execute("PRAGMA table_info(lyrics_pref)").fetchall()]
+        if 'mark' not in _pcols:
+            c.execute("ALTER TABLE lyrics_pref ADD COLUMN mark TEXT")
         if version < 5:
             # v4 → v5: add new columns to songs + albums, create artists tables
             cols = [r[1] for r in c.execute("PRAGMA table_info(songs)").fetchall()]
@@ -3125,7 +3128,17 @@ _lyrics_bg_set = set()
 def _cfg_on(key):
     return CFG.get(key, True) not in (False, 0, '0', 'false')
 
+def _lyrics_mark(sid):
+    try:
+        with db() as c:
+            r = c.execute("SELECT mark FROM lyrics_pref WHERE song_id=?", (sid,)).fetchone()
+        return (r[0] or None) if r else None
+    except Exception:
+        return None
+
 def _lyrics_due(sid):
+    if _lyrics_mark(sid):
+        return None
     now = int(time.time())
     with db() as c:
         m = c.execute("SELECT lrc, plain, source, fetched_at FROM lyrics WHERE song_id=?", (sid,)).fetchone()
@@ -13997,6 +14010,11 @@ def api_genius_search_route(sid):
 
 @app.route('/api/songs/<sid>/lyrics', methods=['GET'])
 def api_get_lyrics(sid):
+    mk = _lyrics_mark(sid)
+    if mk:
+        return jsonify({'lrc': None, 'plain': None, 'source': None, 'genius': None, 'manual': None, 'pref': None,
+                        'state': 'instrumental' if mk == 'instrumental' else 'nolyrics',
+                        'instrumental': mk == 'instrumental', 'marked': mk, 'busy': False})
     p = _lyrics_payload(sid)
     if p is None:
         with db() as c:
@@ -14060,6 +14078,18 @@ def api_clear_lyrics(sid):
         _lyrics_prefetch_set.discard(sid)
     return jsonify({'ok': True})
 
+@app.route('/api/songs/<sid>/lyrics/mark', methods=['POST'])
+def api_lyrics_mark(sid):
+    mark = (request.get_json(silent=True) or {}).get('mark')
+    if mark not in (None, 'instrumental', 'none'):
+        return jsonify({'error': 'bad mark'}), 400
+    with db() as c:
+        if not c.execute("SELECT 1 FROM songs WHERE id=?", (sid,)).fetchone():
+            return jsonify({'error': 'not found'}), 404
+        c.execute("INSERT OR IGNORE INTO lyrics_pref (song_id) VALUES (?)", (sid,))
+        c.execute("UPDATE lyrics_pref SET mark=? WHERE song_id=?", (mark, sid))
+    return jsonify({'ok': True})
+
 @app.route('/api/songs/<sid>/lyrics/manual', methods=['PUT'])
 def api_lyrics_manual_put(sid):
     data = request.get_json(silent=True) or {}
@@ -14100,6 +14130,7 @@ def api_lyrics_manual_put(sid):
             if off_v != off_v:
                 off_v = 0.0
             off_v = round(max(-30.0, min(30.0, off_v)), 3)
+        c.execute("UPDATE lyrics_pref SET mark=NULL WHERE song_id=?", (sid,))
         plain_v = (data.get('plain') or '') if 'plain' in data else (row[0] if row else '')
         if 'items' in data:
             synced_v = json.dumps(items) if items is not None else None
@@ -26360,6 +26391,14 @@ async function lyrManualDelete() {
   if (S.cur && S.cur.id === song.id) renderLyricsForSong(song);
 }
 
+async function lyrMark(mark) {
+  const song = S.cur;
+  if (!song) return;
+  await api('POST', '/api/songs/' + song.id + '/lyrics/mark', { mark }).catch(() => {});
+  _lyrMem.delete(song.id);
+  if (S.cur && S.cur.id === song.id) renderLyricsForSong(song);
+}
+
 function lyrToggleAnn() {
   const on = !_lyrAnnOn();
   CFG.lyrics_annotations = on;
@@ -27098,13 +27137,19 @@ function _lyrMenuItems(song, d, full) {
     if (rs.length) { items.push({ sep: true }); rs.forEach(x => items.push(x)); items.push({ sep: true }); }
     items.push({ label: 'delete manual lyrics', icon: MEOW_ICONS.trash, err: true, fn: () => lyrManualDelete() });
   }
-  items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
+  if (d.state !== 'ok') {
+    const mk = d.marked || null;
+    if (mk !== 'instrumental') items.push({ label: 'mark as instrumental', fn: () => lyrMark('instrumental') });
+    if (mk !== 'none') items.push({ label: 'mark as no lyrics', fn: () => lyrMark('none') });
+    if (mk) items.push({ label: 'remove mark', icon: MEOW_ICONS.close, fn: () => lyrMark(null) });
+  }
+  if (!d.marked) items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
   return items;
 }
 
 function lyrContext(e) {
   const d = S.lyricsData, song = S.cur;
-  if (!d || !song || (d.state !== 'ok' && d.state !== 'none')) return;
+  if (!d || !song || !['ok', 'none', 'instrumental', 'nolyrics'].includes(d.state)) return;
   e.preventDefault();
   showCtx(e, _lyrMenuItems(song, d, true));
 }
@@ -27184,6 +27229,18 @@ function _lyrDraw(song, data, forceSynced) {
   if (hdr) hdr.textContent = song.title || 'lyrics';
   const st = data.state || ((data.lrc || data.plain) ? 'ok' : 'none');
 
+  if (data.marked) {
+    _lrcLines = [];
+    _lyrToolbar(false, 'lrclib', false);
+    _updateLyricsSyncBtn(false, false, false);
+    lyrAnnClose();
+    const _mi = data.marked === 'instrumental';
+    body.innerHTML = `<div style="padding:20px 0;text-align:center">
+      <div style="color:var(--color-on-surface-variant);font:var(--type-body-medium);font-variation-settings:var(--fv-body);margin-bottom:4px">${_mi ? 'this song is an instrumental' : 'this song has no lyrics'}</div>
+      <div style="color:var(--color-on-surface-variant);font:var(--type-label-small);font-variation-settings:var(--fv-label);opacity:.7">marked by you</div>
+    </div>`;
+    return;
+  }
   if (st === 'instrumental') {
     _lrcLines = [];
     _lyrToolbar(false, 'lrclib', false);
@@ -27876,7 +27933,7 @@ function _npLrcSectionHtml(song) {
   }
   if (S.lyricsData) {
     _npLrcMode = 'none';
-    return box('<div class="np-lrc-none">' + (S.lyricsData.instrumental ? 'instrumental' : 'no lyrics found') + '</div>');
+    return box('<div class="np-lrc-none">' + (S.lyricsData.instrumental ? 'instrumental' : S.lyricsData.marked ? 'no lyrics' : 'no lyrics found') + '</div>');
   }
   _npLrcMode = 'loading';
   return box('<div class="np-lrc-none" id="np-lrc-loading">searching...</div>');
