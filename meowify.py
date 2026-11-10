@@ -15445,7 +15445,7 @@ body.nav-anim-on #app.mobile :is(.set-anim-fwd,.set-anim-back){animation:none}
 #vc-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar{width:8px}
 body.design-glassy #app:not(.mobile) #content-area #vc::-webkit-scrollbar-thumb{background:rgba(255,255,255,.25);border-radius:9999px}
-body.design-glassy #app:not(.mobile) #content-area *::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
+body.design-glassy #app:not(.mobile) #content-area *:not(.qsw-list)::-webkit-scrollbar-track{margin-bottom:var(--bar-track-margin)}
 body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc::-webkit-scrollbar-track{margin-top:calc(var(--frame-r) / 2)}
 #app:not(.mobile) :is(.qs-hdr,.lyrics-hdr){margin-bottom:10px;padding:8px 16px;position:relative}
 #app.mobile :is(.qs-hdr,.lyrics-hdr){margin-bottom:8px;position:relative}
