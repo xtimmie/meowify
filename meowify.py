@@ -12222,6 +12222,7 @@ def api_app_icon():
         return jsonify({'error': 'no icon data'}), 400
     try:
         _ICON_DIR.mkdir(parents=True, exist_ok=True)
+        _log_server.info(f'[icon] export request live={bool(d.get("live"))} sizes={len(pngs)} dir={_ICON_DIR}')
         if d.get('live') and sys.platform != 'win32':
             return jsonify({'ok': True})
         if d.get('live'):
@@ -12229,7 +12230,7 @@ def api_app_icon():
             tmp = _ICON_DIR / 'app-live.ico.new'
             tmp.write_bytes(_ico_pack(pngs))
             os.replace(tmp, live)
-            _icon_set_window(live)
+            _log_server.info(f'[icon] live window set: {_icon_set_window(live)}')
             return jsonify({'ok': True})
         if sys.platform == 'win32':
             tmp = _ICON_DIR / 'app.ico.new'
@@ -12239,7 +12240,9 @@ def api_app_icon():
         else:
             _icon_apply_linux(max(pngs, key=lambda x: x[0])[1])
         _ICON_SIG.write_text(str(d.get('sig') or ''), encoding='utf-8')
+        _log_server.info(f'[icon] wrote {_ICON_PATH}')
     except Exception as e:
+        _log_server.warning(f'[icon] export failed: {e!r} dir={_ICON_DIR}')
         return jsonify({'error': str(e)}), 500
     return jsonify({'ok': True})
 
@@ -16594,10 +16597,10 @@ body.seek-on #app.mobile #player .seek-btn{display:none!important}
 #bnowplaying.active #np-line1 { width: 12px }
 #bnowplaying.active #np-line2 { width: 8px }
 #bnowplaying.active #np-rect {
-  height: 32px;
-  x: 1;
-  width: 22px;
-  y: -4;
+  height: 31px;
+  x: -1;
+  width: 26px;
+  y: -3;
 }
 #bnowplaying.active #np-playb { transform: translateY(-4px); }
 
