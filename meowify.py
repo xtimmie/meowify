@@ -16238,10 +16238,10 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 @supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
-.q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
-.q-active-start::before{content:'shuffled';position:absolute;top:-7px;left:50%;transform:translateX(-50%);padding:0 8px;font-size:9px;line-height:13px;letter-spacing:.08em;white-space:nowrap;color:var(--color-on-surface-variant);background:var(--color-surface-container-lowest);pointer-events:none;z-index:1;}
-.song-list>.q-active-start{margin-top:34px!important;box-shadow:none;}
-.song-list>.q-active-start::before{box-sizing:border-box;top:-24px;left:5px;right:5px;transform:none;height:14px;padding:0;background:none;text-align:center;border-bottom:1px solid var(--color-outline-variant,rgba(128,128,128,.35));}
+.q-shift{translate:0 20px;}
+.q-div{position:absolute;left:5px;right:5px;top:-17px;height:14px;display:flex;align-items:center;gap:8px;pointer-events:none;z-index:1;}
+.q-div i{flex:1;height:1px;background:var(--color-outline-variant,rgba(128,128,128,.45));}
+.q-div b{font-weight:500;font-size:9px;line-height:13px;letter-spacing:.08em;color:var(--color-on-surface-variant);}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
@@ -28232,6 +28232,7 @@ function _makeQswRow(s, i) {
     + '<button class="smenu-btn mu-ripple" style="opacity:1;width:24px;height:24px;display:flex;align-items:center;justify-content:center" title="cancel">' + MEOW_ICONS.close + '</button>'
     + _SEL_HANDLE
     + items;
+  if (i > 0 && i === (S._qActiveFrom || 0)) el.insertAdjacentHTML('beforeend', '<div class="q-div"><i></i><b>shuffled</b><i></i></div>');
   _qBindRow(el);
   return el;
 }
@@ -28330,7 +28331,7 @@ function _makeQueueRowBase(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) && !s._qa ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) && !s._qa ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '') + ((S._qActiveFrom || 0) > 0 && i >= (S._qActiveFrom || 0) ? ' q-shift' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -28861,6 +28862,9 @@ function renderQueueSidebar() {
         if (sn && sn.textContent) sn.textContent = _qNum(i);
         r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
         r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
+        r.classList.toggle('q-shift', (S._qActiveFrom || 0) > 0 && i >= (S._qActiveFrom || 0));
+        r.querySelector(':scope > .q-div')?.remove();
+        if (i > 0 && i === (S._qActiveFrom || 0)) r.insertAdjacentHTML('beforeend', '<div class="q-div"><i></i><b>shuffled</b><i></i></div>');
         r.classList.toggle('q-after-sw', _qswAfter(i));
       });
       _qSig = S.queue.length + ':' + S.queue.map(s => s.id + '|' + (s.title || '')).join(',') + '@' + (S._qActiveFrom || 0);
