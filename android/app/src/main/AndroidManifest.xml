@@ -43,6 +43,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".RestartActivity"
+            android:process=":restarter"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service
             android:name=".ServerService"
             android:exported="false"
