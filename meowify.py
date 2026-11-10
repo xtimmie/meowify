@@ -32761,18 +32761,31 @@ class VirtualList {
     this._render();
   }
   _base(i) { return i * this.ROW_H + (this._gapAt > 0 && i >= this._gapAt ? (this._gap || 0) : 0); }
-  _gapB() {
+  _vb() {
     const d = this._drag;
     if (!d) return this._gapAt;
     let nA = 0;
     for (const k of d.group) if (k < this._gapAt) nA++;
-    const vb = this._gapAt - nA;
-    return d.slot < vb ? vb + d.group.length : vb;
+    return this._gapAt - nA;
   }
-  _slotTop(p) { return p * this.ROW_H + (this._gapAt > 0 && p >= this._gapB() ? (this._gap || 0) : 0); }
+  _blkBelow(s) {
+    const d = this._drag, vb = this._vb();
+    return s > vb || (s === vb && !!d && d.group[0] >= this._gapAt);
+  }
+  _T(s) { return s * this.ROW_H + (this._gapAt > 0 && this._blkBelow(s) ? (this._gap || 0) : 0); }
+  _slotAt(y) {
+    const d = this._drag, H = this.ROW_H, g = this._gap || 0, m = this.songs.length - d.group.length;
+    if (!(this._gapAt > 0 && g)) return Math.max(0, Math.min(m, Math.round(y / H)));
+    const vb = this._vb(), below = d.group[0] >= this._gapAt;
+    const hiA = Math.min(m, below ? vb - 1 : vb), loB = Math.max(0, below ? vb : vb + 1);
+    let best = -1, bd = Infinity;
+    if (hiA >= 0) { const s = Math.max(0, Math.min(hiA, Math.round(y / H))); best = s; bd = Math.abs(s * H - y); }
+    if (loB <= m) { const s = Math.max(loB, Math.min(m, Math.round((y - g) / H))); const dd = Math.abs(s * H + g - y); if (dd < bd) { best = s; bd = dd; } }
+    return best < 0 ? 0 : best;
+  }
   _idxAt(y) {
     const g = this._gapAt > 0 ? (this._gap || 0) : 0;
-    if (g) { const b = this._gapB() * this.ROW_H; if (y >= b) y = Math.max(b, y - g); }
+    if (g) { const b = this._gapAt * this.ROW_H; if (y >= b) y = Math.max(b, y - g); }
     return y / this.ROW_H;
   }
   _top(i) {
@@ -32796,7 +32809,7 @@ class VirtualList {
     if (this._gapEl) {
       const _d0 = this._drag, _H = this.ROW_H, _pad = (this._gap - 12) / 2;
       if (_d0) {
-        this._gapEl.style.top = (this._gapB() * _H + _pad) + 'px';
+        this._gapEl.style.top = ((this._blkBelow(_d0.slot) ? this._vb() : this._vb() + _d0.group.length) * _H + _pad) + 'px';
       } else {
         this._gapEl.style.top = 'calc(var(--vrow-h, ' + _H + 'px) * ' + this._gapAt + ' + ' + _pad + 'px)';
       }
@@ -36802,12 +36815,12 @@ function initVlistReorder(vl) {
     // closed loop: the ghost's top is measured on screen and walked to where the pointer says it has to be,
     // so zoom (nested or not), scroll and rounding can't leave it drifting off the finger
     const want = vis0 + (lastY - downY);
-    const y = Math.max(0, Math.min(curY + (want - ghost.getBoundingClientRect().top) / z, vl._base(n - 1)));
+    const y = Math.max(0, Math.min(curY + (want - ghost.getBoundingClientRect().top) / z, vl._T(n - 1)));
     curY = y;
     ghost.style.translate = '0 ' + y + 'px';
     // followers ride in a tight stack under the dragged row
     for (const f of folls) f.el.style.translate = '0 ' + (y + Math.min(f.rank, 3) * STACK_GAP) + 'px';
-    const k = Math.max(0, Math.min(n - group.length, Math.round(vl._idxAt(y))));
+    const k = vl._slotAt(y);
     if (k !== vl._drag.slot) {
       vl._drag.slot = k;
       vl._relayout();
@@ -36946,7 +36959,7 @@ function initVlistReorder(vl) {
       el.classList.add('drag-drop');
       el.style.scale = '';
       _sn(el, fin + 1);
-      el.style.translate = '0 ' + vl._slotTop(fin) + 'px';
+      el.style.translate = '0 ' + (vl._T(slot) + r * vl.ROW_H) + 'px';
       joinAt(el, commit ? fin : m);
     });
     // the rows that stay: their final index decides whether they still touch a selected neighbour
