@@ -27139,8 +27139,8 @@ function _lyrMenuItems(song, d, full) {
   }
   if (d.state !== 'ok') {
     const mk = d.marked || null;
-    if (mk !== 'instrumental') items.push({ label: 'mark as instrumental', fn: () => lyrMark('instrumental') });
-    if (mk !== 'none') items.push({ label: 'mark as no lyrics', fn: () => lyrMark('none') });
+    if (mk !== 'instrumental') items.push({ icon: '<svg width="16" height="14" viewBox="0 0 24 20" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M1 3c0-1.1.9-2 2-2h4a2 2 0 011.4.6l1.2 1.2a2 2 0 001.4.6H21a2 2 0 012 2V18a2 2 0 01-2 2H3a2 2 0 01-2-2z"/></svg>', label: 'mark as instrumental', fn: () => lyrMark('instrumental') });
+    if (mk !== 'none') items.push({ icon: '<svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><defs><mask id="ctx-nolyr-m"><rect width="24" height="24" fill="white"/><rect x="7" y="11" width="10" height="2" rx="1" fill="black"/></mask></defs><circle cx="12" cy="12" r="10" fill="currentColor" mask="url(#ctx-nolyr-m)"/></svg>', label: 'mark as no lyrics', fn: () => lyrMark('none') });
     if (mk) items.push({ label: 'remove mark', icon: MEOW_ICONS.close, fn: () => lyrMark(null) });
   }
   if (!d.marked) items.push({ label: 'reload lyrics', icon: MEOW_ICONS.reload, fn: () => lyricsReload(song.id) });
