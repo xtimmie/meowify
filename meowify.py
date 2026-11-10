@@ -16415,6 +16415,7 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
 .q-div{position:absolute;left:10px;right:10px;top:0;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
 .q-div-flow{position:relative;left:auto;right:auto;top:auto;height:20px;margin:0 10px;}
+.vl-drag>.q-div{transition:top .16s var(--ease-out);}
 .q-div i{flex:1;height:1px;border-radius:1px;}
 .q-div i:first-child{background:linear-gradient(90deg,transparent,var(--color-outline-variant,rgba(128,128,128,.5)));}
 .q-div i:last-child{background:linear-gradient(90deg,var(--color-outline-variant,rgba(128,128,128,.5)),transparent);}
@@ -32773,7 +32774,7 @@ class VirtualList {
     while (lo < hi) { const m = (lo + hi) >> 1; if (g[m] < i) lo = m + 1; else hi = m; }
     if (g[lo] === i) return -100000;
     const v = i - lo;
-    return (v < d.slot ? v : v + g.length) * this.ROW_H;
+    return (v < d.slot ? v : v + g.length) * this.ROW_H + (this._gapAt > 0 && i >= this._gapAt ? (this._gap || 0) : 0);
   }
 
   // number a row for the position it has during a reorder drag (rows showing an icon have no text and stay untouched)
@@ -32783,6 +32784,17 @@ class VirtualList {
   }
 
   _relayout() {
+    if (this._gapEl) {
+      const _d0 = this._drag, _H = this.ROW_H, _pad = (this._gap - 12) / 2;
+      if (_d0) {
+        let _nA = 0;
+        for (const k of _d0.group) if (k < this._gapAt) _nA++;
+        const _vb = this._gapAt - _nA;
+        this._gapEl.style.top = ((_vb < _d0.slot ? _vb : _vb + _d0.group.length) * _H + _pad) + 'px';
+      } else {
+        this._gapEl.style.top = 'calc(var(--vrow-h, ' + _H + 'px) * ' + this._gapAt + ' + ' + _pad + 'px)';
+      }
+    }
     const d = this._drag;
     for (const [i, el] of this._nodes) {
       const t = this._top(i);
@@ -36784,12 +36796,12 @@ function initVlistReorder(vl) {
     // closed loop: the ghost's top is measured on screen and walked to where the pointer says it has to be,
     // so zoom (nested or not), scroll and rounding can't leave it drifting off the finger
     const want = vis0 + (lastY - downY);
-    const y = Math.max(0, Math.min(curY + (want - ghost.getBoundingClientRect().top) / z, (n - 1) * vl.ROW_H));
+    const y = Math.max(0, Math.min(curY + (want - ghost.getBoundingClientRect().top) / z, vl._base(n - 1)));
     curY = y;
     ghost.style.translate = '0 ' + y + 'px';
     // followers ride in a tight stack under the dragged row
     for (const f of folls) f.el.style.translate = '0 ' + (y + Math.min(f.rank, 3) * STACK_GAP) + 'px';
-    const k = Math.max(0, Math.min(n - group.length, Math.round(y / vl.ROW_H)));
+    const k = Math.max(0, Math.min(n - group.length, Math.round(vl._idxAt(y))));
     if (k !== vl._drag.slot) {
       vl._drag.slot = k;
       vl._relayout();
@@ -36862,7 +36874,7 @@ function initVlistReorder(vl) {
       if (!el) return;
       el.classList.add('drag-lifted', 'drag-follow');
       if (rk > 3) el.classList.add('drag-far');
-      el.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:' + Math.max(1, 5 - rk) + ';scale:' + (1.02 - Math.min(rk, 3) * 0.02) + ';translate:0 ' + (node ? m * vl.ROW_H : y0) + 'px';
+      el.style.cssText += ';position:absolute;left:0;right:0;top:0;pointer-events:none;z-index:' + Math.max(1, 5 - rk) + ';scale:' + (1.02 - Math.min(rk, 3) * 0.02) + ';translate:0 ' + (node ? vl._base(m) : y0) + 'px';
       folls.push({el, rank: rk, idx: m});
     });
     vl._relayout();
@@ -36928,7 +36940,7 @@ function initVlistReorder(vl) {
       el.classList.add('drag-drop');
       el.style.scale = '';
       _sn(el, fin + 1);
-      el.style.translate = '0 ' + (fin * H) + 'px';
+      el.style.translate = '0 ' + vl._base(fin) + 'px';
       joinAt(el, commit ? fin : m);
     });
     // the rows that stay: their final index decides whether they still touch a selected neighbour
