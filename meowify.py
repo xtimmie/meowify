@@ -16413,8 +16413,9 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 @supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
-.q-div{position:absolute;left:5px;right:5px;top:-8px;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
-.song-row.q-active-start{overflow:clip;overflow-clip-margin:14px;}
+.q-div{position:absolute;left:5px;right:5px;top:-16px;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
+.song-row.q-active-start{overflow:clip;overflow-clip-margin:18px;}
+.song-list>.q-active-start,.vl-static>.q-active-start{margin-top:20px!important;}
 .q-div i{flex:1;height:1px;border-radius:1px;}
 .q-div i:first-child{background:linear-gradient(90deg,transparent,var(--color-outline-variant,rgba(128,128,128,.5)));}
 .q-div i:last-child{background:linear-gradient(90deg,var(--color-outline-variant,rgba(128,128,128,.5)),transparent);}
@@ -29003,6 +29004,7 @@ function renderQueueSidebar() {
     wrap.style.cssText = 'width:100%;height:100%';
     inner.appendChild(wrap);
     _qvlist = new VirtualList(wrap, S.queue, '', {}, 'queue-inner', _makeQueueRow);
+    _qvlist.setGap(S._qActiveFrom || 0, 20);
     initVlistReorder(_qvlist);
     _queueAfterFullRender(inner, _hadSig, _prevScroll);
     return;
@@ -32741,9 +32743,23 @@ class VirtualList {
 
   // while a reorder drag runs d = {from, slot, group}: group = sorted indices being dragged (hidden here,
   // drawn as ghosts), slot = how many of the other rows stay above the dragged block
+  setGap(at, px) {
+    this._gapAt = at > 0 ? at : 0;
+    this._gap = px || 0;
+    if (this._inner) this._inner.style.marginBottom = this._gapAt > 0 && this._gap ? this._gap + 'px' : '';
+    this._relayout();
+    this._rendered = {start: -1, end: -1};
+    this._render();
+  }
+  _base(i) { return i * this.ROW_H + (this._gapAt > 0 && i >= this._gapAt ? (this._gap || 0) : 0); }
+  _idxAt(y) {
+    const g = this._gapAt > 0 ? (this._gap || 0) : 0;
+    if (g) { const b = this._gapAt * this.ROW_H; if (y >= b) y = Math.max(b, y - g); }
+    return y / this.ROW_H;
+  }
   _top(i) {
     const d = this._drag;
-    if (!d) return i * this.ROW_H;
+    if (!d) return this._base(i);
     const g = d.group;
     let lo = 0, hi = g.length;
     while (lo < hi) { const m = (lo + hi) >> 1; if (g[m] < i) lo = m + 1; else hi = m; }
@@ -32947,7 +32963,7 @@ class VirtualList {
 
   _scrollToPending() {
     if (this._pendingIdx == null || !this._scroller || !this._inner || !this._inner.isConnected) return;
-    this._scroller.scrollTo({top: this._scrollerOffset + this._pendingIdx * this.ROW_H, behavior: 'instant'});
+    this._scroller.scrollTo({top: this._scrollerOffset + this._base(this._pendingIdx), behavior: 'instant'});
     this._rendered = {start: -1, end: -1};
     this._render();
   }
@@ -32991,9 +33007,9 @@ class VirtualList {
     const viewH = this._scroller.clientHeight;
     const relTop = scrollTop - this._scrollerOffset;
     const buf = this._bufferActive || this.BUFFER;
-    const start = Math.max(0, Math.floor(relTop / rowH) - buf);
+    const start = Math.max(0, Math.floor(this._idxAt(relTop)) - buf);
     const end = Math.min(this.songs.length - 1,
-      Math.ceil((relTop + viewH) / rowH) + buf);
+      Math.ceil(this._idxAt(relTop + viewH)) + buf);
     return {start, end};
   }
 
@@ -33066,8 +33082,8 @@ class VirtualList {
     // be spread across a few frames instead of blocking this one.
     const scrollTop = this._scroller.scrollTop;
     const relTop = scrollTop - this._scrollerOffset;
-    const viewStart = Math.max(0, Math.floor(relTop / this.ROW_H));
-    const viewEnd = Math.min(this.songs.length - 1, Math.ceil((relTop + this._scroller.clientHeight) / this.ROW_H));
+    const viewStart = Math.max(0, Math.floor(this._idxAt(relTop)));
+    const viewEnd = Math.min(this.songs.length - 1, Math.ceil(this._idxAt(relTop + this._scroller.clientHeight)));
 
     const deferred = [];
     for (let i = start; i <= end; i++) {
