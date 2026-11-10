@@ -30128,7 +30128,7 @@ function _sessionBody(position) {
     chaos: isChaos ? [...(S._chaosPlayed || [])] : undefined,
     chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
     chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
-    ctx: (S.shuffle && !isChaos) ? (S._unshuffledQueue || []).map(s => s.id) : undefined,
+    ctx: S.shuffle ? (S._unshuffledQueue || []).map(s => s.id) : undefined,
     afrom: isChaos ? 0 : ((S._qActiveFrom || 0) - S.queue.slice(0, S._qActiveFrom || 0).filter(s => s._qsw).length),
   };
 }
