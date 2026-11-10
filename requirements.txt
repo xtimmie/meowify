@@ -8,7 +8,6 @@ certifi
 flask
 mutagen
 numpy
-certifi
 yt-dlp
 duckduckgo-search
 pillow

@@ -63,7 +63,7 @@ class ServerService : LifecycleService() {
         @Volatile var instance: ServerService? = null
 
         // bump when newer python needs a kotlin/bridge change; ota refuses until the apk has it
-        const val BRIDGE_LEVEL = 1
+        const val BRIDGE_LEVEL = 2
 
         /** called from python (chaquopy `java.jclass`) after an ota update */
         @JvmStatic
