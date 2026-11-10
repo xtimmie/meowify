@@ -16414,6 +16414,7 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
 .q-div{position:absolute;left:5px;right:5px;top:-8px;height:12px;display:flex;align-items:center;gap:10px;pointer-events:none;z-index:2;}
+.song-row.q-active-start{overflow:clip;overflow-clip-margin:14px;}
 .q-div i{flex:1;height:1px;border-radius:1px;}
 .q-div i:first-child{background:linear-gradient(90deg,transparent,var(--color-outline-variant,rgba(128,128,128,.5)));}
 .q-div i:last-child{background:linear-gradient(90deg,var(--color-outline-variant,rgba(128,128,128,.5)),transparent);}
