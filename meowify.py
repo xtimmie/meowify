@@ -12818,12 +12818,13 @@ def _mv_prefetch_bytes(video_id, stream_url):
         if video_id in _mv_file_cache:
             return  # already downloading or done
         dest = str(ddir() / 'mv_cache' / f'{video_id}.mp4')
-        _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0, 'total': expected}
+        _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0, 'total': expected, 'used': time.time()}
         _evict_paths = []
-        for _eid, _ent in list(_mv_file_cache.items()):
+        # least recently used goes first, and a file the player touched in the last 10 minutes stays: warming other songs used to evict the video that was playing
+        for _eid, _ent in sorted(_mv_file_cache.items(), key=lambda kv: kv[1].get('used', 0)):
             if len(_mv_file_cache) <= 4:
                 break
-            if _eid != video_id and _ent.get('done'):
+            if _eid != video_id and _ent.get('done') and time.time() - _ent.get('used', 0) > 600:
                 del _mv_file_cache[_eid]
                 _evict_paths.append(_ent['path'])
     for _ep in _evict_paths:
@@ -13046,10 +13047,11 @@ def api_mv_status(sid):
                 with _mv_file_lock:
                     fc = _mv_file_cache.pop(old_vid, None)
                 if fc:
-                    try:
-                        os.unlink(fc['path'])
-                    except OSError:
-                        pass
+                    for _p in (fc['path'], fc['path'] + '.ok'):
+                        try:
+                            os.unlink(_p)
+                        except OSError:
+                            pass
                 with _mv_warming_lock:
                     _mv_warming.discard(old_vid)
         return jsonify({'ok': True})
@@ -13180,6 +13182,8 @@ def api_mv_proxy(video_id):
     # serve from local file if available and range is within downloaded portion
     with _mv_file_lock:
         fc = _mv_file_cache.get(video_id)
+        if fc:
+            fc['used'] = time.time()
     if fc and os.path.exists(fc['path']) and fc['size'] > 0:
         available = fc['size']
         done = fc['done']
