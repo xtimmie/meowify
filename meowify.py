@@ -12410,7 +12410,41 @@ def _mv_exact_size(url, fmt):
         return int(m.group(1))
     return fmt.get('filesize') or None
 
+def _mv_stream_probe(url, headers):
+    """a tiny range request, tells a usable stream url from one youtube answers with 403"""
+    h = dict(headers or {})
+    h.setdefault('User-Agent', 'Mozilla/5.0')
+    h['Range'] = 'bytes=0-1'
+    try:
+        with _urllib_request.urlopen(_urllib_request.Request(url, headers=h), timeout=10) as r:
+            return r.status in (200, 206)
+    except Exception as e:
+        _log_mv.info(f'[mv stream] probe failed: {e}')
+        return False
+
 def _mv_ytdlp_stream_url(video_id):
+    """tries the player clients one by one, a stream url only counts when youtube actually serves it (some clients hand out urls that 403 on download)"""
+    order = list(_MV_CLIENT_FALLBACKS)
+    if _mv_good_client[0] in order:
+        order.remove(_mv_good_client[0])
+        order.insert(0, _mv_good_client[0])
+    last = None
+    for client in order:
+        try:
+            url, exp = _mv_ytdlp_stream_url_once(video_id, client)
+        except Exception as e:
+            last = e
+            if not any(s in str(e) for s in ('Sign in', 'confirm you', '403', 'Requested format is not available')):
+                raise
+            continue
+        if _mv_stream_probe(url, (_mv_stream_meta.get(video_id) or {}).get('headers')):
+            _mv_good_client[0] = client
+            return url, exp
+        last = RuntimeError('youtube refused the stream url (403)')
+        _log_mv.info(f'[mv] stream url refused with client={client or "default"}, trying the next one')
+    raise last or RuntimeError('no working stream url')
+
+def _mv_ytdlp_stream_url_once(video_id, client=None):
     """Get direct video stream URLs for a YouTube video_id via yt-dlp.
     Returns (video_url, expires_at) or raises on failure."""
     cmd = [
@@ -12418,7 +12452,10 @@ def _mv_ytdlp_stream_url(video_id):
         '--format', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best',
         '--', f'https://www.youtube.com/watch?v={video_id}'
     ]
-    result = _mv_ytdlp_run(cmd, 30)
+    if client:
+        _i = cmd.index('--')
+        cmd[_i:_i] = ['--extractor-args', 'youtube:player_client=' + client]
+    result = _subrun(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f'yt-dlp failed: {result.stderr[:200]}')
     info = json.loads(result.stdout)
@@ -12784,7 +12821,7 @@ def _mv_prefetch_bytes(video_id, stream_url):
         _mv_file_cache[video_id] = {'path': dest, 'done': False, 'size': 0, 'total': expected}
         _evict_paths = []
         for _eid, _ent in list(_mv_file_cache.items()):
-            if len(_mv_file_cache) <= 8:
+            if len(_mv_file_cache) <= 4:
                 break
             if _eid != video_id and _ent.get('done'):
                 del _mv_file_cache[_eid]
@@ -15841,7 +15878,7 @@ body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar::before{display
   aspect-ratio:unset;
   border-radius:14px;
   height:var(--mv-cover-h, min(100%, 220px));
-  width:min(100%, calc(var(--mv-cover-h, min(100%, 220px)) * 16 / 9));
+  width:min(100%, calc(var(--mv-cover-h, min(100%, 220px)) * var(--mv-ar, 1.7778)));
   max-width:100%;
   margin: 0 auto;
 }
@@ -21941,6 +21978,7 @@ function _prefetchMvForSongImpl(song) {
     if (S.cur && CFG.music_video) {
       // reset MV state for new song - keep fullscreen overlay open if it was open
       const _wasFullscreen = _mvFullscreenOpen;
+      const _keepMvWide = _mvActive && !!CFG.music_video_autoplay; // mv to mv: the box keeps its video size, dropping it for a frame showed a square cover
       _mvActive = false;
       _mvSongId = null;
       _mvSyncThrottle = 0; // reset throttle so first sync after new song isn't skipped
@@ -21950,7 +21988,7 @@ function _prefetchMvForSongImpl(song) {
       if (_mvCont) _mvCont.style.display = 'none';
       const _mvB = document.getElementById('np-mv-btn');
       if (_mvB) _mvB.style.display = 'none';
-      _mvSetActiveClass(false);
+      if (!_keepMvWide) _mvSetActiveClass(false);
       // if fullscreen was open, dim the container while the new song's MV loads
       // (display:block!important in .mv-fs keeps it visible despite the display:none above)
       if (_wasFullscreen) {
@@ -25045,10 +25083,10 @@ function renderNowPlaying(_preArg) {
       }
     } else {
       const _mvCont3 = _existCovInner.querySelector('#np-mv-container');
-      const _mvBtn3  = _existCovInner.querySelector('#np-mv-btn');
+      const _mvOvr3  = _existCovInner.querySelector('#np-mv-overlay-controls');
       _existCovInner.innerHTML = `<div class="np-cover-placeholder">♪</div>`;
       if (_mvCont3) _existCovInner.appendChild(_mvCont3);
-      if (_mvBtn3)  _existCovInner.appendChild(_mvBtn3);
+      if (_mvOvr3)  _existCovInner.appendChild(_mvOvr3);
       _existCovInner.onclick = null;
     }
     const _infoBlock = document.getElementById('np-info-block');
@@ -25068,6 +25106,7 @@ function renderNowPlaying(_preArg) {
     }
   } else {
     // ── shell render (first open or breakpoint switch) ──────────────────────
+    _mvCloseFullscreen();
     body.innerHTML = covHtml + mobCtrlsHtml + `<hr class="np-cover-col-sep">` + lrcHtml
       + (!_npHide.details && metaRows.length ? `<div class="np-section-hdr ui-section-hdr">details</div><div class="np-meta-grid ui-panel">${metaHtml}</div>` : '')
       + (!_npHide.nextup ? nextHtml : '');
@@ -25141,7 +25180,7 @@ function renderNowPlaying(_preArg) {
   position:absolute;inset:0;
   background:rgba(255,255,255,.16);
   transform:scaleX(0);transform-origin:left;
-  transition:transform 2.4s linear;
+  transition:transform 2.4s cubic-bezier(.4,0,0,1);
 }
 #np-mv-status-fill.instant{transition:none;}
 #np-mv-status-text{
@@ -25166,8 +25205,8 @@ body.mv-fs #np-mv-container{
   position:fixed!important;
   left:50%!important;right:auto!important;bottom:auto!important;
   top:calc((100vh - var(--player-h,88px)) / 2)!important;
-  width:min(88vw, calc((100vh - var(--player-h,88px) - 10vh) * 16 / 9))!important;
-  height:auto!important;aspect-ratio:16/9;
+  width:min(88vw, calc((100vh - var(--player-h,88px) - 10vh) * var(--mv-ar, 1.7778)))!important;
+  height:auto!important;aspect-ratio:var(--mv-ar, 1.7778);
   transform:translate(-50%,-50%);
   border-radius:16px!important;
   box-shadow:0 24px 80px rgba(0,0,0,.6);
@@ -25176,42 +25215,10 @@ body.mv-fs #np-mv-container{
   animation:mv-fs-in 260ms var(--ease-out) both;
 }
 @keyframes mv-fs-in{from{opacity:0;transform:translate(-50%,-50%) scale(.96);}to{opacity:1;transform:translate(-50%,-50%) scale(1);}}
-body.mv-fs #np-mv-video{object-fit:contain!important;}
+body.mv-fs #np-mv-video{object-fit:cover!important;}
 /* overlay controls: fade in on hover/focus */
 body.mv-fs #np-mv-top-bar,
-body.mv-fs #np-mv-fs-btn,
-body.mv-fs #mv-fs-controls{opacity:0;pointer-events:none;transition:opacity 160ms;}
-body.mv-fs #np-mv-container:hover #np-mv-top-bar,
-body.mv-fs #np-mv-container:hover #np-mv-fs-btn,
-body.mv-fs #np-mv-container:hover #mv-fs-controls,
-body.mv-fs #np-mv-container:focus-within #np-mv-top-bar,
-body.mv-fs #np-mv-container:focus-within #np-mv-fs-btn,
-body.mv-fs #np-mv-container:focus-within #mv-fs-controls{opacity:1;pointer-events:auto;}
-/* fullscreen seek/button controls overlay */
-#mv-fs-controls{
-  position:absolute;bottom:0;left:0;right:0;z-index:3;
-  padding:32px 20px 18px;
-  background:linear-gradient(to top,rgba(0,0,0,.75) 0%,transparent 100%);
-  display:none;flex-direction:column;gap:10px;
-}
-body.mv-fs #mv-fs-controls{display:flex;}
-#mv-fs-seek{display:flex;align-items:center;gap:8px;}
-#mv-fs-seek-bar{
-  flex:1;height:4px;border-radius:99px;
-  background:rgba(255,255,255,.3);cursor:pointer;position:relative;
-}
-#mv-fs-seek-bar::before{content:'';position:absolute;inset:-10px 0;}
-#mv-fs-seek-fill{height:100%;border-radius:99px;background:#fff;width:0%;pointer-events:none;}
-#mv-fs-seek-thumb{
-  position:absolute;top:50%;right:100%;transform:translate(50%,-50%);
-  width:13px;height:13px;border-radius:50%;background:#fff;pointer-events:none;
-  opacity:0;transition:opacity 150ms;
-}
-#mv-fs-seek-bar:hover #mv-fs-seek-thumb{opacity:1;}
-#mv-fs-tlbl{font-size:12px;color:rgba(255,255,255,.8);min-width:34px;text-align:center;font-variant-numeric:tabular-nums;}
-#mv-fs-btns{display:flex;align-items:center;justify-content:center;gap:8px;}
-.mv-fs-btn{width:40px!important;height:40px!important;}
-#mv-fs-playbtn{width:52px!important;height:52px!important;}
+body.mv-fs #np-mv-fs-btn{opacity:0;pointer-events:none;transition:opacity 160ms;}
 /* close button, only in fullscreen, fades like the other controls */
 #mv-fullscreen-close{display:none;position:absolute;top:14px;right:14px;z-index:4;}
 body.mv-fs #mv-fullscreen-close{display:flex;opacity:0;pointer-events:none;transition:opacity 160ms;}
@@ -25297,10 +25304,6 @@ const _MV_ICO = {
   remove: '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
 };
 // fullscreen control icons
-const _MV_FS_PREV  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg>';
-const _MV_FS_NEXT  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:block"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg>';
-const _MV_FS_PLAY  = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:block;translate:1px"><path d="M8 5v14l11-7z"/></svg>';
-const _MV_FS_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:block"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
 const _MV_FS_CLOSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="display:block"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 function _mvCurVidId() {
@@ -25488,6 +25491,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
   // user toggled video off for this specific song - stay on cover art
   if (_mvHiddenSongs.has(sid)) {
     _mvSongId = sid;
+    _mvSetActiveClass(false);
     const btn = _mvBtn();
     if (btn) btn.style.display = '';
     return;
@@ -25523,11 +25527,13 @@ async function _mvLoadForSong(song, reopenFullscreen) {
     if (!CFG.music_video) { _mvClearStatus(); return; } // setting disabled while we were awaiting
     const status = data.status;
     if (status === 'disabled' || status === 'not_found' || status === 'no_video') {
+      _mvSetActiveClass(false);
       _mvClearStatus();
       return;
     }
     if (status === 'error') {
       _mvErr = {sid, vid: data.video_id || null}; // the link is saved, only loading it failed
+      _mvSetActiveClass(false);
       _mvClearStatus();
       _showSyncToast(data.reason || 'could not load the video');
       return;
@@ -25536,6 +25542,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
       // bail if user toggled video off for this song while we were polling
       if (_mvHiddenSongs.has(sid)) {
         _mvSongId = sid;
+        _mvSetActiveClass(false);
         _mvClearStatus();
         return;
       }
@@ -25596,6 +25603,7 @@ async function _mvLoadForSong(song, reopenFullscreen) {
       const interval = status === 'warming' ? 1000 : 3000;
       _mvPollTimer = setTimeout(_poll, interval);
     } else {
+      _mvSetActiveClass(false);
       _mvClearStatus();
     }
   }
@@ -25638,6 +25646,7 @@ function _mvShowVideo(sid, offset, videoUrl) {
   _mvOffset = offset;
   _mvUpdateToggleIcon();
   if (vid.src !== videoUrl) vid.src = videoUrl;
+  _mvSetAr(vid);
   cont.style.display = '';
   _mvSetActiveClass(true);
   if (btn) btn.style.display = 'none';
@@ -25765,6 +25774,11 @@ async function _mvReloadCurrent() {
 }
 
 let _mvFullscreenOpen = false;
+// the video's own aspect ratio, the cover box and the fullscreen box both follow it so nothing is cropped or letterboxed
+function _mvSetAr(v) {
+  if (v && v.videoWidth && v.videoHeight) document.documentElement.style.setProperty('--mv-ar', (v.videoWidth / v.videoHeight).toFixed(4));
+}
+document.addEventListener('loadedmetadata', e => { if (e.target && e.target.id === 'np-mv-video') _mvSetAr(e.target); }, true);
 // original DOM parent of #np-mv-container, saved on fullscreen open for restore
 let _mvContOrigParent = null;
 let _mvContOrigNextSibling = null;
@@ -25779,30 +25793,7 @@ function _mvEnsureScrim() {
 }
 
 function _mvEnsureFsControls(cont) {
-  if (cont.querySelector('#mv-fs-controls')) return;
-  const ctrl = document.createElement('div');
-  ctrl.id = 'mv-fs-controls';
-  ctrl.innerHTML =
-    '<div id="mv-fs-seek">' +
-      '<span id="mv-fs-tcur" class="mv-fs-tlbl">0:00</span>' +
-      '<div id="mv-fs-seek-bar"><div id="mv-fs-seek-fill"></div><div id="mv-fs-seek-thumb"></div></div>' +
-      '<span id="mv-fs-tdur" class="mv-fs-tlbl">0:00</span>' +
-    '</div>' +
-    '<div id="mv-fs-btns">' +
-      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" onclick="prevSong()" title="previous">' + _MV_FS_PREV + '</button>' +
-      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" id="mv-fs-playbtn" data-ps="1" onclick="togglePlay()" title="play/pause">' + _MV_FS_PAUSE + '</button>' +
-      '<button class="cbtn mv-ctl-btn mv-fs-btn mu-ripple" onclick="nextSong()" title="next">' + _MV_FS_NEXT + '</button>' +
-    '</div>';
-  cont.appendChild(ctrl);
-  ctrl.querySelector('#mv-fs-seek-bar').addEventListener('click', e => {
-    const pct = Math.max(0, Math.min(1, e.offsetX / e.currentTarget.offsetWidth));
-    const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || S.cur?.duration || 0;
-    const t = pct * dur;
-    if (engine.hasPaused) { engine._pausedAt = t; updateProg(t, dur); syncMediaAudio(S.cur, true, t); }
-    else { engine.seek(t, getNextId); syncMediaAudio(S.cur, false, t); }
-    _lrcInvalidate();
-    saveSession();
-  });
+  if (cont.querySelector('#mv-fullscreen-close')) return;
   const closeBtn = document.createElement('button');
   closeBtn.id = 'mv-fullscreen-close';
   closeBtn.className = 'cbtn mv-ctl-btn mu-ripple';
@@ -25839,8 +25830,12 @@ function _mvCloseFullscreen() {
   const cont = _mvContainer();
 
   // restore container to its original position in the DOM
-  if (cont && _mvContOrigParent) {
-    _mvContOrigParent.insertBefore(cont, _mvContOrigNextSibling);
+  if (cont && _mvContOrigParent && _mvContOrigParent.isConnected) {
+    _mvContOrigParent.insertBefore(cont, _mvContOrigNextSibling && _mvContOrigNextSibling.parentNode === _mvContOrigParent ? _mvContOrigNextSibling : null);
+  } else if (cont) {
+    // the now playing panel was rebuilt while fullscreen was open, the old parent is gone
+    const _inner = document.getElementById('np-cover-inner');
+    if (_inner && !_inner.contains(cont)) _inner.insertBefore(cont, _inner.querySelector('#np-mv-overlay-controls'));
   }
   _mvContOrigParent = null;
   _mvContOrigNextSibling = null;
@@ -25865,20 +25860,7 @@ updateProg = function(t, d) {
       _mvSyncVideo();
     }
   }
-  // mirror into fullscreen controls if open
-  if (_mvFullscreenOpen) {
-    const pct = d > 0 ? (t / d * 100) : 0;
-    const ff = document.getElementById('mv-fs-seek-fill');
-    const ft = document.getElementById('mv-fs-seek-thumb');
-    const tc = document.getElementById('mv-fs-tcur');
-    const td = document.getElementById('mv-fs-tdur');
-    const pb = document.getElementById('mv-fs-playbtn');
-    if (ff) ff.style.width = pct + '%';
-    if (ft) ft.style.right = (100 - pct) + '%';
-    if (tc) tc.textContent = fmt(t);
-    if (td) td.textContent = fmt(d);
-    if (pb) { const _ps = S.isPlaying ? '1' : '0'; if (pb.dataset.ps !== _ps) { pb.dataset.ps = _ps; pb.innerHTML = S.isPlaying ? _MV_FS_PAUSE : _MV_FS_PLAY; } }
-  }
+  // the fullscreen box has no controls of its own, the player bar below stays on top and does that job
 };
 
 function toggleLyrics() {
