@@ -16238,8 +16238,8 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 @supports not selector(::-webkit-scrollbar){.q-sw .qsw-list{scrollbar-width:thin;scrollbar-color:color-mix(in oklch,var(--color-on-surface) 25%,transparent) transparent;}}
 .qsw-item:hover{background:var(--color-surface-container-high);}
 .qsw-btn{border:none;background:transparent;color:inherit;cursor:pointer;border-radius:var(--radius-sm);}
-.q-active-start{box-shadow:inset 0 1px 0 var(--color-outline-variant,rgba(128,128,128,.35));}
-.q-active-start::before{content:'previously played';position:absolute;top:-7px;left:50%;transform:translateX(-50%);padding:0 8px;font-size:9px;line-height:13px;letter-spacing:.08em;white-space:nowrap;color:var(--color-on-surface-variant);background:var(--color-surface-container-lowest);pointer-events:none;z-index:1;}
+.q-active-start{margin-top:34px!important;}
+.q-active-start::before{content:'shuffled';box-sizing:border-box;position:absolute;top:-24px;left:5px;right:5px;height:14px;text-align:center;font-size:9px;line-height:13px;letter-spacing:.08em;color:var(--color-on-surface-variant);border-bottom:1px solid var(--color-outline-variant,rgba(128,128,128,.35));pointer-events:none;z-index:1;}
 .dl-active,.song-row-mobile.dl-active{
   position:relative;overflow:hidden;
 }
@@ -21363,6 +21363,7 @@ function buildQueue(songs, startIdx, source) {
   S._continueFrom = null; // any fresh queue build cancels a pending "play from here next"
   S._queueScrollPending = true; // queue got replaced by a play from outside it - scroll the open queue to the current song
   S._unshuffledQueue = [...songs];
+  S._shufHist = null;
   S._qActiveFrom = 0;
   S._wrapPlan = null;
   _chaosReset();
@@ -22209,7 +22210,7 @@ function seekClick(e) {
   _commitSeekFrac(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),dur);
 }
 
-function _shuffleRemaining(partial) {
+function _shuffleRemaining(partial, hist) {
   // (re)shuffle the whole context around the current song, respecting the mode. everything that sat before the
   // current song stays on top as the greyed "previously played" rows, the pool for the rest is the full context
   if (!S.queue.length) return;
@@ -22249,8 +22250,8 @@ function _shuffleRemaining(partial) {
     return;
   }
   const cur = S.queue[S.qi] || S.cur;
-  const greyed = S.queue.slice(0, S.qi).filter(s => !s._qsw);
   const inLib = new Set(S.library.map(s => s.id));
+  const greyed = (hist && hist.length ? hist : S.queue.slice(0, S.qi)).filter(s => !s._qsw && inLib.has(s.id));
   const built = _shuffleBuild(ctx.filter(s => inLib.has(s.id)), cur);
   S.queue = [...greyed, ...built.queue];
   S.qi = greyed.length + built.qi;
@@ -22439,10 +22440,13 @@ function toggleShuffle() {
   if (S.shuffle) {
     // while shuffle was off the queue is the context (it may have been edited by hand), so shuffle starts from it
     S._unshuffledQueue = S.queue.filter(s => !s._qsw);
-    _shuffleRemaining();
+    const _hist = S._shufHist;
+    S._shufHist = null;
+    _shuffleRemaining(false, _hist);
   } else {
     // unshuffle: the queue goes back to the full context in its original order. the current song stays what it
     // is, if the context somehow has no row for it, it gets put on top instead of swapping it for another song
+    S._shufHist = S._chaosOn ? [...(S._chaosHistory || [])] : S.queue.slice(0, S.qi).filter(s => !s._qsw);
     const ctx = [..._qCtx()];
     if (S._chaosOn) _chaosLeave();
     const inLib = new Set(S.library.map(s => s.id));
@@ -28315,6 +28319,10 @@ function _makeQueueRow(s, i) {
   if (_qswAfter(i)) _el.classList.add('q-after-sw');
   return _el;
 }
+function _qNum(i) {
+  const af = S._qActiveFrom || 0;
+  return (af && i >= af) ? i - af + 1 : i + 1;
+}
 function _makeQueueRowBase(s, i) {
   const isCur = i === S.qi;
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
@@ -28325,7 +28333,7 @@ function _makeQueueRowBase(s, i) {
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
   el.innerHTML =
-    _snumHtml(i + 1, { bars: isCur, playing: isCur && S.isPlaying })
+    _snumHtml(_qNum(i), { bars: isCur, playing: isCur && S.isPlaying })
   + '<div class="sthumb" style="width:36px;height:36px;font-size:16px;background:var(--color-surface-container-high);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">' + cov + '</div>'
   + '<div class="sinfo" style="overflow:hidden"><div class="stitle">' + esc(s.title || 'untitled') + '</div>'
   + '<div class="sartist">' + esc(s.artist || '') + '</div></div>'
@@ -28790,7 +28798,8 @@ function renderQueueSidebar() {
   }
   // update count badge (skip heavy queue renders when nothing changed)
   const countEl = document.getElementById('qs-count');
-  if (countEl) countEl.textContent = S.queue.length ? S.queue.length + ' songs' : '';
+  const _qActN = S.queue.length - (S._qActiveFrom || 0);
+  if (countEl) countEl.textContent = _qActN > 0 ? _qActN + ' songs' : '';
 
   const _hadSig = _qSig !== null;
   const _prevScroll = inner.scrollTop;
@@ -28847,7 +28856,7 @@ function renderQueueSidebar() {
       _qListEl.querySelectorAll('.song-row').forEach((r, i) => {
         r.dataset.qi = i;
         const sn = r.querySelector('.snum-num');
-        if (sn && sn.textContent) sn.textContent = i + 1;
+        if (sn && sn.textContent) sn.textContent = _qNum(i);
         r.classList.toggle('q-played', i < (S._qActiveFrom || 0) && !(S.queue[i] && S.queue[i]._qa));
         r.classList.toggle('q-active-start', i > 0 && i === (S._qActiveFrom || 0));
         r.classList.toggle('q-after-sw', _qswAfter(i));
