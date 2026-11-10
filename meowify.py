@@ -70,7 +70,7 @@ _miniaudio = None
 
 # ── platform helpers ───────────────────────────────────────────────────────────
 IS_ANDROID = hasattr(sys, 'getandroidapilevel') or 'ANDROID_ROOT' in os.environ
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.2.1'
 _APP_DIR = Path(__file__).resolve().parent
 _IN_VENV = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
 if not IS_ANDROID:
@@ -356,7 +356,7 @@ def db():
     finally:
         conn.close()
 
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 12
 
 import functools as _ft
 
@@ -5385,7 +5385,7 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
                 _sc_prev = _sc_search_preview(q)
                 if not _sc_prev:
                     rc = 1
-                elif _await_video_confirm(did, _sc_prev) != 'download':
+                elif confirm_video and CFG.get('confirm_video_dl', True) and _await_video_confirm(did, _sc_prev) != 'download':
                     _delete_placeholder(sid)
                     _dl(did, status='done', progress=100, song_id=sid, duplicate_sid=None, skipped=True)
                     return
@@ -14295,6 +14295,11 @@ def api_song_details_patch(sid):
         ed = _get_song_user_edits(sid)
         ed['credits'] = credits_new
         _put_song_user_edits(sid, ed)
+    if mv_changed and 'mv_url' in upd and upd['mv_url'] is None:
+        with db() as c:
+            _sr = c.execute("SELECT sync_id FROM songs WHERE id=?", (sid,)).fetchone()
+            if _sr and _sr[0]:
+                _record_sync_action('mv_delete', _sr[0], conn=c)
     if mv_changed or ('mv_offset' in upd and upd['mv_offset'] is None):
         _mv_invalidate(sid)  # new video, or the offset was cleared so it gets aligned again
     elif 'mv_offset' in upd:
