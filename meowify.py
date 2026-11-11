@@ -10906,6 +10906,425 @@ def _net_poll_changed(p):
     _dbx_idle['clean'] = False
     return True
 
+import calendar
+# ── live playback sync ───────────────────────────────────────────────────────────────────────────────────────────────
+# current song + position + play state + the full queue, mirrored between devices through dropbox.
+# own folder, own threads: the library sync (_dbx_watch) never sees these files and this never takes _dbx_lock, so a
+# long full sync cant freeze it. every device only writes its own two files, so there are no write conflicts:
+#   /meowify-live/<device_id>.json  tiny state doc, rewritten on every event (position is NOT streamed, peers extrapolate)
+#   /meowify-live/<device_id>.q     the full queue as short sync ids, rewritten only when the queue itself changed
+# ids on the wire are 8 char sync_id prefixes (6 bytes) so the queue stays small and works across devices
+_LIVE_DIR = '/meowify-live'
+_live_cv = threading.Condition()
+_live = {
+    'seq': 0, 'peer': None, 'seen_ts': 0, 'my_ts': 0,
+    'out': None, 'out_q': None, 'out_ev': threading.Event(), 'busy': False,
+    'up_qh': None, 'qh_cur': None, 'qsrc_cur': None,
+    'docs': {}, 'rev': {}, 'qcache': {},
+    'maps': None, 'maps_t': 0.0, 'started': False,
+}
+
+def _live_enabled():
+    try:
+        return bool(CFG.get('live_pb')) and bool(CFG.get('dropbox_refresh_token')) and _net_profile()['auto']
+    except Exception:
+        return False
+
+def _live_short(sync_id):
+    import base64 as _b64
+    s = str(sync_id or '')
+    try:
+        return _b64.urlsafe_b64encode(bytes.fromhex(s.replace('-', ''))[:6]).decode()
+    except Exception:
+        return s[:8]
+
+def _live_maps(force=False):
+    """(local id -> short, short -> local id). short ids that collide are dropped from the reverse map"""
+    now = _time.time()
+    m = _live['maps']
+    if m is not None and not force and now - _live['maps_t'] < 20:
+        return m
+    l2s, s2l, dup = {}, {}, set()
+    with db() as c:
+        for r in c.execute("SELECT id, sync_id FROM songs WHERE sync_id IS NOT NULL AND sync_id != ''"):
+            sh = _live_short(r['sync_id'])
+            l2s[r['id']] = sh
+            if sh in s2l:
+                dup.add(sh)
+            s2l[sh] = r['id']
+    for sh in dup:
+        s2l.pop(sh, None)
+    m = (l2s, s2l)
+    _live['maps'] = m
+    _live['maps_t'] = now
+    return m
+
+def _live_to_short_once(ids, l2s, last):
+    out = []
+    for i in ids:
+        if not isinstance(i, str) or not i:
+            continue
+        if i[0] == '~':
+            out.append(i[1:])
+            continue
+        s = l2s.get(i)
+        if s is None:
+            if not last:
+                return None
+            continue
+        out.append(s)
+    return out
+
+def _live_to_short(ids):
+    """local ids -> short ids. '~xxxx' (a song this device doesnt have) passes through as 'xxxx'"""
+    ids = list(ids or [])
+    out = _live_to_short_once(ids, _live_maps()[0], False)
+    if out is None:
+        out = _live_to_short_once(ids, _live_maps(True)[0], True)
+    return out
+
+def _live_from_short(lst):
+    """short ids -> local ids, '~xxxx' for songs this device doesnt have (ints pass through untouched)"""
+    lst = list(lst or [])
+    s2l = _live_maps()[1]
+    if any(isinstance(x, str) and x not in s2l for x in lst):
+        s2l = _live_maps(True)[1]
+    return [x if not isinstance(x, str) else s2l.get(x, '~' + x) for x in lst]
+
+def _live_queue_payload(q):
+    """queue body from the frontend (local ids) -> what goes to dropbox (short ids)"""
+    ids = _live_to_short(q.get('ids'))
+    first = {}
+    for n, s in enumerate(ids):
+        first.setdefault(s, n)
+    ctx = q.get('ctx')
+    if ctx is not None:
+        # the unshuffled order mostly holds the same songs as the queue, so those are stored as an index into ids
+        ctx = [first.get(s, s) for s in _live_to_short(ctx)]
+    cc = q.get('cc')
+    cs = q.get('cs')
+    return {
+        'ids': ids,
+        'qa': [int(x) for x in (q.get('qa') or []) if isinstance(x, (int, float))],
+        'af': int(q.get('af') or 0),
+        'ctx': ctx,
+        'cc': _live_to_short(cc) if cc is not None else None,
+        'cs': {'ids': _live_to_short(cs.get('ids')), 'qi': int(cs.get('qi') or 0)} if isinstance(cs, dict) else None,
+    }
+
+def _live_qhash(p):
+    return hashlib.md5(json.dumps(p, separators=(',', ':'), sort_keys=True).encode('utf-8')).hexdigest()[:12]
+
+def _live_queue_out(p):
+    """queue payload from dropbox (short ids) -> frontend (local ids)"""
+    cs = p.get('cs')
+    return {
+        'ids': _live_from_short(p.get('ids')),
+        'qa': p.get('qa') or [],
+        'af': p.get('af') or 0,
+        'ctx': _live_from_short(p['ctx']) if p.get('ctx') is not None else None,
+        'cc': _live_from_short(p['cc']) if p.get('cc') is not None else None,
+        'cs': {'ids': _live_from_short(cs.get('ids')), 'qi': cs.get('qi') or 0} if isinstance(cs, dict) else None,
+    }
+
+def _live_doc_out(doc):
+    d = dict(doc)
+    s = d.pop('s', None)
+    d['sid'] = _live_from_short([s])[0] if s else None
+    d['cn'] = _live_from_short([d['cn']])[0] if d.get('cn') else None
+    d['ch'] = _live_from_short(d['ch']) if isinstance(d.get('ch'), list) else None
+    return d
+
+def _live_eff_ts(doc, sm):
+    # event time on the senders clock. if that clock is way off compared to dropbox's, fall back to dropbox's
+    try:
+        ts = int(doc.get('ts') or 0)
+    except Exception:
+        ts = 0
+    if not ts or (sm and abs(ts - sm) > 30000):
+        return sm or 0
+    return ts
+
+def _live_fetch_queue(dbx, qsrc, qh):
+    p = _live['qcache'].get(qh)
+    if p is not None:
+        return p
+    _md, resp = dbx.files_download(f'{_LIVE_DIR}/{qsrc}.q')
+    p = json.loads(resp.content.decode('utf-8'))
+    if not isinstance(p, dict) or _live_qhash(p) != qh:
+        return None  # the file already moved on, a newer doc is on its way
+    _live['qcache'] = {qh: p}
+    return p
+
+def _live_deliver(dbx):
+    """newest peer doc wins, but only if its newer than our last local event and nothing local is still in flight"""
+    with _live_cv:
+        best = None
+        for dev, (doc, sm) in _live['docs'].items():
+            te = _live_eff_ts(doc, sm)
+            if best is None or te > best[0]:
+                best = (te, dev, doc, sm)
+        if best is None:
+            return
+        te, dev, doc, sm = best
+        if te <= _live['my_ts'] or te <= _live['seen_ts']:
+            return
+        if _live['busy'] or _live['out'] is not None:
+            return
+    qh, qsrc = doc.get('qh'), doc.get('qsrc')
+    payload = None
+    if qh and qsrc:
+        payload = _live_fetch_queue(dbx, qsrc, qh)
+        if payload is None:
+            return
+    packet = {
+        'dev': dev, 'sm': sm, 'te': te, 'qh': qh,
+        'doc': _live_doc_out(doc),
+        'queue': _live_queue_out(payload) if payload is not None else None,
+    }
+    with _live_cv:
+        if te <= _live['my_ts'] or _live['busy'] or _live['out'] is not None:
+            return
+        _live['peer'] = packet
+        _live['seen_ts'] = te
+        _live['seq'] += 1
+        if qh:
+            _live['qh_cur'] = qh
+            _live['qsrc_cur'] = qsrc
+        _live_cv.notify_all()
+
+def _live_ingest(dbx, ents):
+    me = _dbx_get_device_id().lower()
+    got = False
+    for e in ents:
+        h = getattr(e, 'content_hash', None)
+        pl = getattr(e, 'path_lower', '') or ''
+        if not h or not pl.endswith('.json'):
+            continue
+        dev = pl.rsplit('/', 1)[-1][:-5]
+        if dev == me or _live['rev'].get(pl) == h:
+            continue
+        try:
+            _md, resp = dbx.files_download(pl)
+            doc = json.loads(resp.content.decode('utf-8'))
+        except Exception as ex:
+            _log_dbx.debug(f'[live] doc fetch failed {pl}: {ex}')
+            continue
+        if not isinstance(doc, dict):
+            continue
+        sm = calendar.timegm(e.server_modified.timetuple()) * 1000
+        with _live_cv:
+            _live['rev'][pl] = h
+            _live['docs'][dev] = (doc, sm)
+        got = True
+    if got:
+        _live_deliver(dbx)
+
+def _live_bootstrap(dbx):
+    try:
+        res = dbx.files_list_folder(_LIVE_DIR)
+    except Exception as e:
+        if 'not_found' not in str(e).lower():
+            raise
+        try:
+            dbx.files_create_folder_v2(_LIVE_DIR)
+        except Exception:
+            pass
+        res = dbx.files_list_folder(_LIVE_DIR)
+    ents = list(res.entries)
+    while res.has_more:
+        res = dbx.files_list_folder_continue(res.cursor)
+        ents.extend(res.entries)
+    _live_ingest(dbx, ents)
+    return res.cursor
+
+def _live_pull(dbx, cur):
+    ents = []
+    while True:
+        res = dbx.files_list_folder_continue(cur)
+        cur = res.cursor
+        ents.extend(res.entries)
+        if not res.has_more:
+            break
+    _live_ingest(dbx, ents)
+    return cur
+
+def _live_watcher():
+    cur = None
+    while True:
+        try:
+            if not _live_enabled():
+                cur = None
+                time.sleep(2)
+                continue
+            dbx = _dbx()
+            if dbx is None:
+                time.sleep(5)
+                continue
+            if cur is None:
+                cur = _live_bootstrap(dbx)
+                continue
+            r = dbx.files_list_folder_longpoll(cur, timeout=60)
+            if r.changes:
+                cur = _live_pull(dbx, cur)
+            if getattr(r, 'backoff', None):
+                time.sleep(min(int(r.backoff), 30))
+        except Exception as e:
+            m = str(e).lower()
+            if 'timed out' in m or 'timeout' in m:
+                continue
+            if 'reset' in m:
+                cur = None
+            _log_dbx.debug(f'[live] watch: {e}')
+            time.sleep(3)
+
+def _live_sender():
+    while True:
+        _live['out_ev'].wait(10)
+        if not _live_enabled():
+            time.sleep(1)
+            continue
+        with _live_cv:
+            out, oq = _live['out'], _live['out_q']
+            if out is None:
+                _live['out_ev'].clear()
+                continue
+            _live['out'] = None
+            _live['out_q'] = None
+            _live['busy'] = True
+            _live['out_ev'].clear()
+        ok = False
+        dbx = None
+        try:
+            dbx = _dbx()
+            if dbx is None:
+                raise RuntimeError('no dropbox client')
+            import dropbox as _dbxm
+            wm = _dbxm.files.WriteMode.overwrite
+            me = out['dev']
+            if oq:
+                dbx.files_upload(json.dumps(oq[1], separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.q', mode=wm, mute=True)
+                with _live_cv:
+                    _live['up_qh'] = oq[0]
+            dbx.files_upload(json.dumps(out, separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.json', mode=wm, mute=True)
+            ok = True
+        except Exception as e:
+            _log_dbx.warning(f'[live] upload failed: {e}')
+        finally:
+            with _live_cv:
+                _live['busy'] = False
+                if not ok:
+                    # keep what we have so the next try, or the next event, still carries it
+                    if _live['out'] is None:
+                        _live['out'] = out
+                    if oq and _live['out_q'] is None and _live['up_qh'] != oq[0]:
+                        _live['out_q'] = oq
+                    _live['out_ev'].set()
+        if not ok:
+            time.sleep(2)
+        elif dbx is not None:
+            try:
+                _live_deliver(dbx)
+            except Exception as e:
+                _log_dbx.debug(f'[live] deliver: {e}')
+
+def _live_ensure():
+    with _live_cv:
+        if _live['started']:
+            return
+        _live['started'] = True
+        try:
+            _live['my_ts'] = int((ddir() / 'session.json').stat().st_mtime * 1000)
+        except Exception:
+            _live['my_ts'] = 0
+    threading.Thread(target=_live_watcher, daemon=True, name='live-watch').start()
+    threading.Thread(target=_live_sender, daemon=True, name='live-send').start()
+
+@app.route('/api/live/push', methods=['POST'])
+def api_live_push():
+    if not _live_enabled():
+        return jsonify({'ok': False, 'off': True})
+    _live_ensure()
+    b = request.get_json(force=True, silent=True) or {}
+    d = b.get('doc')
+    if not isinstance(d, dict):
+        return jsonify({'ok': False})
+    me = _dbx_get_device_id()
+    try:
+        sid = _live_to_short([d.get('sid')]) if d.get('sid') else []
+        if not sid:
+            return jsonify({'ok': False})
+        cn = _live_to_short([d.get('cn')]) if d.get('cn') else []
+        ch = d.get('ch')
+        doc = {
+            'v': 1, 'dev': me, 'nm': _dbx_get_device_name(),
+            'ts': int(d.get('ts') or _time.time() * 1000),
+            'own': me if d.get('own') in (None, '', 'me') else str(d.get('own')),
+            'pl': bool(d.get('pl')), 's': sid[0],
+            'pos': round(float(d.get('pos') or 0), 2), 'dur': round(float(d.get('dur') or 0), 2),
+            'qi': int(d.get('qi') or 0), 'rp': d.get('rp') or 'none', 'sh': bool(d.get('sh')),
+            'sm': d.get('sm'), 'sc': d.get('sc'), 'ss': bool(d.get('ss')), 'qs': d.get('qs'),
+            'cn': cn[0] if cn else None,
+            'ch': _live_to_short(ch) if isinstance(ch, list) else None,
+        }
+        q = b.get('queue')
+        payload = _live_queue_payload(q) if isinstance(q, dict) else None
+    except Exception as e:
+        _log_dbx.debug(f'[live] bad push: {e}')
+        return jsonify({'ok': False})
+    qh = _live_qhash(payload) if payload is not None else None
+    with _live_cv:
+        if qh is not None:
+            if _live['out_q'] and _live['out_q'][0] == qh:
+                qsrc = me  # already queued for upload
+            elif qh == _live['up_qh']:
+                qsrc = me
+                _live['out_q'] = None
+            elif qh == _live['qh_cur'] and _live['qsrc_cur'] and _live['qsrc_cur'] != me:
+                qsrc = _live['qsrc_cur']  # the queue we adopted from a peer, its file already has it
+                _live['out_q'] = None
+            else:
+                _live['out_q'] = (qh, payload)
+                qsrc = me
+            _live['qh_cur'] = qh
+            _live['qsrc_cur'] = qsrc
+        else:
+            qh, qsrc = _live['qh_cur'], _live['qsrc_cur']
+            if qh is None:
+                return jsonify({'ok': False, 'needq': True})
+        doc['qh'] = qh
+        doc['qsrc'] = qsrc
+        _live['out'] = doc  # latest wins: a doc still waiting while the previous upload runs gets replaced
+        _live['my_ts'] = max(_live['my_ts'], doc['ts'])
+        _live['out_ev'].set()
+    return jsonify({'ok': True, 'qh': qh})
+
+@app.route('/api/live/poll')
+def api_live_poll():
+    if not _live_enabled():
+        return jsonify({'on': False})
+    _live_ensure()
+    try:
+        seq = int(request.args.get('seq', '-1'))
+    except ValueError:
+        seq = -1
+    try:
+        wait = max(0.0, min(25.0, float(request.args.get('wait', '20'))))
+    except ValueError:
+        wait = 20.0
+    qh = request.args.get('qh', '')
+    with _live_cv:
+        if _live['seq'] <= seq and wait > 0:
+            _live_cv.wait(wait)
+        s, pk, my = _live['seq'], _live['peer'], _live['my_ts']
+    out = {'on': True, 'seq': s, 'me': _dbx_get_device_id()}
+    if pk is not None and s > seq and pk['te'] > my:
+        out['doc'] = pk['doc']
+        out['sm'] = pk['sm']
+        if pk['queue'] is not None and pk['qh'] != qh:
+            out['queue'] = pk['queue']
+    return jsonify(out)
+
 _dbx_poll_state = {'wait': 20}
 _dbx_wake = threading.Event()
 _dbx_watch_ref = [None]
@@ -18694,11 +19113,12 @@ let _seekDragging = false;
 let _seekDragF = 0; // current drag fraction, used by wavy rAF loop during drag
 
 function _getSeekDur(){
-  return engine.duration||(engine.hasPaused?engine._pausedBuf?.duration:0)||0;
+  return (S.ghost&&S.ghost.dur)||engine.duration||(engine.hasPaused?engine._pausedBuf?.duration:0)||0;
 }
 
 // commit a seek fraction to the engine (called on pointerup, or every move when scrubbing)
 function _commitSeekFrac(f,dur){
+  if(S.ghost){_liveGhostSeekFrac(f,dur);return;}
   if(!S.cur&&!engine.hasPaused)return;
   dur=dur||_getSeekDur();
   if(!dur)return;
@@ -20625,6 +21045,7 @@ class AudioEngine {
 
 
   function seekRel(delta) {
+    if (S.ghost) { _liveGhostSeek(_liveGhostPos() + delta); return; }
     const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || 0;
     if (!dur) return;
     const t = engine.hasPaused ? (engine._pausedAt || 0) : engine.curTime;
@@ -21863,6 +22284,13 @@ function _prefetchMvForSongImpl(song) {
       return;
     }
     if (_playLock) { console.warn('playSong reentrance blocked - queue logic bug', song?.id); return; }
+    if (song && song._gone) {
+      // live sync: a queue row this device doesnt have, play the next one that it does
+      let _gi = -1;
+      for (let k = S.qi + 1; k < S.queue.length; k++) { const r = S.queue[k]; if (r && !r._gone && !r._qsw) { _gi = k; break; } }
+      if (_gi < 0) return;
+      S.qi = _gi; S.cur = S.queue[_gi]; song = S.cur;
+    }
     if (!song) return;
     _playLock = true;
     // _forcePlay=true  → always play (auto-advance, explicit click)
@@ -22242,6 +22670,7 @@ function _mvOnSettingChange() {
 
 async function togglePlay() {
   _lastHighlightId = null; // force updateHighlights to re-scan on next call
+  if (S.ghost) _liveTakeover(); // live sync: play on a ghost device = switch playback here, the normal branch below starts it
   _enqueueCmd(async () => {
     try {
       if (!S.cur && !engine.hasPaused) return;
@@ -22280,6 +22709,7 @@ async function togglePlay() {
 }
 
 async function prevSong() {
+  if (S.ghost) { _liveGhostSkip(-1); return; }
   _enqueueCmd(async () => {
     try {
       const _skippedSong = S.cur;
@@ -22345,6 +22775,7 @@ async function prevSong() {
 }
 
 async function nextSong() {
+  if (S.ghost) { _liveGhostSkip(1); return; }
   if (S.lyrEdit && S.cur && S.lyrEdit.sid === S.cur.id) { lyrEditGuard(() => nextSong()); return; }
   _enqueueCmd(async () => {
     try {
@@ -22807,6 +23238,7 @@ function _updateMobNpWavy(prog) {
 }
 
 function _updateMobNpSpiky() {
+  try { _liveUiSync(); } catch (e) {}
   if (!S.nowPlayingOpen) return;
   const btn = document.getElementById('mob-np-bplay');
   if (!btn) return;
@@ -23038,6 +23470,7 @@ function wavySeekClick(e) {
 }
 
 function updatePlayBtn() {
+  try { _liveUiSync(); } catch (e) {}
   const btn = document.getElementById('bplay');
   btn.classList.toggle('playing', S.isPlaying);
   btn.classList.toggle('has-song', !!(S.cur || engine.hasPaused));
@@ -28517,7 +28950,7 @@ function _makeQueueRowBase(s, i) {
   const cov = s.cover_path ? '<img src="/cover/' + s.id + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:var(--radius-sm)">' : '♪';
   const dur = s.duration ? fmt(s.duration) : '';
   const el = document.createElement('div');
-  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) && !s._qa ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '');
+  el.className = 'song-row mu-ripple' + (isCur ? ' playing' + (!S.isPlaying ? ' paused' : '') : '') + (S.qSelectMode && S.qSelected.has(s.id) ? ' selected' : '') + (i < (S._qActiveFrom || 0) && !s._qa ? ' q-played' : '') + (i > 0 && i === (S._qActiveFrom || 0) ? ' q-active-start' : '') + (s._gone ? ' q-disabled' : '');
   el.dataset.id = s.id;
   el.dataset.qi = i;
   el.style.cssText = 'grid-template-columns:28px 40px 1fr auto 24px;gap:8px;padding:6px 8px;margin:0 auto;align-items:center;display:grid;cursor:pointer;width:calc(100% - 10px);min-width:0;transition:background var(--dur-2) var(--ease-out)';
@@ -30346,13 +30779,605 @@ function _sessionBody(position) {
     afrom: isChaos ? 0 : ((S._qActiveFrom || 0) - S.queue.slice(0, S._qActiveFrom || 0).filter(s => s._qsw).length),
   };
 }
+// ═══════════════════════════════════════════════
+// LIVE PLAYBACK SYNC (dropbox /meowify-live, python side: _live_*)
+// song + position + play state + the full queue stay mirrored between devices. the device that is not making sound
+// runs a "ghost": same state, the seekbar keeps moving on its own clock (pos + elapsed) and the play button turns
+// into "switch playback to this device". only events are sent (play, pause, seek, song change, queue edits), never
+// the position itself. a seek or a stall also shows up as drift against what peers predict, so it self-corrects
+// ═══════════════════════════════════════════════
+const LIVE = { on: false, run: false, seq: -1, qh: '', me: '', last: null, lastQ: '', applying: false, mute: 0, floor: 0, lastChk: 0, sending: false, again: false, uiDirty: false };
+let _liveGid = 0;
+
+(function _liveCss() {
+  if (document.getElementById('live-css')) return;
+  const st = document.createElement('style');
+  st.id = 'live-css';
+  st.textContent = `
+#live-status{display:none;padding:3px 24px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-primary);flex-shrink:0;background:var(--color-surface);text-align:center}
+#live-status.on{display:block}
+body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
+.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:80px;height:80px;overflow:visible;pointer-events:none}
+.mob-np-playbtn .live-ghost-svg{width:110px;height:110px}
+#app.mobile #bplay .live-ghost-svg{width:44px;height:44px}
+.live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;pointer-events:none;z-index:1}
+.mob-np-playbtn .live-ghost-icon{width:30px;height:30px;color:var(--color-surface-dim)}
+.live-ghost .live-ghost-svg,.live-ghost .live-ghost-icon{display:block}
+.playbtn.live-ghost canvas.playbtn-spiky,.playbtn.live-ghost svg.playbtn-spiky-opt,.playbtn.live-ghost svg.playbtn-morph,
+.mob-np-playbtn.live-ghost canvas.mob-np-spiky,.mob-np-playbtn.live-ghost svg.mob-np-spiky-opt,.mob-np-playbtn.live-ghost .mob-np-plain-circle,.mob-np-playbtn.live-ghost svg.playbtn-morph{display:none!important}
+#app.mobile .playbtn.live-ghost{background:transparent!important}
+.live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9));animation:live-gb 2.1s infinite}
+#app.mobile #bplay .live-gb{fill:#fff}
+.live-gb.b0{--ax:0px;--ay:-22px;--bx:19.05px;--by:11px;--cx:-19.05px;--cy:11px}
+.live-gb.b1{--ax:19.05px;--ay:11px;--bx:-19.05px;--by:11px;--cx:0px;--cy:-22px}
+.live-gb.b2{--ax:-19.05px;--ay:11px;--bx:0px;--by:-22px;--cx:19.05px;--cy:11px}
+@keyframes live-gb{
+0%{transform:translate(var(--ax),var(--ay));animation-timing-function:cubic-bezier(.76,0,.24,1)}
+20%{transform:translate(var(--bx),var(--by))}
+33.333%{transform:translate(var(--bx),var(--by));animation-timing-function:cubic-bezier(.76,0,.24,1)}
+53.333%{transform:translate(var(--cx),var(--cy))}
+66.666%{transform:translate(var(--cx),var(--cy));animation-timing-function:cubic-bezier(.76,0,.24,1)}
+86.666%{transform:translate(var(--ax),var(--ay))}
+100%{transform:translate(var(--ax),var(--ay))}
+}
+body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
+`;
+  document.head.appendChild(st);
+})();
+
+function _liveOn() { return CFG.live_pb === true; }
+const _liveSleep = ms => new Promise(r => setTimeout(r, ms));
+// id as the python side knows it: a local id, '~xxxx' (song this device doesnt have) or the local id behind a stub
+const _liveOut = s => (s && (s._lid || s.id)) || '';
+
+function _liveHash(arr) {
+  let h = 5381;
+  for (let i = 0; i < arr.length; i++) {
+    const s = arr[i];
+    if (!s || s._qsw) continue;
+    const id = _liveOut(s);
+    const n = id.length;
+    if (!n) continue;
+    h = (Math.imul(h, 33) + id.charCodeAt(0)) | 0;
+    h = (Math.imul(h, 33) + id.charCodeAt(n >> 1)) | 0;
+    h = (Math.imul(h, 33) + id.charCodeAt(n - 1)) | 0;
+    if (s._qa) h = (Math.imul(h, 33) + 7) | 0;
+  }
+  return h;
+}
+
+function _liveLocalPos() {
+  if (S.isPlaying) return engine.curTime || 0;
+  if (engine.hasPaused) return engine._pausedAt || 0;
+  if (engine._restoredPosition !== undefined) return engine._restoredPosition;
+  return engine._lastKnownPosition || 0;
+}
+
+function _liveGhostPos() {
+  const g = S.ghost;
+  if (!g) return 0;
+  const t = g.pos + (Date.now() - g.at) / 1000;
+  return Math.max(0, g.dur ? Math.min(t, g.dur) : t);
+}
+
+// ── what we publish ──────────────────────────────────────────────────────────
+function _liveQsig() {
+  const chaos = !!(S.shuffle && S.shuffleMode === 'chaos');
+  const ctx = S._unshuffledQueue || [], cc = S._chaosContext || [], cs = S._chaosStash;
+  return [
+    chaos ? 'c' : S.queue.length + ':' + _liveHash(S.queue),
+    chaos ? 0 : (S._qActiveFrom | 0),
+    S.shuffle ? ctx.length + ':' + _liveHash(ctx) : '-',
+    chaos ? cc.length + ':' + _liveHash(cc) : '-',
+    cs ? cs.queue.length + ':' + _liveHash(cs.queue) + ':' + (cs.qi | 0) : '-',
+  ].join('|');
+}
+
+function _liveSig() {
+  return [
+    S.cur ? _liveOut(S.cur) : '', S.qi, S.ghost ? 2 : (S.isPlaying ? 1 : 0), S.repeat, S.shuffle ? 1 : 0, S.shuffleMode,
+    S.shuffleChoice, S.smartShuffle ? 1 : 0, S._chaosNext ? _liveOut(S._chaosNext) : '', (S._chaosHistory || []).length, _liveQsig(),
+  ].join('~');
+}
+
+function _liveDoc(own) {
+  const cur = S.cur, g = S.ghost;
+  const chaos = !!(S.shuffle && S.shuffleMode === 'chaos');
+  const nsw = S.queue.slice(0, S.qi).filter(s => s && s._qsw).length;
+  const pos = g ? _liveGhostPos() : _liveLocalPos();
+  return {
+    ts: Date.now(), own, pl: g ? true : !!S.isPlaying,
+    sid: _liveOut(cur), pos: +pos.toFixed(2),
+    dur: g ? (g.dur || cur.duration || 0) : (engine.duration || S._restoredDuration || cur.duration || 0),
+    qi: chaos ? 0 : S.qi - nsw,
+    rp: S.repeat, sh: !!S.shuffle, sm: S.shuffleMode, sc: S.shuffleChoice, ss: !!S.smartShuffle,
+    qs: S.queueSource || null,
+    cn: chaos && S._chaosNext ? _liveOut(S._chaosNext) : null,
+    ch: chaos ? (S._chaosHistory || []).slice(-100).map(_liveOut) : null,
+  };
+}
+
+function _liveQueueBody() {
+  const chaos = !!(S.shuffle && S.shuffleMode === 'chaos');
+  const real = a => (a || []).filter(s => s && !s._qsw);
+  const q = chaos ? [] : real(S.queue); // chaos: S.queue is just [current], the context is what matters
+  const qa = [];
+  q.forEach((s, i) => { if (s._qa) qa.push(i); });
+  const af0 = S._qActiveFrom || 0;
+  return {
+    ids: q.map(_liveOut), qa,
+    af: chaos ? 0 : Math.max(0, af0 - S.queue.slice(0, af0).filter(s => s && s._qsw).length),
+    ctx: S.shuffle ? real(S._unshuffledQueue).map(_liveOut) : null,
+    cc: chaos ? real(S._chaosContext).map(_liveOut) : null,
+    cs: S._chaosStash ? { ids: real(S._chaosStash.queue).map(_liveOut), qi: S._chaosStash.qi || 0 } : null,
+  };
+}
+
+// called from saveSession() (every real event + every 500ms while playing) and from a 400ms timer
+function _liveCheck(force) {
+  if (!LIVE.on || LIVE.applying || !S.cur) return;
+  const now = Date.now();
+  if (!force && (now < LIVE.mute || now - LIVE.lastChk < 100)) return;
+  LIVE.lastChk = now;
+  const g = S.ghost;
+  if (g && CFG.live_pb_remote === false) return; // locked ghost is read only, it never publishes
+  // a fresh song whose audio hasnt started yet: wait, so the event carries the real start position
+  if (!g && S.isPlaying && !engine.cur && !engine._stream) return;
+  const sig = _liveSig();
+  const pos = g ? _liveGhostPos() : _liveLocalPos();
+  const L = LIVE.last;
+  if (!L) { LIVE.last = { sig, pos, at: now, pl: !!(g || S.isPlaying) }; return; } // first look: baseline only, nothing to announce
+  let why = force ? 'force' : (sig !== L.sig ? 'state' : null);
+  if (!why) {
+    const pred = L.pl ? L.pos + (now - L.at) / 1000 : L.pos;
+    if (Math.abs(pos - pred) > (L.pl ? 1.5 : 0.6)) why = 'seek';
+  }
+  if (!why) return;
+  _liveSend(g ? g.owner : 'me', sig);
+}
+
+async function _liveSend(own, sig) {
+  if (LIVE.sending) { LIVE.again = true; return; }
+  LIVE.sending = true;
+  let okSend = false;
+  try {
+    const doc = _liveDoc(own);
+    const qs = _liveQsig();
+    const body = { doc };
+    if (qs !== LIVE.lastQ) body.queue = _liveQueueBody();
+    let r = await api('POST', '/api/live/push', body);
+    if (r && r.needq && !body.queue) { body.queue = _liveQueueBody(); r = await api('POST', '/api/live/push', body); }
+    if (r && r.ok) {
+      okSend = true;
+      LIVE.lastQ = qs;
+      if (r.qh) LIVE.qh = r.qh;
+      LIVE.last = { sig, pos: doc.pos, at: doc.ts, pl: doc.pl };
+    }
+  } catch (e) { console.warn('[live] push failed', e); }
+  finally {
+    LIVE.sending = false;
+    const again = LIVE.again;
+    LIVE.again = false;
+    if (!okSend) LIVE.mute = Date.now() + 3000; // dont hammer a server that says no
+    else if (again) _liveCheck(false);
+  }
+}
+
+// ── what we receive ──────────────────────────────────────────────────────────
+function _liveMk(id, lib) {
+  if (typeof id !== 'string' || !id) return null;
+  const gone = (sid, lid) => ({ id: sid, _lid: lid, title: 'not on this device', artist: '', album: '', duration: 0, _gone: true });
+  if (id[0] === '~') return gone(id, undefined);
+  return lib.get(id) || gone('!' + id, id);
+}
+
+function _liveApplyModes(d) {
+  const rp = ['none', 'one', 'all'].includes(d.rp) ? d.rp : 'none';
+  if (S.repeat !== rp) { S.repeat = rp; saveSetting('repeat', rp); }
+  const sh = !!d.sh;
+  if (S.shuffle !== sh) { S.shuffle = sh; saveSetting('shuffle_on', sh); }
+  if (d.sm) S.shuffleMode = d.sm;
+  if (d.sc) S.shuffleChoice = d.sc;
+  S.smartShuffle = !!d.ss;
+  if (d.qs) S.queueSource = d.qs;
+  const repClass = rp === 'none' ? '' : rp === 'one' ? 'active rep-one' : 'active';
+  for (const id of ['brep', 'mob-np-brep']) {
+    const el = document.getElementById(id);
+    if (el) el.className = 'cbtn mu-ripple' + (repClass ? ' ' + repClass : '');
+  }
+  for (const id of ['bshuf', 'mob-np-bshuf']) document.getElementById(id)?.classList.toggle('active', sh);
+  try { _updateShuffleBtnTitle(); } catch (e) {}
+}
+
+function _liveApplyQueue(q, chaos, lib) {
+  const mk = id => _liveMk(id, lib);
+  if (!chaos) {
+    const qa = new Set(q.qa || []);
+    S.queue = (q.ids || []).map((id, i) => { const s = mk(id); return s && qa.has(i) ? Object.assign({}, s, { _qa: true }) : s; }).filter(Boolean);
+  }
+  S._qActiveFrom = chaos ? 0 : Math.max(0, Math.min(q.af || 0, S.queue.length));
+  S._unshuffledQueue = q.ctx ? q.ctx.map(x => typeof x === 'number' ? S.queue[x] : mk(x)).filter(Boolean) : [];
+  S._chaosContext = q.cc ? q.cc.map(mk).filter(Boolean) : [];
+  S._chaosStash = q.cs ? { queue: (q.cs.ids || []).map(mk).filter(Boolean), qi: q.cs.qi || 0 } : null;
+  S._wrapPlan = null;
+  S._continueFrom = null;
+}
+
+// show a song as paused at pos without loading any audio (same as what a session restore does)
+function _liveShowPaused(song, pos, dur) {
+  S.cur = song;
+  updatePlayerUI(song);
+  updateHighlights();
+  S._restoredDuration = dur || song.duration || 0;
+  S._restoredPosition = pos;
+  engine._restoredPosition = pos;
+  syncMediaAudio(song, true, pos);
+  updatePositionState();
+  updateProg(pos, S._restoredDuration);
+  if (CFG.wavy_seekbar) {
+    const f = S._restoredDuration > 0 ? pos / S._restoredDuration : 0;
+    _wavyProgPct = f;
+    updateWavySeek(f);
+    _updateMobNpWavy(f);
+    _startSharedAnim();
+  }
+}
+
+// bring the real audio in line with the shared state. runs inside the command queue so it never overlaps a play/skip
+async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
+  if (!song) return;
+  if (produce || ghost) { // time spent waiting in the command queue still counts
+    pos += (Date.now() - rcv) / 1000;
+    if (dur) pos = Math.min(pos, dur);
+  }
+  if (ghost) {
+    if (engine.cur || engine._stream || engine.hasPaused) engine.stop();
+    S.isPlaying = false;
+    S.cur = song;
+    delete engine._restoredPosition;
+    S.ghost = { owner: d.own, name: d.nm || 'another device', pos, at: Date.now(), dur: dur || song.duration || 0 };
+    stopVolRot();
+    updatePlayerUI(song);
+    updateHighlights();
+    updatePlayBtn();
+    syncMediaAudio(song, true, pos);
+    updateProg(pos, S.ghost.dur);
+    return;
+  }
+  S.ghost = null;
+  const loadedId = engine.cur ? engine.cur.songId : (engine._stream ? engine._stream.songId : (engine._pausedBuf ? engine._pausedId : null));
+  if (produce) {
+    if (loadedId === song.id) {
+      if (!S.isPlaying) {
+        if (engine._pausedBuf) {
+          engine._pausedAt = pos;
+          await engine.resume(getNextId);
+          S.isPlaying = true;
+          syncMediaAudio(song, false);
+        } else {
+          S.cur = song;
+          await playSong(song, pos, true);
+        }
+      } else if (Math.abs((engine.curTime || 0) - pos) > 0.8) {
+        await engine.seek(pos, getNextId);
+        syncMediaAudio(song, false, pos);
+      }
+      S.cur = song;
+    } else {
+      S.cur = song;
+      await playSong(song, pos, true);
+    }
+    updatePlayBtn();
+    updateHighlights();
+    return;
+  }
+  // paused everywhere
+  if (S.isPlaying) {
+    engine.pause();
+    S.isPlaying = false;
+    syncMediaAudio(S.cur, true, engine._pausedAt);
+    updatePositionState();
+  }
+  if (engine._pausedBuf && engine._pausedId === song.id) {
+    engine._pausedAt = pos;
+    S.cur = song;
+    updatePlayerUI(song);
+    updateProg(pos, dur || song.duration || 0);
+    syncMediaAudio(song, true, pos);
+  } else {
+    if (engine.cur || engine._stream || engine.hasPaused) engine.stop();
+    S.isPlaying = false;
+    _liveShowPaused(song, pos, dur);
+  }
+  stopVolRot();
+  updatePlayBtn();
+  updateHighlights();
+}
+
+async function _liveApply(pk) {
+  const d = pk.doc;
+  if (!d || !S.library.length) return;
+  if (d.ts && d.ts < LIVE.floor) return; // older than our own takeover click
+  LIVE.applying = true;
+  try {
+    const rcv = Date.now();
+    const skewed = !d.ts || (pk.sm && Math.abs(d.ts - pk.sm) > 30000);
+    const at = skewed ? rcv - 700 : d.ts;
+    const dur = d.dur || 0;
+    let pos = (d.pos || 0) + (d.pl ? Math.max(0, rcv - at) / 1000 : 0);
+    const playing = !!d.pl && !(dur > 0 && pos > dur + 8); // a doc that says playing long past the end = the owner went quiet
+    if (dur) pos = Math.min(pos, dur);
+    const lib = new Map(S.library.map(s => [s.id, s]));
+    const chaos = !!(d.sh && d.sm === 'chaos');
+    _liveApplyModes(d);
+    S._chaosOn = chaos;
+    if (pk.queue) _liveApplyQueue(pk.queue, chaos, lib);
+    // current song + index
+    let song = null;
+    if (chaos) {
+      song = _liveMk(d.sid, lib);
+      if (!song) return;
+      S.queue = [song];
+      S.qi = 0;
+      S._chaosHistory = (d.ch || []).map(id => _liveMk(id, lib)).filter(s => s && !s._gone);
+      S._chaosPlayed = new Set([...S._chaosHistory.map(s => s.id), song.id]);
+      const nx = d.cn ? _liveMk(d.cn, lib) : null;
+      S._chaosNext = nx && !nx._gone ? nx : null;
+      if (!S._chaosNext) { try { S._chaosNext = _chaosPickNext(); } catch (e) {} }
+    } else {
+      const cand = S.queue[d.qi];
+      if (cand && _liveOut(cand) === d.sid) { song = cand; S.qi = d.qi; }
+      else {
+        const ix = S.queue.findIndex(s => _liveOut(s) === d.sid);
+        if (ix >= 0) { S.qi = ix; song = S.queue[ix]; }
+        else {
+          song = _liveMk(d.sid, lib);
+          if (!song) return;
+          S.queue = [song];
+          S.qi = 0;
+        }
+      }
+    }
+    S.cur = song;
+    // who makes the sound
+    const apOn = CFG.live_pb_autopause !== false;
+    const ownMe = !!LIVE.me && d.own === LIVE.me;
+    let produce = false, ghost = false;
+    if (playing) {
+      if (ownMe) produce = true;
+      else if (apOn || !S.isPlaying) ghost = true;
+      else produce = true; // autopause off and we are playing too: keep playing, just follow
+    }
+    if (song._gone) produce = false;
+    await new Promise(res => _enqueueCmd(async () => {
+      try { await _liveSettle(song, pos, dur, produce, ghost, d, rcv); }
+      catch (e) { console.warn('[live] settle failed', e); }
+      finally { res(); }
+    }));
+    if (pk.queue && !S.ghost) { try { engine._stopNxt(); _queueNextChanged(); } catch (e) {} }
+    if (S.queueOpen) { try { renderQueueSidebar(); } catch (e) {} }
+    if (d.qh) LIVE.qh = d.qh;
+    LIVE.lastQ = _liveQsig();
+    // asked to play a row this device doesnt have: leave the baseline mismatched so the pause gets announced and the ghost ends
+    const stuck = ownMe && playing && !S.ghost && !S.isPlaying;
+    LIVE.last = { sig: stuck ? '' : _liveSig(), pos, at: rcv, pl: !!(S.ghost || S.isPlaying) };
+    LIVE.mute = stuck ? 0 : Date.now() + 700;
+    _liveUiSync();
+  } finally {
+    LIVE.applying = false;
+  }
+}
+
+// ── ghost: this device is not playing, another one is ────────────────────────
+function _liveGhostTick() {
+  const g = S.ghost;
+  if (!g) return;
+  const t = _liveGhostPos();
+  if (g.dur && t >= g.dur && Date.now() - g.at > (g.dur - g.pos + 8) * 1000) { _liveGhostEnd(); return; } // nothing new arrived after the song should have ended
+  try { engine.onProgress(t, g.dur || (S.cur && S.cur.duration) || 0); } catch (e) {}
+}
+
+function _liveGhostEnd() {
+  const g = S.ghost;
+  if (!g) return;
+  const pos = _liveGhostPos();
+  S.ghost = null;
+  if (S.cur) _liveShowPaused(S.cur, pos, g.dur);
+  LIVE.last = null;
+  LIVE.mute = Date.now() + 500;
+  updatePlayBtn();
+  _liveUiSync();
+}
+
+// the play button on a ghost device: turn the ghost into a normal paused restore, the normal togglePlay branch then starts it
+function _liveTakeover() {
+  const g = S.ghost;
+  if (!g) return;
+  const pos = _liveGhostPos();
+  LIVE.floor = Date.now();
+  S.ghost = null;
+  if (S.cur) _liveShowPaused(S.cur, pos, g.dur);
+  _liveUiSync();
+}
+
+function _liveGhostSeek(t) {
+  const g = S.ghost;
+  if (!g || CFG.live_pb_remote === false) return;
+  const dur = g.dur || (S.cur && S.cur.duration) || 0;
+  t = Math.max(0, dur ? Math.min(dur - 0.1, t) : t);
+  g.pos = t;
+  g.at = Date.now();
+  updateProg(t, dur);
+  _liveCheck(true);
+}
+
+function _liveGhostSeekFrac(f, dur) {
+  const g = S.ghost;
+  _liveGhostSeek(f * (dur || (g && g.dur) || 0));
+}
+
+function _liveGhostSkip(dir) {
+  const g = S.ghost;
+  if (!g || CFG.live_pb_remote === false || !S.cur) return;
+  const chaos = !!(S.shuffle && S.shuffleMode === 'chaos');
+  let song = null;
+  if (chaos) {
+    if (dir > 0) {
+      const nx = S._chaosNext;
+      if (!nx) return;
+      S._chaosHistory.push(S.cur);
+      S._chaosPlayed.add(nx.id);
+      S._chaosNext = _chaosPickNext();
+      S.queue = [nx];
+      S.qi = 0;
+      song = nx;
+    } else {
+      if ((CFG.prev_restarts !== false && _liveGhostPos() > 3) || !S._chaosHistory.length) { _liveGhostSeek(0); return; }
+      const pv = S._chaosHistory.pop();
+      S._chaosNext = S.cur;
+      S.queue = [pv];
+      S.qi = 0;
+      song = pv;
+    }
+  } else if (dir > 0) {
+    if (S.repeat === 'one') { _liveGhostSeek(0); return; }
+    const nextQi = S.qi + 1;
+    if (nextQi >= S.queue.length) {
+      if (S.repeat === 'all') _applyWrap();
+      else return;
+    } else {
+      S.qi = nextQi;
+    }
+    song = S.queue[S.qi];
+  } else {
+    if ((CFG.prev_restarts !== false && _liveGhostPos() > 3) || (S.qi <= 0 && S.repeat !== 'all')) { _liveGhostSeek(0); return; }
+    S.qi = S.qi > 0 ? S.qi - 1 : S.queue.length - 1;
+    if (S.queue[S.qi] && S.queue[S.qi]._qsw) S.qi = S.qi > 0 ? S.qi - 1 : S.queue.length - 1;
+    song = S.queue[S.qi];
+  }
+  if (!chaos) {
+    // rows this device doesnt have cant be shown as current, step over them
+    let guard = S.queue.length;
+    while (song && song._gone && guard-- > 0) {
+      S.qi = dir > 0 ? (S.qi + 1) % S.queue.length : (S.qi > 0 ? S.qi - 1 : S.queue.length - 1);
+      song = S.queue[S.qi];
+    }
+  }
+  if (!song) return;
+  S.cur = song;
+  g.pos = 0;
+  g.at = Date.now();
+  g.dur = song.duration || 0;
+  updatePlayerUI(song);
+  updateHighlights();
+  updateProg(0, g.dur);
+  if (S.queueOpen) { try { renderQueueSidebar(); } catch (e) {} }
+  _liveCheck(true);
+}
+
+// ── ghost ui: 3 gooey balls rotating clockwise on the play button + status line under the topbar ──
+function _liveGhostHtml() {
+  const id = 'live-goo-' + (++_liveGid);
+  return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
+    <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -8"/></filter></defs>
+    <g filter="url(#${id})"><circle class="live-gb b0" cx="0" cy="0" r="17"/><circle class="live-gb b1" cx="0" cy="0" r="17"/><circle class="live-gb b2" cx="0" cy="0" r="17"/></g>
+  </svg>
+  <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
+}
+
+function _liveEnsureGhost(btn) {
+  if (!btn || btn.querySelector('.live-ghost-svg')) return;
+  btn.insertAdjacentHTML('beforeend', _liveGhostHtml());
+}
+
+function _liveUiSync(force) {
+  if (!LIVE.on && !force && !LIVE.uiDirty) return;
+  const g = S.ghost || null;
+  const on = !!g;
+  for (const id of ['bplay', 'mob-np-bplay']) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (on) _liveEnsureGhost(b);
+    if (b.classList.contains('live-ghost') !== on) b.classList.toggle('live-ghost', on);
+  }
+  const locked = on && CFG.live_pb_remote === false;
+  if (document.body.classList.contains('live-locked') !== locked) document.body.classList.toggle('live-locked', locked);
+  let el = document.getElementById('live-status');
+  if (!el && on) {
+    const host = document.getElementById('global-prog-status');
+    if (host) { el = document.createElement('div'); el.id = 'live-status'; host.after(el); }
+  }
+  if (el) {
+    const txt = on ? 'playing on ' + g.name + ' · press play to switch here' : '';
+    if (el.textContent !== txt) el.textContent = txt;
+    if (el.classList.contains('on') !== on) el.classList.toggle('on', on);
+  }
+  LIVE.uiDirty = on;
+}
+
+// ── loop ─────────────────────────────────────────────────────────────────────
+async function _livePollLoop() {
+  if (LIVE.run) return;
+  LIVE.run = true;
+  let fails = 0;
+  try {
+    while (LIVE.on && _liveOn()) {
+      let r = null;
+      try {
+        r = await (await fetch('/api/live/poll?seq=' + LIVE.seq + '&qh=' + encodeURIComponent(LIVE.qh || '') + '&wait=20')).json();
+        fails = 0;
+      } catch (e) { fails++; await _liveSleep(Math.min(15000, 1000 * fails)); continue; }
+      if (!r) continue;
+      if (r.me) LIVE.me = r.me;
+      if (!r.on) { await _liveSleep(3000); continue; }
+      if (r.seq != null) LIVE.seq = r.seq;
+      if (r.doc) { try { await _liveApply(r); } catch (e) { console.warn('[live] apply failed', e); } }
+    }
+  } finally { LIVE.run = false; }
+}
+
+function _liveStop() {
+  LIVE.on = false;
+  if (S.ghost) _liveGhostEnd();
+  LIVE.last = null;
+  LIVE.lastQ = '';
+  LIVE.qh = '';
+  LIVE.seq = -1;
+  _liveUiSync(true);
+}
+
+function _liveTick() {
+  try {
+    const want = _liveOn() && S.library && S.library.length > 0;
+    if (want && !LIVE.on) { LIVE.on = true; LIVE.last = null; }
+    if (!want && LIVE.on) { _liveStop(); return; }
+    if (!LIVE.on) return;
+    if (!LIVE.run) _livePollLoop();
+    _liveCheck(false);
+    _liveUiSync();
+  } catch (e) { console.warn('[live]', e); }
+}
+setInterval(_liveTick, 400);
+setInterval(_liveGhostTick, 250);
+
+// closing the app while playing: tell the other devices it stopped (best effort)
+window.addEventListener('pagehide', () => {
+  try {
+    if (!LIVE.on || !S.cur || !S.isPlaying || S.ghost) return;
+    const doc = _liveDoc('me');
+    doc.pl = false;
+    navigator.sendBeacon('/api/live/push', new Blob([JSON.stringify({ doc })], { type: 'application/json' }));
+  } catch (e) {}
+});
+
 function saveSession() {
+  try { _liveCheck(); } catch (e) {}
   clearTimeout(_sessionSaveTimer);
   _sessionSaveTimer = setTimeout(async () => {
     if (!S.cur) return;
     // in chaos mode S.queue is always [currentSong] — save full context so
     // we can rebuild it on restore instead of stopping after the first song
-    await api('POST', '/api/session', _sessionBody(engine.hasPaused ? engine._pausedAt : engine.curTime));
+    await api('POST', '/api/session', _sessionBody(S.ghost ? _liveGhostPos() : (engine.hasPaused ? engine._pausedAt : engine.curTime)));
   }, 150);
 }
 
@@ -39340,6 +40365,7 @@ function setSeekStep(v) {
 }
 
 function seekBy(dir) {
+  if (S.ghost) { _liveGhostSeek(_liveGhostPos() + dir * seekStep()); return; }
   const dur = engine.duration || (engine.hasPaused ? engine._pausedBuf?.duration : 0) || 0;
   if (!dur) return;
   const cur = engine.hasPaused ? (engine._pausedAt || 0) : engine.curTime;
@@ -41060,6 +42086,9 @@ function renderSettings() {
             ${row('sync library', 'sync play history, songs and covers', toggle('sync_library', CFG.sync_library!==false))}\
             ${row('sync settings', 'sync theme, format and other preferences', toggle('sync_settings', CFG.sync_settings!==false))}\
             ${row('live sync', 'during a manual sync, wait for the other device to move songs together', toggle('dbx_live_sync', CFG.dbx_live_sync===true))}\
+            ${row('live playback', 'keep the song, position and full queue in sync with your other devices through dropbox. the device that is not playing shows a switch here button', toggle('live_pb', CFG.live_pb===true, 'renderSettings()'))}\
+            ${CFG.live_pb===true ? row('remote control', 'seek, skip, shuffle and repeat on the device that is not playing control the playing one. off: they stay greyed out', toggle('live_pb_remote', CFG.live_pb_remote!==false)) : ''}\
+            ${CFG.live_pb===true ? row('auto pause other device', 'pressing play here pauses the device that was playing. off: both keep playing and stay in sync', toggle('live_pb_autopause', CFG.live_pb_autopause!==false)) : ''}\
             ${(()=>{
               if (!_IS_ANDROID_UA) return '';
               const n = window._netInfo || {};
