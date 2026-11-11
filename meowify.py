@@ -28960,7 +28960,7 @@ function renderQueueSidebar() {
       while (_list.children.length > _k) _list.lastElementChild.remove();
       _list.insertAdjacentHTML('beforeend', _rows.slice(_k).join(''));
     } else {
-      inner.innerHTML = '<div class="song-list" data-chaos="1" style="padding:8px 8px 0">' + _rows.join('') + '</div>';
+      inner.innerHTML = '<div class="song-list" data-chaos="1" style="padding:8px 8px var(--bar-h)">' + _rows.join('') + '</div>';
     }
     _qChaosRows = _rows;
     inner.querySelectorAll('.q-sw .smenu-btn').forEach(b => { b.onclick = e => { e.stopPropagation(); _qswCancel(); }; });
@@ -37716,9 +37716,6 @@ function applyLG() {
   document.documentElement.classList.toggle('lg-pad', on && !s.off.includes('player'));
   document.documentElement.classList.toggle('lg-lens', lensOn);
   document.documentElement.classList.toggle('lg-lens-over', over);
-  const _gA = k => !G || G.active(LG_TIER[k]);
-  document.documentElement.classList.toggle('lg-tb', on && !s.off.includes('topbar') && !_mobTb && _gA('topbar'));
-  document.documentElement.classList.toggle('lg-rs', on && !s.off.includes('rsidebars') && _gA('rsidebars'));
   document.documentElement.classList.toggle('lg-ovr', !!s.ovr);
   _lgOvrCss(!!s.ovr);
   applyNavPill();
@@ -38469,8 +38466,6 @@ function _applyDesignImpl(design) {
   html body.design-glassy #app.mobile .topbar.topbar.topbar{border-radius:0;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-bottom:none!important}
   body.design-glassy.rs-full #app:not(.mobile) #main{background:var(--glass-bg)!important}
   body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-  html:not(.lg-tb):not(.gl-off-frame) body.design-glassy.rs-full #app:not(.mobile) #main>.topbar{backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important}
-  html:not(.lg-rs):not(.gl-off-frame) body.design-glassy.rs-full #app:not(.mobile) :is(.queue-sidebar,.lyrics-sidebar,.nowplaying-sidebar){backdrop-filter:var(--glass-blur)!important;-webkit-backdrop-filter:var(--glass-blur)!important}
   body.design-glassy.rs-full #app:not(.mobile) #content-area:has(>.queue-sidebar:not(.hidden),>.lyrics-sidebar:not(.hidden),>.nowplaying-sidebar:not(.hidden)) #vc-wrap{border-top-right-radius:var(--frame-r)}
   body.design-glassy.rs-full #app:not(.mobile) .queue-sidebar,body.design-glassy.rs-full #app:not(.mobile) .lyrics-sidebar,body.design-glassy.rs-full #app:not(.mobile) .nowplaying-sidebar{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-top:none!important}
   body.design-glassy #app:not(.mobile){--frame-r:26px}
