@@ -28904,6 +28904,16 @@ function _queueAfterFullRender(inner, hadSig, prevScroll) {
   }
 }
 
+// chaos: bottom padding so the current row can always be scrolled to the top of the sidebar even when little sits below it
+function _qChaosPad(inner) {
+  const cl = inner.firstElementChild;
+  const cur = cl && cl.querySelector('.song-row.playing');
+  if (!cur) return;
+  const z = _zoom || 1;
+  const below = (cl.getBoundingClientRect().bottom - cur.getBoundingClientRect().top) / z - (parseFloat(getComputedStyle(cl).paddingBottom) || 0);
+  cl.style.paddingBottom = 'max(var(--bar-h), ' + Math.ceil(inner.clientHeight - below) + 'px)';
+}
+
 function renderQueueSidebar() {
   _barHeightCacheDirty = true;
   const inner = document.getElementById('queue-inner');
@@ -28956,7 +28966,7 @@ function renderQueueSidebar() {
     if (_qChaosRows && _list && _list.dataset.chaos === '1') {
       const _n = Math.min(_qChaosRows.length, _rows.length);
       while (_k < _n && _qChaosRows[_k] === _rows[_k]) _k++;
-      if (_k === _rows.length && _k === _qChaosRows.length) return; // nothing changed
+      if (_k === _rows.length && _k === _qChaosRows.length) { _qChaosPad(inner); return; } // nothing changed
       while (_list.children.length > _k) _list.lastElementChild.remove();
       _list.insertAdjacentHTML('beforeend', _rows.slice(_k).join(''));
     } else {
@@ -28965,6 +28975,7 @@ function renderQueueSidebar() {
     _qChaosRows = _rows;
     inner.querySelectorAll('.q-sw .smenu-btn').forEach(b => { b.onclick = e => { e.stopPropagation(); _qswCancel(); }; });
     inner.querySelectorAll('.q-sw').forEach(r => { r.onclick = e => _queueRowClick(r, e); });
+    _qChaosPad(inner);
     // scroll current into view
     requestAnimationFrame(() => {
       const curRow = inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])');
