@@ -28977,10 +28977,11 @@ function renderQueueSidebar() {
     inner.querySelectorAll('.q-sw').forEach(r => { r.onclick = e => _queueRowClick(r, e); });
     _qChaosPad(inner);
     // scroll current into view
-    requestAnimationFrame(() => {
-      const curRow = inner.querySelector('.song-row:not([data-chaos-hi]):not([style*="0.55"])');
-      if (curRow) curRow.scrollIntoView({ block: 'nearest' });
-    });
+    const _curKey = String(cur ? cur.id : '');
+    if (inner.dataset.chaosCur !== _curKey || _k === 0) {
+      inner.dataset.chaosCur = _curKey;
+      requestAnimationFrame(() => _scrollQueueToCurrent());
+    }
     return;
   }
 
