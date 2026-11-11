@@ -10951,7 +10951,7 @@ def _dbx_bg_poll():
         if not _dbx_lock.acquire(blocking=False):
             continue  # manual sync in progress, skip this cycle
         try:
-            global _dbx_status_msg
+            global _dbx_status_msg, _dbx_sync_result
             _dc = _dbx()
             _why = _dbx_idle_reason(_dc) if _dc is not None else 'unknown'
             if _why == 'idle':
@@ -10968,6 +10968,7 @@ def _dbx_bg_poll():
                          pull_songs=sync_lib and _np['songs'],
                          sync_settings=CFG.get('sync_settings', True),
                          status_cb=lambda m: _set_dbx_status(m))
+            _dbx_sync_result = _r
             if isinstance(_r, dict) and _r.get('backlog') and _r.get('relay_moved'):
                 _dbx_poll_state['wait'] = 15
         except Exception as _se:
@@ -11334,6 +11335,7 @@ def api_dbx_status():
         'last_sync':   last,
         'status':      _dbx_status_msg,
         'syncing':     _dbx_sync_running,
+        'auto':        bool(_dbx_poll_state.get('auto')),
         'db_ready':    _dbx_db_ready,
         'last_result': _dbx_sync_result,
         'this_device': {'device_id': CFG.get('device_id', ''), 'device_name': _dbx_get_device_name(),
@@ -30608,6 +30610,26 @@ function _toggleDbxCatExpand(cat) {
     dbxRefreshPeers();
   }
 })();
+
+let _dbxBgSeen = null, _dbxBgBusy = false;
+async function _dbxBgTick() {
+  if (document.hidden || !CFG.dropbox_sync_enabled) return;
+  let s;
+  try { s = await fetch('/api/dropbox/status').then(r => r.json()); } catch { return; }
+  if (!s || !s.enabled) return;
+  if (s.syncing || s.auto) { _dbxBgBusy = true; _pollSyncDownloads(); return; }
+  const ls = s.last_sync || 0;
+  if (_dbxBgSeen === null) { _dbxBgSeen = ls; _dbxBgBusy = false; return; }
+  if (ls === _dbxBgSeen && !_dbxBgBusy) return;
+  _dbxBgSeen = ls;
+  _dbxBgBusy = false;
+  const pulled = (s.last_result && s.last_result.pulled) || [];
+  if (!pulled.length) return;
+  await loadData();
+  rerenderCurrentView();
+  _pollSyncDownloads();
+}
+setInterval(_dbxBgTick, 12000);
 
 async function bulkGeniusFix(ids) {
   if (!CFG.genius_token) { alert('no genius token configured'); return; }
