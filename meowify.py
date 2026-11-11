@@ -22108,7 +22108,7 @@ function getNextSong() {
   return S.queue[ni];
 }
 
-function getNextId() { if (S.lyrEdit) return null; return getNextSong()?.id ?? null; }
+function getNextId() { if (S.lyrEdit) return null; const _n = getNextSong(); return (_n && !_n._gone) ? _n.id : null; }
 
 function prefetchLyricsForSong(song) {
   if (!song) return;
@@ -22288,7 +22288,7 @@ function _prefetchMvForSongImpl(song) {
       // live sync: a queue row this device doesnt have, play the next one that it does
       let _gi = -1;
       for (let k = S.qi + 1; k < S.queue.length; k++) { const r = S.queue[k]; if (r && !r._gone && !r._qsw) { _gi = k; break; } }
-      if (_gi < 0) return;
+      if (_gi < 0) { S.isPlaying = false; updatePlayBtn(); return; }
       S.qi = _gi; S.cur = S.queue[_gi]; song = S.cur;
     }
     if (!song) return;
