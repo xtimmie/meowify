@@ -30766,8 +30766,8 @@ function _sessionBody(position) {
   const isChaos = S.shuffle && S.shuffleMode === 'chaos';
   return {
     song_id: S.cur.id,
-    queue: isChaos ? (S._chaosContext || S.library).map(s => s.id) : S.queue.filter(s => !s._qsw).map(s => s.id),
-    qi: S.qi - S.queue.slice(0, S.qi).filter(s => s._qsw).length,
+    queue: isChaos ? (S._chaosContext || S.library).filter(s => !s._gone).map(s => s.id) : S.queue.filter(s => !s._qsw && !s._gone).map(s => s.id),
+    qi: S.qi - S.queue.slice(0, S.qi).filter(s => s._qsw || s._gone).length,
     position,
     duration: engine.duration || S._restoredDuration || S.cur.duration || 0,
     repeat: S.repeat,
@@ -30775,8 +30775,8 @@ function _sessionBody(position) {
     chaos: isChaos ? [...(S._chaosPlayed || [])] : undefined,
     chaosHistory: isChaos ? (S._chaosHistory || []).map(s => s.id) : undefined,
     chaosNext: isChaos ? (S._chaosNext?.id || null) : undefined,
-    ctx: S.shuffle ? (S._unshuffledQueue || []).map(s => s.id) : undefined,
-    afrom: isChaos ? 0 : ((S._qActiveFrom || 0) - S.queue.slice(0, S._qActiveFrom || 0).filter(s => s._qsw).length),
+    ctx: S.shuffle ? (S._unshuffledQueue || []).filter(s => !s._gone).map(s => s.id) : undefined,
+    afrom: isChaos ? 0 : ((S._qActiveFrom || 0) - S.queue.slice(0, S._qActiveFrom || 0).filter(s => s._qsw || s._gone).length),
   };
 }
 // ═══════════════════════════════════════════════
@@ -31377,6 +31377,7 @@ function saveSession() {
     if (!S.cur) return;
     // in chaos mode S.queue is always [currentSong] — save full context so
     // we can rebuild it on restore instead of stopping after the first song
+    if (S.cur._gone) return;
     await api('POST', '/api/session', _sessionBody(S.ghost ? _liveGhostPos() : (engine.hasPaused ? engine._pausedAt : engine.curTime)));
   }, 150);
 }
