@@ -3641,7 +3641,7 @@ def _fuzzy_tokens(a, b):
 # ── unified song matching ───────────────────────────────────────────
 # one scorer for "does this listing match what was asked for". the query is either one freeform
 # string (query) or already split (q_title / q_artist), the candidate is always split. returns 0-1
-_MATCH_NOISE_RE = re.compile(r'\s*[\(\[【][^\)\]】]*(?:official|mv|music\s*video|lyric|audio|video|visuali[sz]er|hd|4k)[^\)\]】]*[\)\]】]', re.I)
+_MATCH_NOISE_RE = re.compile(r'\s*[\(\[【][^\)\]】]*\b(?:official|mv|music\s*video|lyrics?|audio|video|visuali[sz]er|hd|4k)\b[^\)\]】]*[\)\]】]', re.I)
 _MATCH_W_TITLE = 0.65        # title vs artist weighting, same split the other scorers use
 _MATCH_VIDEO_PENALTY = 0.08  # a plain video has to beat the real song listing by more than this
 _MATCH_MARKER_FACTOR = 0.55  # live / slowed / part 2 / remix on one side only: a different song
@@ -5376,7 +5376,13 @@ def _run_dl(did, q, fmt, quality, genius_track_id=None, video_id=None, is_batch=
 
         if not video_id_r and not is_url and q:
             try:
-                _sr_tracks, _ = _search_ytm(q)
+                _hint_t = _hint_a = _hint_d = None
+                if ytm_album and ytm_track_title:
+                    for _ht in (ytm_album.get('tracks') or []):
+                        if (_ht.get('title') or '') == ytm_track_title or (ytm_track_num and _ht.get('track_num') == ytm_track_num):
+                            _hint_t, _hint_a, _hint_d = _ht.get('title') or None, _ht.get('artist') or None, _ht.get('duration')
+                            break
+                _sr_tracks, _ = _search_ytm(q, title=_hint_t, artist=_hint_a, duration=_hint_d)
                 if _sr_tracks:
                     _sr_top = _sr_tracks[0]
                     video_id_r = _sr_top['video_id']
@@ -14152,9 +14158,13 @@ def api_ytm_album(browse_id):
                     break
             if best_album_data:
                 g_album_id = best_album_data.get('id')
-                tracks_resp = _genius_get(f'/albums/{g_album_id}/tracks?per_page=50', tok)
+                g_raw = []
+                for _gp in range(1, 6):
+                    _gr = _genius_get(f'/albums/{g_album_id}/tracks?per_page=50&page={_gp}', tok)
+                    g_raw += _gr.get('tracks', [])
+                    if not _gr.get('next_page'): break
                 g_tracks = []
-                for t in tracks_resp.get('tracks', []):
+                for t in g_raw:
                     ts = t.get('song') or {}
                     g_tracks.append({
                         'video_id': '',
@@ -14164,12 +14174,17 @@ def api_ytm_album(browse_id):
                         'track_num': t.get('number', 0),
                     })
                 if g_tracks:
+                    _used = set()
                     for gt in g_tracks:
+                        _best, _bs = None, 0.0
                         for yt_t in ytm_tracks:
-                            if _fuzzy(gt['title'], yt_t.get('title', '')) > 0.85 and _same_markers(gt['title'], yt_t.get('title', '')):
-                                gt['video_id'] = yt_t.get('videoId', '')
-                                gt['duration'] = yt_t.get('duration_seconds')
-                                break
+                            if not yt_t.get('videoId') or yt_t.get('videoId') in _used: continue
+                            _s = _match_score(None, yt_t.get('title', ''), _ytm_cand_artist(yt_t), q_title=gt['title'], q_artist=gt['artist'])
+                            if _s > _bs: _best, _bs = yt_t, _s
+                        if _best and _bs >= 0.8:
+                            _used.add(_best.get('videoId'))
+                            gt['video_id'] = _best.get('videoId', '')
+                            gt['duration'] = _best.get('duration_seconds')
                     return jsonify({
                         'browse_id': browse_id,
                         'title': album_title,
