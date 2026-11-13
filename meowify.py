@@ -28239,6 +28239,8 @@ function _lyrEngInit(sid) {
   if (L.ro) L.ro.disconnect();
   L.ro = new ResizeObserver(() => _lyrEngKick(true));
   L.ro.observe(body);
+  L.ro.observe(sc);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => _lyrEngKick(true));
   _lyrEngKick(true);
 }
 function _lyrEngUi() {
