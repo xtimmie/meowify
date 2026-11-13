@@ -26081,6 +26081,8 @@ function _mvSetActiveClass(on) {
     if (wrap) _mvWrapRO.observe(wrap);
   } else {
     if (_mvWrapRO) _mvWrapRO.disconnect();
+    const _mvDimCont = _mvContainer();
+    if (_mvDimCont) _mvDimCont.style.opacity = '';
   }
 }
 
@@ -26096,6 +26098,7 @@ function _mvShowVideo(sid, offset, videoUrl) {
   if (vid.src !== videoUrl) vid.src = videoUrl;
   _mvSetAr(vid);
   cont.style.display = '';
+  cont.style.opacity = '';
   _mvSetActiveClass(true);
   if (btn) btn.style.display = 'none';
   const inner = document.getElementById('np-cover-inner');
@@ -26299,6 +26302,7 @@ function _mvCloseFullscreen() {
   _mvContOrigNextSibling = null;
 
   _mvFullscreenOpen = false;
+  if (cont) cont.style.opacity = '';
   document.body.classList.remove('mv-fs');
 }
 
