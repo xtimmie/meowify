@@ -3638,6 +3638,74 @@ def _fuzzy_tokens(a, b):
     _tok = lambda s: ' '.join(sorted(set(re.sub(r"[^a-z0-9 ]", '', (s or '').lower()).split())))
     return _fuzzy(_tok(a), _tok(b))
 
+# ── unified song matching ───────────────────────────────────────────
+# one scorer for "does this listing match what was asked for". the query is either one freeform
+# string (query) or already split (q_title / q_artist), the candidate is always split. returns 0-1
+_MATCH_NOISE_RE = re.compile(r'\s*[\(\[【][^\)\]】]*(?:official|mv|music\s*video|lyric|audio|video|visuali[sz]er|hd|4k)[^\)\]】]*[\)\]】]', re.I)
+_MATCH_W_TITLE = 0.65        # title vs artist weighting, same split the other scorers use
+_MATCH_VIDEO_PENALTY = 0.08  # a plain video has to beat the real song listing by more than this
+_MATCH_MARKER_FACTOR = 0.55  # live / slowed / part 2 / remix on one side only: a different song
+
+def _match_norm(s, strip_noise=False):
+    s = s or ''
+    if strip_noise:
+        s = _MATCH_NOISE_RE.sub(' ', s)
+    return re.sub(r'[\W_]+', ' ', s.lower()).strip()
+
+def _match_sim(a, b):
+    """best of plain ratio and token-set ratio, unicode safe (the older _fuzzy_tokens drops non ascii)"""
+    if not a or not b:
+        return 0.0
+    _tk = lambda s: ' '.join(sorted(set(s.split())))
+    return max(_fuzzy(a, b), _fuzzy(_tk(a), _tk(b)))
+
+def _ytm_cand_artist(r):
+    return ', '.join(a.get('name', '') for a in (r.get('artists') or []))
+
+def _match_score(query, cand_title, cand_artist, q_title=None, q_artist=None, duration=None, cand_duration=None, cand_type='song'):
+    ct = _match_norm(cand_title, True)
+    first = _match_norm((cand_artist or '').split(',')[0])
+    ca_all = _match_norm(cand_artist)
+    if q_title or q_artist:
+        # split query: compare field by field, then also the packed "artist title" string
+        qt, qa = _match_norm(q_title, True), _match_norm(q_artist)
+        a = max(_match_sim(qa, first), _match_sim(qa, ca_all)) if qa else 1.0
+        score = _match_sim(qt, ct) * _MATCH_W_TITLE + a * (1 - _MATCH_W_TITLE)
+        score = max(score, _match_sim(f'{qa} {qt}'.strip(), f'{ca_all} {ct}'.strip()))
+        q_for_markers = qt
+    else:
+        # freeform query: take the candidate's own artist words out of it, what is left is the title
+        q = _match_norm(query, True)
+        res = q.split()
+        a_toks = first.split()
+        hit = 0
+        for tok in a_toks:
+            if tok in res:
+                res.remove(tok)
+                hit += 1
+        a = hit / len(a_toks) if a_toks else 0.0
+        for tok in ca_all.split():
+            if tok not in a_toks and tok in res:
+                res.remove(tok)
+        rs = ' '.join(res)
+        if a >= 0.5 and rs:
+            score = _match_sim(rs, ct) * _MATCH_W_TITLE + a * (1 - _MATCH_W_TITLE)
+            q_for_markers = rs
+        else:
+            score = _match_sim(q, ct)
+            q_for_markers = q
+        score = max(score, _match_sim(q, f'{ca_all} {ct}'.strip()))
+    # version markers, numbers in the artist name ("21 savage") do not count
+    am = _title_markers(ca_all)
+    if (_title_markers(q_for_markers) - am) != (_title_markers(ct) - am):
+        score *= _MATCH_MARKER_FACTOR
+    score = min(1.0, score)
+    if cand_type == 'video':
+        score -= _MATCH_VIDEO_PENALTY
+    if duration and cand_duration:
+        score -= min(abs(duration - cand_duration) / 30.0, 0.15)
+    return max(0.0, score)
+
 _DUP_TITLE_MIN  = 0.88   # title similarity needed to call two songs duplicates
 _DUP_ARTIST_MIN = 0.80   # primary artist similarity needed on top of that
 _STATS_LIB_MATCH_MIN = 0.88  # min score to treat a song_stats row as "the same song" as a library row
@@ -4615,15 +4683,12 @@ def _ytm_enrich(sid, video_id=None, artists_override=None):
             q = f'{artist} {title}'.strip()
             results = yt.search(q, filter='songs', limit=5, ignore_spelling=True)
             if results:
-                _qn = re.sub(r'[^a-z0-9 ]', '', f'{title} {artist}'.lower())
                 def _cand_score(r):
-                    return _fuzzy(
-                        re.sub(r'[^a-z0-9 ]', '', (r.get('title') or '').lower()) + ' ' +
-                        re.sub(r'[^a-z0-9 ]', '', ' '.join(a.get('name', '') for a in (r.get('artists') or [])).lower()),
-                        _qn)
+                    return _match_score(None, r.get('title') or '', _ytm_cand_artist(r), q_title=title, q_artist=artist,
+                                        cand_duration=r.get('duration_seconds'))
                 best = max(results, key=_cand_score)
                 # the closest of five results is not a match by itself: weak or a different version (live, slowed, part 2) is left alone
-                if _cand_score(best) < 0.6 or not _same_markers(best.get('title') or '', title):
+                if _cand_score(best) < 0.6:
                     _log_ytm.info('ytm_enrich: sid=%s no confident match for %r (closest %r), left as is', sid, f'{artist} {title}', best.get('title'))
                 else:
                     resolved_vid = best.get('videoId') or None
@@ -4841,37 +4906,14 @@ def _ytm_thumbnail(thumbnails):
     if not thumbnails: return ''
     return max(thumbnails, key=lambda t: t.get('width', 0)).get('url', '')
 
-def _search_ytm(query):
+def _search_ytm(query, title=None, artist=None, duration=None):
+    """query is the freeform string sent to ytmusic. title / artist / duration are optional hints
+    from callers that already know them (spotify, library), they only change the scoring"""
     yt = _import_ytmusic()
-    q_norm = re.sub(r'[^a-z0-9 ]', '', query.lower())
-    q_tokens = set(q_norm.split())
-
-    def _artist_score(artists):
-        if not artists: return 0.0
-        name = re.sub(r'[^a-z0-9 ]', '', ' '.join(a.get('name','') for a in artists).lower())
-        name_tokens = set(name.split())
-        if not q_tokens or not name_tokens: return 0.0
-        overlap = len(q_tokens & name_tokens) / max(len(q_tokens), len(name_tokens))
-        return max(overlap, _fuzzy(name, q_norm))
-
-    def _title_score(title):
-        t = re.sub(r'[^a-z0-9 ]', '', (title or '').lower())
-        t_tokens = set(t.split())
-        if not q_tokens or not t_tokens: return 0.0
-        overlap = len(q_tokens & t_tokens) / max(len(q_tokens), len(t_tokens))
-        return max(overlap, _fuzzy(t, q_norm))
 
     def _combined_score(r, result_type):
-        artists = r.get('artists') or []
-        a = _artist_score(artists)
-        t = _title_score(r.get('title', ''))
-        score = (a + t) / 2
-        artist_str = re.sub(r'[^a-z0-9 ]', '', ' '.join(x.get('name','') for x in artists).lower())
-        title_str = re.sub(r'[^a-z0-9 ]', '', (r.get('title','') or '').lower())
-        full_sim = _fuzzy(artist_str + ' ' + title_str, q_norm)
-        score = max(score, full_sim * 0.85)
-        if result_type == 'video': score -= 0.02
-        return score
+        return _match_score(query, r.get('title', ''), _ytm_cand_artist(r), q_title=title, q_artist=artist,
+                            duration=duration, cand_duration=r.get('duration_seconds'), cand_type=result_type)
 
     def normalize(r, result_type):
         artists = r.get('artists') or []
@@ -14313,18 +14355,13 @@ def _sp_resolve_job(jid, tracks, speed, local_dir):
                     return  # finally block counts it
 
                 q = ' '.join(filter(None, [artist, title]))
-                ytm_tracks, _ = _search_ytm(q)
+                ytm_tracks, _ = _search_ytm(q, title=title, artist=artist, duration=duration_secs)
 
                 if ytm_tracks:
                     best = ytm_tracks[0]
                     ytm_dur = best.get('duration') or 0
                     base_score = best.get('_score', 0.0)
-                    if duration_secs and ytm_dur:
-                        diff_secs = abs(ytm_dur - duration_secs)
-                        dur_penalty = min(diff_secs / 30.0, 0.15)
-                        confidence = max(0.0, base_score - dur_penalty)
-                    else:
-                        confidence = base_score
+                    confidence = base_score  # duration penalty is already part of the score
                     result['ytm'] = {
                         'video_id':  best.get('video_id', ''),
                         'title':     best.get('title', ''),
@@ -15485,11 +15522,7 @@ def api_song_ytm_cover_refresh(sid):
         results = yt.search(q, filter='songs', limit=5, ignore_spelling=True)
         if not results:
             return jsonify({'error': 'no ytm match found'}), 404
-        best = max(results, key=lambda r: _fuzzy(
-            re.sub(r'[^a-z0-9 ]', '', (r.get('title') or '').lower()) + ' ' +
-            re.sub(r'[^a-z0-9 ]', '', ' '.join(a.get('name', '') for a in (r.get('artists') or [])).lower()),
-            re.sub(r'[^a-z0-9 ]', '', f'{title} {artist}'.lower())
-        ))
+        best = max(results, key=lambda r: _match_score(None, r.get('title') or '', _ytm_cand_artist(r), q_title=title, q_artist=artist))
         thumb_url = _ytm_thumbnail(best.get('thumbnails') or [])
         if not thumb_url:
             return jsonify({'error': 'no cover available from ytm'}), 404
@@ -26439,7 +26472,7 @@ function _lyrGet(sid) { return fetch('/api/songs/' + sid + '/lyrics').then(r => 
 
 const _LYR_ICO = {
   genius: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.897 1.235c-.36.001-.722.013-1.08.017-.218-.028-.371.225-.352.416-.035 1.012.023 2.025-.016 3.036-.037.841-.555 1.596-1.224 2.08-.5.345-1.118.435-1.671.663.121.78.434 1.556 1.057 2.07 1.189 1.053 3.224.86 4.17-.426.945-1.071.453-2.573.603-3.854.286-.48.937-.132 1.317-.49-.34-1.249-.81-2.529-1.725-3.472a11.125 11.125 0 00-1.08-.04zm-10.42.006C.53 2.992-.386 5.797.154 8.361c.384 2.052 1.682 3.893 3.45 4.997.134-.23.23-.476.09-.73-.95-2.814-.138-6.119 1.986-8.19.014-.986.043-1.976-.003-2.961l-.188-.214c-1.003-.051-2.008 0-3.01-.022zm17.88.055l-.205.356c.265.938.6 1.862.72 2.834.58 3.546-.402 7.313-2.614 10.14-1.816 2.353-4.441 4.074-7.334 4.773-2.66.66-5.514.45-8.064-.543-.068.079-.207.237-.275.318 2.664 2.629 6.543 3.969 10.259 3.498 3.075-.327 5.995-1.865 8.023-4.195 1.935-2.187 3.083-5.07 3.125-7.992.122-3.384-1.207-6.819-3.636-9.19z"/></svg>',
-  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16"><mask id="lyr-lrc-m"><rect width="20" height="20" fill="white"/><g fill="black" stroke="black" stroke-width="0.9" stroke-linejoin="round" font-family="Arial Black,Arial,Helvetica,sans-serif" font-weight="900" font-size="9.5" text-anchor="middle"><text x="10" y="9.2" textLength="15.6" lengthAdjust="spacingAndGlyphs">LRC</text><text x="10" y="17.6" textLength="15.6" lengthAdjust="spacingAndGlyphs">LIB</text></g></mask><rect width="20" height="20" rx="4" fill="currentColor" mask="url(#lyr-lrc-m)"/></svg>',
+  lrclib: '<svg viewBox="0 0 20 20" width="16" height="16"><mask id="lyr-lrc-m"><rect width="20" height="20" fill="white"/><g fill="black" stroke="black" stroke-width="0.9" stroke-linejoin="round" font-family="Arial Black,Arial,Helvetica,sans-serif" font-weight="500" font-size="9.5" text-anchor="middle"><text x="10" y="9.2" textLength="15.6" lengthAdjust="spacingAndGlyphs">LRC</text><text x="10" y="17.6" textLength="15.6" lengthAdjust="spacingAndGlyphs">LIB</text></g></mask><rect width="20" height="20" rx="4" fill="currentColor" mask="url(#lyr-lrc-m)"/></svg>',
   manual: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 16.5l.9-3.6L13.8 3.5a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3L7.1 15.6z"/><path d="M12.2 5.2l2.6 2.6"/></svg>'
 };
 
