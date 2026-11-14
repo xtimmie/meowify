@@ -10966,7 +10966,7 @@ _LIVE_DIR = '/meowify-live'
 _live_cv = threading.Condition()
 _live = {
     'seq': 0, 'peer': None, 'seen_ts': (0, 0), 'my_ts': (0, 0),
-    'boot': hashlib.md5(str(_time.time()).encode()).hexdigest()[:8], 'again': False, 'relist': False,
+    'boot': hashlib.md5(str(_time.time()).encode()).hexdigest()[:8], 'again': False, 'relist': False, 'first': True,
     'out': None, 'out_q': None, 'out_ev': threading.Event(), 'busy': False,
     'up_qh': None, 'qh_cur': None, 'qsrc_cur': None,
     'docs': {}, 'rev': {}, 'qcache': {},
@@ -11119,7 +11119,7 @@ def _live_deliver(dbx):
         if best is None:
             return
         te, dev, doc, sm = best
-        if te <= _live['my_ts'] or te <= _live['seen_ts']:
+        if (te <= _live['my_ts'] and not (_live['first'] and doc.get('pl'))) or te <= _live['seen_ts']:
             return
         if _live['busy'] or _live['out'] is not None:
             return
@@ -11140,7 +11140,7 @@ def _live_deliver(dbx):
         'queue': _live_queue_out(payload) if payload is not None else None,
     }
     with _live_cv:
-        if te <= _live['my_ts'] or _live['busy'] or _live['out'] is not None:
+        if (te <= _live['my_ts'] and not (_live['first'] and doc.get('pl'))) or _live['busy'] or _live['out'] is not None:
             return
         _live['peer'] = packet
         _live['seen_ts'] = te
@@ -11273,6 +11273,7 @@ def _live_sender():
             import dropbox as _dbxm
             wm = _dbxm.files.WriteMode.overwrite
             me = out['dev']
+            _live['first'] = False
             if oq:
                 dbx.files_upload(json.dumps(oq[1], separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.q', mode=wm, mute=True)
                 with _live_cv:
@@ -11398,7 +11399,7 @@ def api_live_poll():
             _live_cv.wait(wait)
         s, pk, my = _live['seq'], _live['peer'], _live['my_ts']
     out = {'on': True, 'seq': s, 'me': _dbx_get_device_id(), 'boot': _live['boot']}
-    if pk is not None and s > seq and pk['te'] > my:
+    if pk is not None and s > seq and (pk['te'] > my or (_live['first'] and pk['doc'].get('pl'))):
         out['doc'] = pk['doc']
         out['sm'] = pk['sm']
         if pk['queue'] is not None and pk['qh'] != qh:
@@ -30949,35 +30950,31 @@ let _liveGid = 0;
 #live-status{display:none;padding:3px 24px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-primary);flex-shrink:0;background:var(--color-surface);text-align:center}
 #live-status.on{display:block}
 body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
-.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:80px;height:80px;overflow:visible;pointer-events:none}
-.mob-np-playbtn .live-ghost-svg{width:110px;height:110px}
-#app.mobile #bplay .live-ghost-svg{width:44px;height:44px}
+.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100px;height:100px;overflow:visible;pointer-events:none}
+.mob-np-playbtn .live-ghost-svg{width:140px;height:140px}
+#app.mobile #bplay .live-ghost-svg{width:56px;height:56px}
 .live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;pointer-events:none;z-index:1}
 .mob-np-playbtn .live-ghost-icon{width:30px;height:30px;color:var(--color-surface-dim)}
 .live-ghost .live-ghost-svg,.live-ghost .live-ghost-icon{display:block}
 .playbtn.live-ghost canvas.playbtn-spiky,.playbtn.live-ghost svg.playbtn-spiky-opt,.playbtn.live-ghost svg.playbtn-morph,
 .mob-np-playbtn.live-ghost canvas.mob-np-spiky,.mob-np-playbtn.live-ghost svg.mob-np-spiky-opt,.mob-np-playbtn.live-ghost .mob-np-plain-circle,.mob-np-playbtn.live-ghost svg.playbtn-morph{display:none!important}
 #app.mobile .playbtn.live-ghost{background:transparent!important}
-.live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9));animation:live-gb 4.5s infinite}
+.live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
 .live-gc{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
+.live-rot{transform-box:fill-box;transform-origin:50% 50%;animation:live-rot 4.5s infinite}
 #app.mobile #bplay .live-gb,#app.mobile #bplay .live-gc{fill:#fff}
-.live-gb.b0{animation-delay:0s}
-.live-gb.b1{animation-delay:-.9s}
-.live-gb.b2{animation-delay:-1.8s}
-.live-gb.b3{animation-delay:-2.7s}
-.live-gb.b4{animation-delay:-3.6s}
-@keyframes live-gb{
-0%{transform:translate(0px,-28px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
-13%{transform:translate(26.63px,-8.65px)}
-20%{transform:translate(26.63px,-8.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
-33%{transform:translate(16.46px,22.65px)}
-40%{transform:translate(16.46px,22.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
-53%{transform:translate(-16.46px,22.65px)}
-60%{transform:translate(-16.46px,22.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
-73%{transform:translate(-26.63px,-8.65px)}
-80%{transform:translate(-26.63px,-8.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
-93%{transform:translate(0px,-28px)}
-100%{transform:translate(0px,-28px)}
+@keyframes live-rot{
+0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
+15%{transform:rotate(72deg)}
+20%{transform:rotate(72deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
+35%{transform:rotate(144deg)}
+40%{transform:rotate(144deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
+55%{transform:rotate(216deg)}
+60%{transform:rotate(216deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
+75%{transform:rotate(288deg)}
+80%{transform:rotate(288deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
+95%{transform:rotate(360deg)}
+100%{transform:rotate(360deg)}
 }
 body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
 `;
@@ -31411,8 +31408,31 @@ function _liveGhostTick() {
   const g = S.ghost;
   if (!g) return;
   const t = _liveGhostPos();
-  if (g.dur && t >= g.dur && Date.now() - g.at > (g.dur - g.pos + 8) * 1000) { _liveGhostEnd(); return; } // nothing new arrived after the song should have ended
+  if (g.dur && t >= g.dur - 0.05) {
+    const ov = Math.min(3, Math.max(0, g.pos + (Date.now() - g.at) / 1000 - g.dur));
+    if ((g.pred | 0) < 3 && _liveGhostAdvance(ov)) return;
+    if (Date.now() - g.at > (g.dur - g.pos + 8) * 1000) { _liveGhostEnd(); return; }
+  }
   try { engine.onProgress(t, g.dur || (S.cur && S.cur.duration) || 0); } catch (e) {}
+}
+
+function _liveGhostAdvance(ov) {
+  const g = S.ghost;
+  if (!g || !S.cur) return false;
+  if (S.repeat === 'one') {
+    g.pos = ov;
+    g.at = Date.now();
+    g.pred = (g.pred | 0) + 1;
+    updateProg(ov, g.dur);
+    LIVE.last = { sig: _liveSig(), pos: ov, at: Date.now(), pl: true };
+    return true;
+  }
+  const before = S.cur;
+  _liveGhostSkip(1, ov);
+  if (S.cur === before) return false;
+  g.pred = (g.pred | 0) + 1;
+  LIVE.last = { sig: _liveSig(), pos: ov, at: Date.now(), pl: true };
+  return true;
 }
 
 function _liveGhostEnd() {
@@ -31456,9 +31476,9 @@ function _liveGhostSeekFrac(f, dur) {
   _liveGhostSeek(f * (dur || (g && g.dur) || 0));
 }
 
-function _liveGhostSkip(dir) {
+function _liveGhostSkip(dir, ov) {
   const g = S.ghost;
-  if (!g || CFG.live_pb_remote === false || !S.cur) return;
+  if (!g || (CFG.live_pb_remote === false && ov === undefined) || !S.cur) return;
   const chaos = !!(S.shuffle && S.shuffleMode === 'chaos');
   let song = null;
   if (chaos) {
@@ -31505,7 +31525,7 @@ function _liveGhostSkip(dir) {
   }
   if (!song) return;
   S.cur = song;
-  g.pos = 0;
+  g.pos = ov || 0;
   g.at = Date.now();
   g.dur = song.duration || 0;
   updatePlayerUI(song);
@@ -31513,7 +31533,7 @@ function _liveGhostSkip(dir) {
   updateHighlights();
   updateProg(0, g.dur);
   if (S.queueOpen) { try { renderQueueSidebar(); } catch (e) {} }
-  _liveCheck(true);
+  if (ov === undefined) _liveCheck(true);
 }
 
 // ── ghost ui: 3 gooey balls rotating clockwise on the play button + status line under the topbar ──
@@ -31521,7 +31541,7 @@ function _liveGhostHtml() {
   const id = 'live-goo-' + (++_liveGid);
   return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
     <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -8"/></filter></defs>
-    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="14"/><circle class="live-gb b0" cx="0" cy="0" r="12"/><circle class="live-gb b1" cx="0" cy="0" r="12"/><circle class="live-gb b2" cx="0" cy="0" r="12"/><circle class="live-gb b3" cx="0" cy="0" r="12"/><circle class="live-gb b4" cx="0" cy="0" r="12"/></g>
+    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="17"/><g class="live-rot"><circle cx="0" cy="0" r="40" fill="none"/><circle class="live-gb" cx="0" cy="-28" r="12"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(72)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(144)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(216)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(288)"/></g></g>
   </svg>
   <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
 }
