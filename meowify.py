@@ -11341,7 +11341,7 @@ def api_live_push():
             'v': 1, 'dev': me, 'nm': _dbx_get_device_name(),
             'ts': int(d.get('ts') or _time.time() * 1000),
             'own': me if d.get('own') in (None, '', 'me') else str(d.get('own')),
-            'pl': bool(d.get('pl')), 's': sid[0], 'sk': 1 if d.get('sk') else 0,
+            'pl': bool(d.get('pl')), 's': sid[0], 'sk': 1 if d.get('sk') else 0, 'hb': 1 if d.get('hb') else 0,
             'pos': round(float(d.get('pos') or 0), 2), 'dur': round(float(d.get('dur') or 0), 2),
             'qi': int(d.get('qi') or 0), 'rp': d.get('rp') or 'none', 'sh': bool(d.get('sh')),
             'sm': d.get('sm'), 'sc': d.get('sc'), 'ss': bool(d.get('ss')), 'qs': d.get('qs'),
@@ -30971,14 +30971,14 @@ body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
 100%{transform:rotate(360deg)}
 }
 @keyframes live-bpos{
-0%,100%{transform:translateY(-40px)}
-25%{transform:translateY(-44px)}
-75%{transform:translateY(-36px)}
+0%,100%{transform:translateY(-36px)}
+25%{transform:translateY(-40px)}
+75%{transform:translateY(-32px)}
 }
 @keyframes live-bsz{
 0%,100%{transform:scale(1)}
-25%{transform:scale(1.08)}
-75%{transform:scale(.92)}
+25%{transform:scale(1.19)}
+75%{transform:scale(.81)}
 }
 body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
 `;
@@ -31067,7 +31067,7 @@ function _liveDoc(own) {
   const nsw = S.queue.slice(0, S.qi).filter(s => s && s._qsw).length;
   const pos = g ? _liveGhostPos() : _liveLocalPos();
   return {
-    ts: _liveNow(), own, pl: g ? true : !!S.isPlaying,
+    ts: _liveNow(), own, hb: 1, pl: g ? true : !!S.isPlaying,
     sid: _liveOut(cur), pos: +pos.toFixed(2),
     dur: g ? (g.dur || cur.duration || 0) : (engine.duration || S._restoredDuration || cur.duration || 0),
     qi: chaos ? 0 : S.qi - nsw,
@@ -31113,6 +31113,7 @@ function _liveCheck(force) {
     const pred = L.pl ? L.pos + (now - L.at) / 1000 : L.pos;
     if (Math.abs(pos - pred) > (L.pl ? 1.5 : 0.6)) why = 'seek';
   }
+  if (!why && !g && S.isPlaying && now - L.at > 20000) why = 'hb';
   if (!why) return;
   _liveSend(g ? g.owner : 'me', sig, why === 'seek' || why === 'force');
 }
@@ -31266,7 +31267,7 @@ async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
     S.isPlaying = false;
     S.cur = song;
     delete engine._restoredPosition;
-    S.ghost = { owner: d.own, name: d.nm || 'another device', pos, at: Date.now(), dur: dur || song.duration || 0 };
+    S.ghost = { owner: d.own, name: d.nm || 'another device', pos, at: Date.now(), dur: dur || song.duration || 0, hb: !!d.hb, docAt: Date.now() };
     stopVolRot();
     updatePlayerUI(song);
     _liveLyricsFor(song);
@@ -31411,6 +31412,7 @@ async function _liveApply(pk) {
 function _liveGhostTick() {
   const g = S.ghost;
   if (!g) return;
+  if (g.hb && Date.now() - g.docAt > 50000) { _liveGhostEnd(); return; }
   const t = _liveGhostPos();
   if (g.dur && t >= g.dur - 0.05) {
     const ov = Math.min(3, Math.max(0, g.pos + (Date.now() - g.at) / 1000 - g.dur));
@@ -31544,8 +31546,8 @@ function _liveGhostSkip(dir, ov) {
 function _liveGhostHtml() {
   const id = 'live-goo-' + (++_liveGid);
   return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
-    <defs><filter id="${id}" filterUnits="userSpaceOnUse" x="-70" y="-70" width="140" height="140" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -6"/></filter></defs>
-    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="21"/><g class="live-rot"><circle cx="0" cy="0" r="58" fill="none"/><g><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="13"/></g></g><g transform="rotate(72)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="13" style="animation-delay:-.6s"/></g></g><g transform="rotate(144)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="13" style="animation-delay:-1.2s"/></g></g><g transform="rotate(216)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="13" style="animation-delay:-1.8s"/></g></g><g transform="rotate(288)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="13" style="animation-delay:-2.4s"/></g></g></g></g>
+    <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="14" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -5"/></filter></defs>
+    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="24"/><g class="live-rot"><circle cx="0" cy="0" r="46" fill="none"/><g><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5"/></g></g><g transform="rotate(72)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-.6s"/></g></g><g transform="rotate(144)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.2s"/></g></g><g transform="rotate(216)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.8s"/></g></g><g transform="rotate(288)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-2.4s"/></g></g></g></g>
   </svg>
   <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
 }
