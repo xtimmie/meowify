@@ -24699,7 +24699,7 @@ function renderLibrary(){
     }
     if(!S.albums.length){_lc.innerHTML=`<div class="empty"><div class="ei">💿</div><p>no albums yet</p></div>`;return;}
     if(!albums.length){_lc.innerHTML=`<div class="empty"><div class="ei">💿</div><p>no albums match "${esc(S.libSearch)}"</p></div>`;return;}
-    const _newAlbumIds=albums.map(a=>a.id).join(',');
+    const _newAlbumIds=albums.map(a=>[a.id,a.title,a.artist,a.year,a.cover_path].join('|')).join(',');
     if(_lc.querySelector('.albums-grid') && _newAlbumIds===S._lastAlbumIds){return;}
     S._lastAlbumIds=_newAlbumIds;
     _lc.innerHTML=`<div class="albums-grid">${albums.map(a=>albumCard(a)).join('')}</div>`;
@@ -24868,7 +24868,7 @@ function _albFetch(aid){
   return _albInflight[aid]=api('GET','/api/albums/'+aid+'/all-tracks').then(done,()=>done(null));
 }
 function _albPrefetch(aid){if(!(S._albTracks&&S._albTracks[aid]))_albFetch(aid);}
-function _albSig(t){return t.map(x=>x.id+'|'+(x.song_id||'')+'|'+x.title+'|'+x.track_num).join('~');}
+function _albSig(t){return t.map(x=>x.id+'|'+(x.song_id||'')+'|'+x.title+'|'+(x.artist||'')+'|'+x.track_num+'|'+(x.owned?1:0)).join('~');}
 
 function _albSkel(aid){
   const n=aid.startsWith('sgl_')?1:Math.min(30,S.library.filter(s=>s.album_id===aid).length)||8;
@@ -31647,6 +31647,8 @@ async function refreshDbxStatus() {
     window._dbxWaiting    = window._dbxWaiting || false;
     window._dbxEnabled    = s.enabled;
     window._dbxLastSync   = s.last_sync;
+    // seed the bg watcher from the first status read so a sync finishing before its first tick still triggers a refresh
+    if (typeof _dbxBgSeen !== 'undefined' && _dbxBgSeen === null && !s.syncing && !s.auto) _dbxBgSeen = s.last_sync || 0;
     window._dbxStatus     = s.status || '';
     // window._dbxSyncing tracks the *local* triggerForceSync in-flight flag
     // (used to disable the sync button etc) - keep it separate from the
@@ -31712,17 +31714,47 @@ async function _dbxBgTick() {
   if (!s || !s.enabled) return;
   if (s.syncing || s.auto) { _dbxBgBusy = true; _pollSyncDownloads(); return; }
   const ls = s.last_sync || 0;
-  if (_dbxBgSeen === null) { _dbxBgSeen = ls; _dbxBgBusy = false; return; }
+  if (_dbxBgSeen === null) { _dbxBgSeen = ls; if (!_dbxBgBusy) return; }
   if (ls === _dbxBgSeen && !_dbxBgBusy) return;
   _dbxBgSeen = ls;
   _dbxBgBusy = false;
   const pulled = (s.last_result && s.last_result.pulled) || [];
-  if (!pulled.length) return;
-  await loadData();
-  rerenderCurrentView();
-  _pollSyncDownloads();
+  await _refreshAfterSync();
+  if (pulled.length) _pollSyncDownloads();
 }
 setInterval(_dbxBgTick, 12000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _dbxBgTick(); });
+
+let _afterSyncBusy = false, _afterSyncAgain = false;
+async function _refreshAfterSync() {
+  if (_afterSyncBusy) { _afterSyncAgain = true; return; }
+  _afterSyncBusy = true;
+  try {
+    do {
+      _afterSyncAgain = false;
+      const _act = (S.view === 'playlist' && S.activePid) ? S.activePid : null;
+      await loadData();
+      // playlist membership edits arrive through sync too, loadData only drops caches of deleted playlists/songs
+      for (const id of Object.keys(S.plSongs)) if (id !== _act) delete S.plSongs[id];
+      let _plChanged = false;
+      if (_act && S.playlists.some(p => p.id === _act)) {
+        const _old = JSON.stringify(S.plSongs[_act] || null);
+        const _fresh = await api('GET', '/api/playlists/' + _act + '/songs');
+        if (Array.isArray(_fresh)) { S.plSongs[_act] = _fresh; _plChanged = JSON.stringify(_fresh) !== _old; }
+      }
+      const _stillPl = _act && S.view === 'playlist' && S.activePid === _act;
+      if (!(_stillPl && !_plChanged)) {
+        const _vc = document.getElementById('vc');
+        const _st = _vc ? _vc.scrollTop : 0;
+        if (S.view === 'artist' && S.activeArtid) await renderArtistPage(S.activeArtid, false, true);
+        else rerenderCurrentView();
+        if (_vc && S.view !== 'library') requestAnimationFrame(() => { _vc.scrollTop = _st; });
+      }
+      _plPrefetch();
+    } while (_afterSyncAgain);
+  } catch (e) {}
+  finally { _afterSyncBusy = false; }
+}
 
 async function bulkGeniusFix(ids) {
   if (!CFG.genius_token) { alert('no genius token configured'); return; }
@@ -34660,9 +34692,9 @@ function clearSelection() {
   updateBulkBar();
 }
 
-async function renderArtistPage(aid, searchOnly) {
+async function renderArtistPage(aid, searchOnly, keepView) {
   const vc = document.getElementById('vc');
-  if (!searchOnly) vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
+  if (!searchOnly && !keepView) vc.innerHTML = '<div class="empty"><p style="color:var(--color-on-surface-variant)">loading...</p></div>';
   if (typeof aid === 'string' && aid[0] === '~') {
     const stubId = aid, stub = S._artStubs && S._artStubs[stubId];
     const real = stub ? await _resolveArtistStub(stubId, stub) : null;
@@ -40147,11 +40179,11 @@ async function loadData() {
   if (CFG.smart_shuffle != null) S.smartShuffle = !!CFG.smart_shuffle;
   if (CFG.shuffle_on) S.shuffle = true;
   S.library = await api('GET', '/api/library') || [];
-  S._lastLibIds = ''; // reset after fetch so renderLibrary mid-flight sees stale, not empty
+  // dont reset _lastLibIds here, renderLibrary compares fresh ids against what is actually rendered and updates in place
   S.playlists = await api('GET', '/api/playlists') || [];
   S.albums = await api('GET', '/api/albums') || [];
   _loadAliasMap();
-  S._albTracks = {};
+  // keep _albTracks, renderAlbumDetail already revalidates against a fresh fetch (no skeleton blink)
   const validIds = new Set(S.library.map(s => s.id));
   for (const pid of Object.keys(S.plSongs)) {
     if (!S.playlists.find(p => p.id === pid)) {
