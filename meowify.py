@@ -14163,6 +14163,8 @@ def api_ytm_album(browse_id):
                     _gr = _genius_get(f'/albums/{g_album_id}/tracks?per_page=50&page={_gp}', tok)
                     g_raw += _gr.get('tracks', [])
                     if not _gr.get('next_page'): break
+                if any(t.get('number') for t in g_raw):
+                    g_raw = [t for t in g_raw if t.get('number')]
                 g_tracks = []
                 for t in g_raw:
                     ts = t.get('song') or {}
@@ -14228,7 +14230,16 @@ def api_album_all_tracks(aid):
             CASE WHEN at.song_id IS NOT NULL THEN 1 ELSE 0 END as owned
             FROM album_tracks at WHERE at.album_id=?
             ORDER BY at.track_num, at.title""", (aid,)).fetchall()
-    return jsonify(_disp_rows([dict(r) for r in rows], 'artist'))
+    out = [dict(r) for r in rows]
+    # genius lists singles linked to the album page next to the real tracklist, with no track number.
+    # they stay stored, they are only hidden unless the caller asks for them (?extra=1)
+    numbered = any((r['track_num'] or 0) > 0 for r in out)
+    for r in out:
+        r['extra'] = bool(numbered and not (r['track_num'] or 0) > 0)
+    if request.args.get('extra') != '1':
+        out = [r for r in out if not r['extra'] or r['owned']]
+    out.sort(key=lambda r: (r['extra'], r['track_num'] or 0, r['title'] or ''))
+    return jsonify(_disp_rows(out, 'artist'))
 
 @app.route('/api/album_tracks/<tid>')
 def api_get_album_track(tid):
