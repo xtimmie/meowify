@@ -30950,32 +30950,35 @@ let _liveGid = 0;
 #live-status{display:none;padding:3px 24px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-primary);flex-shrink:0;background:var(--color-surface);text-align:center}
 #live-status.on{display:block}
 body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
-.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:120px;height:120px;overflow:visible;pointer-events:none}
+.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:110px;height:110px;overflow:visible;pointer-events:none}
 .mob-np-playbtn .live-ghost-svg{width:160px;height:160px}
-#app.mobile #bplay .live-ghost-svg{width:80px;height:80px}
-.live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:19px;height:19px;pointer-events:none;z-index:1}
-.mob-np-playbtn .live-ghost-icon{width:24px;height:24px;color:var(--color-surface-dim)}
-#app.mobile #bplay .live-ghost-icon{width:14px;height:14px}
+#app.mobile #bplay .live-ghost-svg{width:90px;height:90px}
+.live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;pointer-events:none;z-index:1}
+.mob-np-playbtn .live-ghost-icon{width:26px;height:26px;color:var(--color-surface-dim)}
+#app.mobile #bplay .live-ghost-icon{width:15px;height:15px}
 .live-ghost .live-ghost-svg,.live-ghost .live-ghost-icon{display:block}
 .playbtn.live-ghost canvas.playbtn-spiky,.playbtn.live-ghost svg.playbtn-spiky-opt,.playbtn.live-ghost svg.playbtn-morph,
 .mob-np-playbtn.live-ghost canvas.mob-np-spiky,.mob-np-playbtn.live-ghost svg.mob-np-spiky-opt,.mob-np-playbtn.live-ghost .mob-np-plain-circle,.mob-np-playbtn.live-ghost svg.playbtn-morph{display:none!important}
 #app.mobile .playbtn.live-ghost{background:transparent!important}
 .live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
 .live-gc{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
-.live-rot{transform-box:fill-box;transform-origin:50% 50%;animation:live-rot 3s infinite}
+.live-rot{transform-box:fill-box;transform-origin:50% 50%;animation:live-rot 6s linear infinite}
+.live-bpos{animation:live-bpos 3s ease-in-out infinite}
+.live-bsz{transform-box:fill-box;transform-origin:50% 50%;animation:live-bsz 3s ease-in-out infinite}
 #app.mobile #bplay .live-gb,#app.mobile #bplay .live-gc{fill:#fff}
 @keyframes live-rot{
-0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
-17%{transform:rotate(72deg)}
-20%{transform:rotate(72deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
-37%{transform:rotate(144deg)}
-40%{transform:rotate(144deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
-57%{transform:rotate(216deg)}
-60%{transform:rotate(216deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
-77%{transform:rotate(288deg)}
-80%{transform:rotate(288deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
-97%{transform:rotate(360deg)}
+0%{transform:rotate(0deg)}
 100%{transform:rotate(360deg)}
+}
+@keyframes live-bpos{
+0%,100%{transform:translateY(-36px)}
+25%{transform:translateY(-40px)}
+75%{transform:translateY(-32px)}
+}
+@keyframes live-bsz{
+0%,100%{transform:scale(1)}
+25%{transform:scale(1.19)}
+75%{transform:scale(.81)}
 }
 body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
 `;
@@ -31542,7 +31545,7 @@ function _liveGhostHtml() {
   const id = 'live-goo-' + (++_liveGid);
   return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
     <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -8"/></filter></defs>
-    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="17"/><g class="live-rot"><circle cx="0" cy="0" r="40" fill="none"/><circle class="live-gb" cx="0" cy="-28" r="12"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(72)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(144)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(216)"/><circle class="live-gb" cx="0" cy="-28" r="12" transform="rotate(288)"/></g></g>
+    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="24"/><g class="live-rot"><circle cx="0" cy="0" r="46" fill="none"/><g><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5"/></g></g><g transform="rotate(72)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-.6s"/></g></g><g transform="rotate(144)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.2s"/></g></g><g transform="rotate(216)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.8s"/></g></g><g transform="rotate(288)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-2.4s"/></g></g></g></g>
   </svg>
   <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
 }
