@@ -10965,7 +10965,8 @@ import calendar
 _LIVE_DIR = '/meowify-live'
 _live_cv = threading.Condition()
 _live = {
-    'seq': 0, 'peer': None, 'seen_ts': 0, 'my_ts': 0,
+    'seq': 0, 'peer': None, 'seen_ts': (0, 0), 'my_ts': (0, 0),
+    'boot': hashlib.md5(str(_time.time()).encode()).hexdigest()[:8], 'again': False, 'relist': False,
     'out': None, 'out_q': None, 'out_ev': threading.Event(), 'busy': False,
     'up_qh': None, 'qh_cur': None, 'qsrc_cur': None,
     'docs': {}, 'rev': {}, 'qcache': {},
@@ -11084,14 +11085,17 @@ def _live_doc_out(doc):
     return d
 
 def _live_eff_ts(doc, sm):
-    # event time on the senders clock. if that clock is way off compared to dropbox's, fall back to dropbox's
+    # ordering key: dropbox server time first (one clock for every device, 1s resolution), the senders own event time only
+    # breaks ties inside the same second. comparing raw device clocks let the device with the faster clock win every
+    # conflict and silently dropped the other ones events for as long as the skew lasted
     try:
         ts = int(doc.get('ts') or 0)
     except Exception:
         ts = 0
-    if not ts or (sm and abs(ts - sm) > 30000):
-        return sm or 0
-    return ts
+    sm = int(sm or 0)
+    if not sm:
+        return (int(ts // 1000), ts)
+    return (sm // 1000, ts)
 
 def _live_fetch_queue(dbx, qsrc, qh):
     p = _live['qcache'].get(qh)
@@ -11122,7 +11126,12 @@ def _live_deliver(dbx):
     qh, qsrc = doc.get('qh'), doc.get('qsrc')
     payload = None
     if qh and qsrc:
-        payload = _live_fetch_queue(dbx, qsrc, qh)
+        try:
+            payload = _live_fetch_queue(dbx, qsrc, qh)
+        except Exception as ex:
+            _log_dbx.debug(f'[live] queue fetch failed: {ex}')
+            _live['again'] = True  # watcher retries shortly, the doc is already marked as seen in the rev map
+            return
         if payload is None:
             return
     packet = {
@@ -11157,6 +11166,7 @@ def _live_ingest(dbx, ents):
             doc = json.loads(resp.content.decode('utf-8'))
         except Exception as ex:
             _log_dbx.debug(f'[live] doc fetch failed {pl}: {ex}')
+            _live['relist'] = True  # the cursor moves past this entry, so list the folder again
             continue
         if not isinstance(doc, dict):
             continue
@@ -11166,7 +11176,11 @@ def _live_ingest(dbx, ents):
             _live['docs'][dev] = (doc, sm)
         got = True
     if got:
-        _live_deliver(dbx)
+        try:
+            _live_deliver(dbx)
+        except Exception as ex:
+            _log_dbx.debug(f'[live] deliver failed: {ex}')
+            _live['again'] = True
 
 def _live_bootstrap(dbx):
     try:
@@ -11212,6 +11226,15 @@ def _live_watcher():
             if cur is None:
                 cur = _live_bootstrap(dbx)
                 continue
+            if _live['again'] or _live['relist']:
+                time.sleep(1.5)
+                if _live['relist']:
+                    _live['relist'] = False
+                    cur = None
+                    continue
+                _live['again'] = False
+                _live_deliver(dbx)
+                continue
             r = dbx.files_list_folder_longpoll(cur, timeout=60)
             if r.changes:
                 cur = _live_pull(dbx, cur)
@@ -11254,8 +11277,16 @@ def _live_sender():
                 dbx.files_upload(json.dumps(oq[1], separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.q', mode=wm, mute=True)
                 with _live_cv:
                     _live['up_qh'] = oq[0]
-            dbx.files_upload(json.dumps(out, separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.json', mode=wm, mute=True)
+            _upmd = dbx.files_upload(json.dumps(out, separators=(',', ':')).encode('utf-8'), f'{_LIVE_DIR}/{me}.json', mode=wm, mute=True)
             ok = True
+            try:
+                # from here on our last event is dated by dropbox's clock too, same timebase as the peer docs
+                _k = (calendar.timegm(_upmd.server_modified.timetuple()), int(out['ts']))
+                with _live_cv:
+                    if _live['out'] is None:  # a newer event is already waiting, its own upload settles the key
+                        _live['my_ts'] = _k
+            except Exception:
+                pass
         except Exception as e:
             _log_dbx.warning(f'[live] upload failed: {e}')
         finally:
@@ -11282,9 +11313,10 @@ def _live_ensure():
             return
         _live['started'] = True
         try:
-            _live['my_ts'] = int((ddir() / 'session.json').stat().st_mtime * 1000)
+            _m = (ddir() / 'session.json').stat().st_mtime
+            _live['my_ts'] = (int(_m), int(_m * 1000))
         except Exception:
-            _live['my_ts'] = 0
+            _live['my_ts'] = (0, 0)
     threading.Thread(target=_live_watcher, daemon=True, name='live-watch').start()
     threading.Thread(target=_live_sender, daemon=True, name='live-send').start()
 
@@ -11308,7 +11340,7 @@ def api_live_push():
             'v': 1, 'dev': me, 'nm': _dbx_get_device_name(),
             'ts': int(d.get('ts') or _time.time() * 1000),
             'own': me if d.get('own') in (None, '', 'me') else str(d.get('own')),
-            'pl': bool(d.get('pl')), 's': sid[0],
+            'pl': bool(d.get('pl')), 's': sid[0], 'sk': 1 if d.get('sk') else 0,
             'pos': round(float(d.get('pos') or 0), 2), 'dur': round(float(d.get('dur') or 0), 2),
             'qi': int(d.get('qi') or 0), 'rp': d.get('rp') or 'none', 'sh': bool(d.get('sh')),
             'sm': d.get('sm'), 'sc': d.get('sc'), 'ss': bool(d.get('ss')), 'qs': d.get('qs'),
@@ -11343,7 +11375,7 @@ def api_live_push():
         doc['qh'] = qh
         doc['qsrc'] = qsrc
         _live['out'] = doc  # latest wins: a doc still waiting while the previous upload runs gets replaced
-        _live['my_ts'] = max(_live['my_ts'], doc['ts'])
+        _live['my_ts'] = max(_live['my_ts'], (int(doc['ts'] // 1000), int(doc['ts'])))
         _live['out_ev'].set()
     return jsonify({'ok': True, 'qh': qh})
 
@@ -11365,7 +11397,7 @@ def api_live_poll():
         if _live['seq'] <= seq and wait > 0:
             _live_cv.wait(wait)
         s, pk, my = _live['seq'], _live['peer'], _live['my_ts']
-    out = {'on': True, 'seq': s, 'me': _dbx_get_device_id()}
+    out = {'on': True, 'seq': s, 'me': _dbx_get_device_id(), 'boot': _live['boot']}
     if pk is not None and s > seq and pk['te'] > my:
         out['doc'] = pk['doc']
         out['sm'] = pk['sm']
@@ -22393,6 +22425,7 @@ function _prefetchMvForSongImpl(song) {
     clearTimeout(_lrcScrollTimer);
     _lrcScrollTimer = null;
     S.lyricsAutoSync = true;
+    window._liveLyrSid = song.id; // keeps the live ghost lyrics tracker in step with what playSong just reset
     // prefetch lyrics and music video for this song and upcoming queue
     prefetchLyricsForSong(song);
     prefetchMvForSong(song);
@@ -31000,15 +31033,16 @@ function _liveCheck(force) {
     if (Math.abs(pos - pred) > (L.pl ? 1.5 : 0.6)) why = 'seek';
   }
   if (!why) return;
-  _liveSend(g ? g.owner : 'me', sig);
+  _liveSend(g ? g.owner : 'me', sig, why === 'seek' || why === 'force');
 }
 
-async function _liveSend(own, sig) {
+async function _liveSend(own, sig, sk) {
   if (LIVE.sending) { LIVE.again = true; return; }
   LIVE.sending = true;
   let okSend = false;
   try {
     const doc = _liveDoc(own);
+    if (sk) doc.sk = 1;
     const qs = _liveQsig();
     const body = { doc };
     if (qs !== LIVE.lastQ) body.queue = _liveQueueBody();
@@ -31070,10 +31104,58 @@ function _liveApplyQueue(q, chaos, lib) {
   S._continueFrom = null;
 }
 
+// the lyrics state (sidebar, now playing, synced lines) belongs to exactly one song. playSong resets it on every change but a
+// ghost never goes through playSong, so it kept showing the lyrics of whatever was loaded before live sync took over
+function _liveLyricsFor(song) {
+  if (!song || !song.id || window._liveLyrSid === song.id) return;
+  window._liveLyrSid = song.id;
+  _lrcLines = [];
+  _lrcActiveIdx = -1;
+  _lrcActiveWordIdx = -1;
+  _lrcNextLineTime = Infinity;
+  _npLrcLastIdx = -2;
+  _npLrcLastWordIdx = -1;
+  _npLrcLastSongId = null;
+  _npLrcMode = 'none';
+  _npLrcFetchSongId = null;
+  S.lyricsData = null;
+  clearTimeout(_lrcScrollTimer);
+  _lrcScrollTimer = null;
+  S.lyricsAutoSync = true;
+  try {
+    // a music video of the previous song must not stay in the now playing box
+    if (CFG.music_video && typeof _mvSongId !== 'undefined' && _mvSongId && _mvSongId !== song.id) {
+      _mvActive = false;
+      _mvSongId = null;
+      clearTimeout(_mvPollTimer);
+      ++_mvPollGeneration;
+      const _mvCont = document.getElementById('np-mv-container');
+      if (_mvCont) _mvCont.style.display = 'none';
+      const _mvB = document.getElementById('np-mv-btn');
+      if (_mvB) _mvB.style.display = 'none';
+      _mvSetActiveClass(false);
+    }
+  } catch (e) {}
+  if (song._gone) {
+    S.lyricsData = { marked: true }; // not on this device, nothing to fetch
+    if (S.lyricsOpen) {
+      const _hdr = document.getElementById('lyrics-hdr-title');
+      if (_hdr) _hdr.textContent = song.title || 'lyrics';
+      const _body = document.getElementById('lyrics-body');
+      if (_body) _body.innerHTML = '';
+    }
+  } else {
+    try { prefetchLyricsForSong(song); } catch (e) {}
+    if (S.lyricsOpen) renderLyricsForSong(song);
+  }
+  if (S.nowPlayingOpen) { try { renderNowPlaying(); } catch (e) {} _npLrcLastSongId = song.id; }
+}
+
 // show a song as paused at pos without loading any audio (same as what a session restore does)
 function _liveShowPaused(song, pos, dur) {
   S.cur = song;
   updatePlayerUI(song);
+  _liveLyricsFor(song);
   updateHighlights();
   S._restoredDuration = dur || song.duration || 0;
   S._restoredPosition = pos;
@@ -31105,6 +31187,7 @@ async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
     S.ghost = { owner: d.own, name: d.nm || 'another device', pos, at: Date.now(), dur: dur || song.duration || 0 };
     stopVolRot();
     updatePlayerUI(song);
+    _liveLyricsFor(song);
     updateHighlights();
     updatePlayBtn();
     syncMediaAudio(song, true, pos);
@@ -31125,7 +31208,7 @@ async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
           S.cur = song;
           await playSong(song, pos, true);
         }
-      } else if (Math.abs((engine.curTime || 0) - pos) > 0.8) {
+      } else if (d.sk && Math.abs((engine.curTime || 0) - pos) > 0.8) { // only an explicit seek moves the real player, a state doc carries an estimated pos
         await engine.seek(pos, getNextId);
         syncMediaAudio(song, false, pos);
       }
@@ -31168,7 +31251,7 @@ async function _liveApply(pk) {
   LIVE.applying = true;
   try {
     const rcv = Date.now();
-    const skewed = !d.ts || (pk.sm && Math.abs(d.ts - pk.sm) > 30000);
+    const skewed = !d.ts || (pk.sm && (d.ts - pk.sm > 2500 || pk.sm - d.ts > 8000));
     const at = skewed ? rcv - 700 : d.ts;
     const dur = d.dur || 0;
     let pos = (d.pos || 0) + (d.pl ? Math.max(0, rcv - at) / 1000 : 0);
@@ -31216,11 +31299,15 @@ async function _liveApply(pk) {
       else produce = true; // autopause off and we are playing too: keep playing, just follow
     }
     if (song._gone) produce = false;
-    await new Promise(res => _enqueueCmd(async () => {
-      try { await _liveSettle(song, pos, dur, produce, ghost, d, rcv); }
-      catch (e) { console.warn('[live] settle failed', e); }
-      finally { res(); }
-    }));
+    const _gen = LIVE.gen = (LIVE.gen | 0) + 1;
+    await Promise.race([
+      new Promise(res => _enqueueCmd(async () => {
+        try { if (_gen === LIVE.gen) await _liveSettle(song, pos, dur, produce, ghost, d, rcv); }
+        catch (e) { console.warn('[live] settle failed', e); }
+        finally { res(); }
+      })),
+      _liveSleep(20000), // a stuck command must never freeze the poll loop and the publisher (applying stays true)
+    ]);
     if (pk.queue && !S.ghost) { try { engine._stopNxt(); _queueNextChanged(); } catch (e) {} }
     if (S.queueOpen) { try { renderQueueSidebar(); } catch (e) {} }
     if (d.qh) LIVE.qh = d.qh;
@@ -31336,6 +31423,7 @@ function _liveGhostSkip(dir) {
   g.at = Date.now();
   g.dur = song.duration || 0;
   updatePlayerUI(song);
+  _liveLyricsFor(song);
   updateHighlights();
   updateProg(0, g.dur);
   if (S.queueOpen) { try { renderQueueSidebar(); } catch (e) {} }
@@ -31396,6 +31484,10 @@ async function _livePollLoop() {
       } catch (e) { fails++; await _liveSleep(Math.min(15000, 1000 * fails)); continue; }
       if (!r) continue;
       if (r.me) LIVE.me = r.me;
+      if (r.boot && r.boot !== LIVE.boot) { // python side restarted, its seq counter started over
+        if (LIVE.boot) { LIVE.seq = -1; LIVE.qh = ''; LIVE.lastQ = ''; }
+        LIVE.boot = r.boot;
+      }
       if (!r.on) { await _liveSleep(3000); continue; }
       if (r.seq != null) LIVE.seq = r.seq;
       if (r.doc) { try { await _liveApply(r); } catch (e) { console.warn('[live] apply failed', e); } }
