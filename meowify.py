@@ -11445,7 +11445,7 @@ def _live_ntp_probe():
 @app.route('/api/live/clock')
 def api_live_clock():
     c = _live_clock
-    if c['off'] is None or time.time() - c['at'] > 540:
+    if time.time() - c['at'] > 540:
         b = _live_ntp_probe()
         c['at'] = time.time()
         if b is not None:
@@ -30950,30 +30950,31 @@ let _liveGid = 0;
 #live-status{display:none;padding:3px 24px;font:var(--type-label-small);font-variation-settings:var(--fv-label);color:var(--color-primary);flex-shrink:0;background:var(--color-surface);text-align:center}
 #live-status.on{display:block}
 body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
-.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100px;height:100px;overflow:visible;pointer-events:none}
-.mob-np-playbtn .live-ghost-svg{width:140px;height:140px}
-#app.mobile #bplay .live-ghost-svg{width:56px;height:56px}
-.live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;pointer-events:none;z-index:1}
-.mob-np-playbtn .live-ghost-icon{width:30px;height:30px;color:var(--color-surface-dim)}
+.live-ghost-svg{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:120px;height:120px;overflow:visible;pointer-events:none}
+.mob-np-playbtn .live-ghost-svg{width:160px;height:160px}
+#app.mobile #bplay .live-ghost-svg{width:80px;height:80px}
+.live-ghost-icon{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:19px;height:19px;pointer-events:none;z-index:1}
+.mob-np-playbtn .live-ghost-icon{width:24px;height:24px;color:var(--color-surface-dim)}
+#app.mobile #bplay .live-ghost-icon{width:14px;height:14px}
 .live-ghost .live-ghost-svg,.live-ghost .live-ghost-icon{display:block}
 .playbtn.live-ghost canvas.playbtn-spiky,.playbtn.live-ghost svg.playbtn-spiky-opt,.playbtn.live-ghost svg.playbtn-morph,
 .mob-np-playbtn.live-ghost canvas.mob-np-spiky,.mob-np-playbtn.live-ghost svg.mob-np-spiky-opt,.mob-np-playbtn.live-ghost .mob-np-plain-circle,.mob-np-playbtn.live-ghost svg.playbtn-morph{display:none!important}
 #app.mobile .playbtn.live-ghost{background:transparent!important}
 .live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
 .live-gc{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
-.live-rot{transform-box:fill-box;transform-origin:50% 50%;animation:live-rot 4.5s infinite}
+.live-rot{transform-box:fill-box;transform-origin:50% 50%;animation:live-rot 3s infinite}
 #app.mobile #bplay .live-gb,#app.mobile #bplay .live-gc{fill:#fff}
 @keyframes live-rot{
-0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
-15%{transform:rotate(72deg)}
-20%{transform:rotate(72deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
-35%{transform:rotate(144deg)}
-40%{transform:rotate(144deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
-55%{transform:rotate(216deg)}
-60%{transform:rotate(216deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
-75%{transform:rotate(288deg)}
-80%{transform:rotate(288deg);animation-timing-function:cubic-bezier(.3,1.3,.5,1)}
-95%{transform:rotate(360deg)}
+0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
+17%{transform:rotate(72deg)}
+20%{transform:rotate(72deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
+37%{transform:rotate(144deg)}
+40%{transform:rotate(144deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
+57%{transform:rotate(216deg)}
+60%{transform:rotate(216deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
+77%{transform:rotate(288deg)}
+80%{transform:rotate(288deg);animation-timing-function:cubic-bezier(.5,0,.15,1.15)}
+97%{transform:rotate(360deg)}
 100%{transform:rotate(360deg)}
 }
 body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
@@ -31410,7 +31411,7 @@ function _liveGhostTick() {
   const t = _liveGhostPos();
   if (g.dur && t >= g.dur - 0.05) {
     const ov = Math.min(3, Math.max(0, g.pos + (Date.now() - g.at) / 1000 - g.dur));
-    if ((g.pred | 0) < 3 && _liveGhostAdvance(ov)) return;
+    if ((g.pred | 0) < 3 && !g.noPred && _liveGhostAdvance(ov)) return;
     if (Date.now() - g.at > (g.dur - g.pos + 8) * 1000) { _liveGhostEnd(); return; }
   }
   try { engine.onProgress(t, g.dur || (S.cur && S.cur.duration) || 0); } catch (e) {}
@@ -31429,7 +31430,7 @@ function _liveGhostAdvance(ov) {
   }
   const before = S.cur;
   _liveGhostSkip(1, ov);
-  if (S.cur === before) return false;
+  if (S.cur === before) { g.noPred = true; return false; }
   g.pred = (g.pred | 0) + 1;
   LIVE.last = { sig: _liveSig(), pos: ov, at: Date.now(), pl: true };
   return true;
