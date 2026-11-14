@@ -3669,8 +3669,8 @@ def _match_score(query, cand_title, cand_artist, q_title=None, q_artist=None, du
     if q_title or q_artist:
         # split query: compare field by field, then also the packed "artist title" string
         qt, qa = _match_norm(q_title, True), _match_norm(q_artist)
-        a = max(_match_sim(qa, first), _match_sim(qa, ca_all)) if qa else 1.0
-        score = _match_sim(qt, ct) * _MATCH_W_TITLE + a * (1 - _MATCH_W_TITLE)
+        a = max(_match_sim(qa, first), _match_sim(qa, ca_all)) if qa else None
+        score = _match_sim(qt, ct) if a is None else _match_sim(qt, ct) * _MATCH_W_TITLE + a * (1 - _MATCH_W_TITLE)
         score = max(score, _match_sim(f'{qa} {qt}'.strip(), f'{ca_all} {ct}'.strip()))
         q_for_markers = qt
     else:
@@ -14163,8 +14163,9 @@ def api_ytm_album(browse_id):
                     _gr = _genius_get(f'/albums/{g_album_id}/tracks?per_page=50&page={_gp}', tok)
                     g_raw += _gr.get('tracks', [])
                     if not _gr.get('next_page'): break
-                if any(t.get('number') for t in g_raw):
-                    g_raw = [t for t in g_raw if t.get('number')]
+                _g_num = [t for t in g_raw if t.get('number')]
+                if len(_g_num) > len(g_raw) - len(_g_num):
+                    g_raw = _g_num
                 g_tracks = []
                 for t in g_raw:
                     ts = t.get('song') or {}
@@ -14175,7 +14176,7 @@ def api_ytm_album(browse_id):
                         'duration': None,
                         'track_num': t.get('number', 0),
                     })
-                if g_tracks:
+                if g_tracks and len(g_tracks) >= len(ytm_tracks):
                     _used = set()
                     for gt in g_tracks:
                         _best, _bs = None, 0.0
@@ -14233,11 +14234,12 @@ def api_album_all_tracks(aid):
     out = [dict(r) for r in rows]
     # genius lists singles linked to the album page next to the real tracklist, with no track number.
     # they stay stored, they are only hidden unless the caller asks for them (?extra=1)
-    numbered = any((r['track_num'] or 0) > 0 for r in out)
+    n_num = sum(1 for r in out if (r['track_num'] or 0) > 0)
+    numbered = n_num > len(out) - n_num  # unnumbered entries only count as extras when they are the minority
     for r in out:
         r['extra'] = bool(numbered and not (r['track_num'] or 0) > 0)
     if request.args.get('extra') != '1':
-        out = [r for r in out if not r['extra'] or r['owned']]
+        out = [r for r in out if not r['extra']]
     out.sort(key=lambda r: (r['extra'], r['track_num'] or 0, r['title'] or ''))
     return jsonify(_disp_rows(out, 'artist'))
 
