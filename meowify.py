@@ -30971,9 +30971,9 @@ body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
 100%{transform:rotate(360deg)}
 }
 @keyframes live-bpos{
-0%,100%{transform:translateY(-36px)}
-25%{transform:translateY(-40px)}
-75%{transform:translateY(-32px)}
+0%,100%{transform:translateY(-40px)}
+25%{transform:translateY(-44px)}
+75%{transform:translateY(-36px)}
 }
 @keyframes live-bsz{
 0%,100%{transform:scale(1)}
@@ -31544,8 +31544,8 @@ function _liveGhostSkip(dir, ov) {
 function _liveGhostHtml() {
   const id = 'live-goo-' + (++_liveGid);
   return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
-    <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -8"/></filter></defs>
-    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="24"/><g class="live-rot"><circle cx="0" cy="0" r="46" fill="none"/><g><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5"/></g></g><g transform="rotate(72)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-.6s"/></g></g><g transform="rotate(144)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.2s"/></g></g><g transform="rotate(216)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-1.8s"/></g></g><g transform="rotate(288)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="10.5" style="animation-delay:-2.4s"/></g></g></g></g>
+    <defs><filter id="${id}" filterUnits="userSpaceOnUse" x="-70" y="-70" width="140" height="140" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="11" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -5"/></filter></defs>
+    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="21"/><g class="live-rot"><circle cx="0" cy="0" r="56" fill="none"/><g><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="11"/></g></g><g transform="rotate(72)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="11" style="animation-delay:-.6s"/></g></g><g transform="rotate(144)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="11" style="animation-delay:-1.2s"/></g></g><g transform="rotate(216)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="11" style="animation-delay:-1.8s"/></g></g><g transform="rotate(288)"><g class="live-bpos"><circle class="live-gb live-bsz" cx="0" cy="0" r="11" style="animation-delay:-2.4s"/></g></g></g></g>
   </svg>
   <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
 }
