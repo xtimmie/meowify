@@ -11405,6 +11405,54 @@ def api_live_poll():
             out['queue'] = pk['queue']
     return jsonify(out)
 
+_live_clock = {'off': None, 'rtt': None, 'at': 0.0}
+
+def _live_ntp_probe():
+    import socket, struct
+    best = None
+    for host in ('time.cloudflare.com', 'time.google.com', 'pool.ntp.org'):
+        for _ in range(4):
+            s = None
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.settimeout(1.2)
+                t1 = time.time()
+                s.sendto(b'\x1b' + 47 * b'\0', (host, 123))
+                data, _a = s.recvfrom(48)
+                t4 = time.time()
+                if len(data) < 48:
+                    continue
+                u = struct.unpack('!12I', data[:48])
+                t2 = u[8] - 2208988800 + u[9] / 4294967296.0
+                t3 = u[10] - 2208988800 + u[11] / 4294967296.0
+                rtt = (t4 - t1) - (t3 - t2)
+                off = ((t2 - t1) + (t3 - t4)) / 2
+                if rtt >= 0 and (best is None or rtt < best[0]):
+                    best = (rtt, off)
+            except Exception:
+                pass
+            finally:
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+        if best is not None and best[0] < 0.25:
+            break
+    return best
+
+@app.route('/api/live/clock')
+def api_live_clock():
+    c = _live_clock
+    if c['off'] is None or time.time() - c['at'] > 540:
+        b = _live_ntp_probe()
+        c['at'] = time.time()
+        if b is not None:
+            c['rtt'], c['off'] = b
+    if c['off'] is None:
+        return jsonify({'ok': False})
+    return jsonify({'ok': True, 'off': int(round(c['off'] * 1000)), 'rtt': int(round(c['rtt'] * 1000))})
+
 _dbx_poll_state = {'wait': 20}
 _dbx_wake = threading.Event()
 _dbx_watch_ref = [None]
@@ -22775,13 +22823,17 @@ async function togglePlay() {
         updatePositionState();
         saveSession();
       } else if (S.cur && engine._restoredPosition !== undefined) {
-        const pos = engine._restoredPosition;
+        let pos = engine._restoredPosition;
+        const _tk = (LIVE.tkAt && Date.now() - LIVE.tkAt < 5000) ? LIVE.tkAt : 0, _tp = LIVE.tkPos;
+        LIVE.tkAt = 0;
         delete engine._restoredPosition;
         engine._init();
         if (!engine._cache[S.cur.id]) {
           try { await engine._decode(S.cur.id); } catch(e) { console.warn('restore decode failed', e); }
         }
+        if (_tk) pos = _tp + (Date.now() - _tk) / 1000;
         await playSong(S.cur, pos);
+        if (_tk) await _liveCatchUp(_tp, _tk);
       } else {
         if (engine.hasPaused) {
           await engine.resume(getNextId); S.isPlaying = true;
@@ -30886,7 +30938,7 @@ function _sessionBody(position) {
 // into "switch playback to this device". only events are sent (play, pause, seek, song change, queue edits), never
 // the position itself. a seek or a stall also shows up as drift against what peers predict, so it self-corrects
 // ═══════════════════════════════════════════════
-const LIVE = { on: false, run: false, seq: -1, qh: '', me: '', last: null, lastQ: '', applying: false, mute: 0, floor: 0, lastChk: 0, sending: false, again: false, uiDirty: false };
+const LIVE = { on: false, run: false, seq: -1, qh: '', me: '', last: null, lastQ: '', applying: false, mute: 0, floor: 0, lastChk: 0, sending: false, again: false, uiDirty: false, clk: 0, clkAt: 0, tkAt: 0, tkPos: 0 };
 let _liveGid = 0;
 
 (function _liveCss() {
@@ -30906,19 +30958,26 @@ body.rs-full #app:not(.mobile) #main>#live-status{grid-column:1;grid-row:3}
 .playbtn.live-ghost canvas.playbtn-spiky,.playbtn.live-ghost svg.playbtn-spiky-opt,.playbtn.live-ghost svg.playbtn-morph,
 .mob-np-playbtn.live-ghost canvas.mob-np-spiky,.mob-np-playbtn.live-ghost svg.mob-np-spiky-opt,.mob-np-playbtn.live-ghost .mob-np-plain-circle,.mob-np-playbtn.live-ghost svg.playbtn-morph{display:none!important}
 #app.mobile .playbtn.live-ghost{background:transparent!important}
-.live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9));animation:live-gb 2.1s infinite}
-#app.mobile #bplay .live-gb{fill:#fff}
-.live-gb.b0{--ax:0px;--ay:-22px;--bx:19.05px;--by:11px;--cx:-19.05px;--cy:11px}
-.live-gb.b1{--ax:19.05px;--ay:11px;--bx:-19.05px;--by:11px;--cx:0px;--cy:-22px}
-.live-gb.b2{--ax:-19.05px;--ay:11px;--bx:0px;--by:-22px;--cx:19.05px;--cy:11px}
+.live-gb{fill:var(--spiky-opt-fill,rgba(255,255,255,.9));animation:live-gb 4.5s infinite}
+.live-gc{fill:var(--spiky-opt-fill,rgba(255,255,255,.9))}
+#app.mobile #bplay .live-gb,#app.mobile #bplay .live-gc{fill:#fff}
+.live-gb.b0{animation-delay:0s}
+.live-gb.b1{animation-delay:-.9s}
+.live-gb.b2{animation-delay:-1.8s}
+.live-gb.b3{animation-delay:-2.7s}
+.live-gb.b4{animation-delay:-3.6s}
 @keyframes live-gb{
-0%{transform:translate(var(--ax),var(--ay));animation-timing-function:cubic-bezier(.76,0,.24,1)}
-20%{transform:translate(var(--bx),var(--by))}
-33.333%{transform:translate(var(--bx),var(--by));animation-timing-function:cubic-bezier(.76,0,.24,1)}
-53.333%{transform:translate(var(--cx),var(--cy))}
-66.666%{transform:translate(var(--cx),var(--cy));animation-timing-function:cubic-bezier(.76,0,.24,1)}
-86.666%{transform:translate(var(--ax),var(--ay))}
-100%{transform:translate(var(--ax),var(--ay))}
+0%{transform:translate(0px,-28px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
+13%{transform:translate(26.63px,-8.65px)}
+20%{transform:translate(26.63px,-8.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
+33%{transform:translate(16.46px,22.65px)}
+40%{transform:translate(16.46px,22.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
+53%{transform:translate(-16.46px,22.65px)}
+60%{transform:translate(-16.46px,22.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
+73%{transform:translate(-26.63px,-8.65px)}
+80%{transform:translate(-26.63px,-8.65px);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}
+93%{transform:translate(0px,-28px)}
+100%{transform:translate(0px,-28px)}
 }
 body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-np-wavy-wrap,#bprev,#bnext,#bshuf,#brep,#mob-np-bprev,#mob-np-bnext,#mob-np-bshuf,#mob-np-brep,.seek-btn){opacity:.35;filter:grayscale(1);pointer-events:none}
 `;
@@ -30927,6 +30986,27 @@ body.live-locked :is(#progbar,#wavy-seek-wrap,#mob-seek,#mob-np-flat-wrap,#mob-n
 
 function _liveOn() { return CFG.live_pb === true; }
 const _liveSleep = ms => new Promise(r => setTimeout(r, ms));
+const _liveNow = () => Date.now() + LIVE.clk;
+async function _liveClockSync() {
+  if (Date.now() - LIVE.clkAt < 600000) return;
+  LIVE.clkAt = Date.now();
+  try {
+    const r = await (await fetch('/api/live/clock')).json();
+    if (r && r.ok && Math.abs(r.off) < 3600000) LIVE.clk = r.off;
+    console.log('[live] clock', r);
+  } catch (e) { LIVE.clkAt = 0; }
+}
+async function _liveCatchUp(p0, t0) {
+  for (let i = 0; i < 2; i++) {
+    if (!S.isPlaying || S.ghost || !S.cur) return;
+    if (engine._stream && !engine.curTime) return;
+    const want = p0 + (Date.now() - t0) / 1000;
+    const dur = engine.duration || 0;
+    if (dur && want > dur - 1) return;
+    if (Math.abs((engine.curTime || 0) - want) < 0.12) return;
+    try { await engine.seek(want, getNextId); syncMediaAudio(S.cur, false, want); } catch (e) { return; }
+  }
+}
 // id as the python side knows it: a local id, '~xxxx' (song this device doesnt have) or the local id behind a stub
 const _liveOut = s => (s && (s._lid || s.id)) || '';
 
@@ -30986,7 +31066,7 @@ function _liveDoc(own) {
   const nsw = S.queue.slice(0, S.qi).filter(s => s && s._qsw).length;
   const pos = g ? _liveGhostPos() : _liveLocalPos();
   return {
-    ts: Date.now(), own, pl: g ? true : !!S.isPlaying,
+    ts: _liveNow(), own, pl: g ? true : !!S.isPlaying,
     sid: _liveOut(cur), pos: +pos.toFixed(2),
     dur: g ? (g.dur || cur.duration || 0) : (engine.duration || S._restoredDuration || cur.duration || 0),
     qi: chaos ? 0 : S.qi - nsw,
@@ -31052,7 +31132,7 @@ async function _liveSend(own, sig, sk) {
       okSend = true;
       LIVE.lastQ = qs;
       if (r.qh) LIVE.qh = r.qh;
-      LIVE.last = { sig, pos: doc.pos, at: doc.ts, pl: doc.pl };
+      LIVE.last = { sig, pos: doc.pos, at: doc.ts - LIVE.clk, pl: doc.pl };
     }
   } catch (e) { console.warn('[live] push failed', e); }
   finally {
@@ -31174,6 +31254,7 @@ function _liveShowPaused(song, pos, dur) {
 
 // bring the real audio in line with the shared state. runs inside the command queue so it never overlaps a play/skip
 async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
+  const _lp0 = pos + (produce || ghost ? (Date.now() - rcv) / 1000 : 0), _lt0 = Date.now();
   if (!song) return;
   if (produce || ghost) { // time spent waiting in the command queue still counts
     pos += (Date.now() - rcv) / 1000;
@@ -31207,6 +31288,7 @@ async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
         } else {
           S.cur = song;
           await playSong(song, pos, true);
+          if (d.pl) await _liveCatchUp(_lp0, _lt0);
         }
       } else if (d.sk && Math.abs((engine.curTime || 0) - pos) > 0.8) { // only an explicit seek moves the real player, a state doc carries an estimated pos
         await engine.seek(pos, getNextId);
@@ -31216,6 +31298,7 @@ async function _liveSettle(song, pos, dur, produce, ghost, d, rcv) {
     } else {
       S.cur = song;
       await playSong(song, pos, true);
+      if (d.pl) await _liveCatchUp(_lp0, _lt0);
     }
     updatePlayBtn();
     updateHighlights();
@@ -31252,9 +31335,10 @@ async function _liveApply(pk) {
   try {
     const rcv = Date.now();
     const skewed = !d.ts || (pk.sm && (d.ts - pk.sm > 2500 || pk.sm - d.ts > 8000));
-    const at = skewed ? rcv - 700 : d.ts;
+    const rcvN = rcv + LIVE.clk;
+    const at = skewed ? rcvN - 700 : d.ts;
     const dur = d.dur || 0;
-    let pos = (d.pos || 0) + (d.pl ? Math.max(0, rcv - at) / 1000 : 0);
+    let pos = (d.pos || 0) + (d.pl ? Math.max(0, rcvN - at) / 1000 : 0);
     const playing = !!d.pl && !(dur > 0 && pos > dur + 8); // a doc that says playing long past the end = the owner went quiet
     if (dur) pos = Math.min(pos, dur);
     const lib = new Map(S.library.map(s => [s.id, s]));
@@ -31348,7 +31432,9 @@ function _liveTakeover() {
   const g = S.ghost;
   if (!g) return;
   const pos = _liveGhostPos();
-  LIVE.floor = Date.now();
+  LIVE.floor = _liveNow();
+  LIVE.tkAt = Date.now();
+  LIVE.tkPos = pos;
   S.ghost = null;
   if (S.cur) _liveShowPaused(S.cur, pos, g.dur);
   _liveUiSync();
@@ -31435,7 +31521,7 @@ function _liveGhostHtml() {
   const id = 'live-goo-' + (++_liveGid);
   return `<svg class="live-ghost-svg" viewBox="-60 -60 120 120" xmlns="http://www.w3.org/2000/svg">
     <defs><filter id="${id}" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/><feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -8"/></filter></defs>
-    <g filter="url(#${id})"><circle class="live-gb b0" cx="0" cy="0" r="17"/><circle class="live-gb b1" cx="0" cy="0" r="17"/><circle class="live-gb b2" cx="0" cy="0" r="17"/></g>
+    <g filter="url(#${id})"><circle class="live-gc" cx="0" cy="0" r="14"/><circle class="live-gb b0" cx="0" cy="0" r="12"/><circle class="live-gb b1" cx="0" cy="0" r="12"/><circle class="live-gb b2" cx="0" cy="0" r="12"/><circle class="live-gb b3" cx="0" cy="0" r="12"/><circle class="live-gb b4" cx="0" cy="0" r="12"/></g>
   </svg>
   <svg class="live-ghost-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><polygon points="9.5,8.2 16,12 9.5,15.8" fill="currentColor" stroke-width="1.4"/></svg>`;
 }
@@ -31484,6 +31570,7 @@ async function _livePollLoop() {
       } catch (e) { fails++; await _liveSleep(Math.min(15000, 1000 * fails)); continue; }
       if (!r) continue;
       if (r.me) LIVE.me = r.me;
+      _liveClockSync();
       if (r.boot && r.boot !== LIVE.boot) { // python side restarted, its seq counter started over
         if (LIVE.boot) { LIVE.seq = -1; LIVE.qh = ''; LIVE.lastQ = ''; }
         LIVE.boot = r.boot;
