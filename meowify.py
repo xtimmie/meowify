@@ -17155,7 +17155,7 @@ body.design-glassy .qsw-item:hover{background:color-mix(in oklch,var(--color-on-
 #blyrics-ann .ann-l1, #blyrics-ann .ann-l2 { transition: transform .3s cubic-bezier(0,1,0,1); }
 #blyrics-ann.active .ann-l1, #blyrics-ann.active .ann-l2 { transition: transform .3s cubic-bezier(.3,1.5,.4,1); }
 #blyrics-ann .ann-l1 { transform-origin: 5px 6px; transform: scaleX(0); }
-#blyrics-ann .ann-l2 { transform-origin: 5px 10px; transform: scaleX(0); }
+#blyrics-ann .ann-l2 { transform-origin: 9px 10px; transform: scaleX(0); }
 #blyrics-ann.active .ann-l1 { transform: scaleX(1); }
 #blyrics-ann.active .ann-l2 { transform: scaleX(1); }
 
